@@ -22,8 +22,8 @@ Usage: plugin/nftablesforward/namespace_acceptance.sh [--agent-binary PATH]
 Builds or uses an nftables-forward Agent plugin binary, then proves in
 temporary Linux network namespaces that:
 
-1. TCP DNAT forwards client traffic to the target namespace.
-2. UDP DNAT forwards client traffic to the target namespace.
+1. IPv4 and IPv6 TCP DNAT forward client traffic to the target namespace.
+2. IPv4 and IPv6 UDP DNAT forward client traffic to the target namespace.
 3. SIGKILL leaves a durable journal and restart recovers it before re-apply.
 4. rollback_on_exit deletes a plugin-created nftables table.
 5. rollback_on_exit restores a pre-existing nftables table snapshot.
@@ -47,7 +47,7 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 if observed.get("health") != "healthy":
     raise SystemExit(1)
 counters = {entry.get("rule_id"): entry for entry in observed.get("rule_counters", [])}
-for rule_id in ("tcp-namespace", "udp-namespace"):
+for rule_id in ("tcp4-namespace", "udp4-namespace", "tcp6-namespace", "udp6-namespace"):
     counter = counters.get(rule_id)
     if not isinstance(counter, dict) or counter.get("packets", 0) <= 0 or counter.get("bytes", 0) <= 0:
         raise SystemExit(1)
@@ -88,6 +88,8 @@ TARGET_LINK="axt${$}"
 PLUGIN_PID=""
 TCP_PID=""
 UDP_PID=""
+TCP6_PID=""
+UDP6_PID=""
 
 cleanup() {
   set +e
@@ -102,6 +104,14 @@ cleanup() {
   if [[ -n "${UDP_PID}" ]]; then
     kill "${UDP_PID}" >/dev/null 2>&1
     wait "${UDP_PID}" >/dev/null 2>&1
+  fi
+  if [[ -n "${TCP6_PID}" ]]; then
+    kill "${TCP6_PID}" >/dev/null 2>&1
+    wait "${TCP6_PID}" >/dev/null 2>&1
+  fi
+  if [[ -n "${UDP6_PID}" ]]; then
+    kill "${UDP6_PID}" >/dev/null 2>&1
+    wait "${UDP6_PID}" >/dev/null 2>&1
   fi
   ip netns del "${CLIENT_NS}" >/dev/null 2>&1
   ip netns del "${ROUTER_NS}" >/dev/null 2>&1
@@ -121,6 +131,8 @@ fi
 
 TCP_SERVER="${WORK_DIR}/tcp_server.py"
 UDP_SERVER="${WORK_DIR}/udp_server.py"
+TCP6_SERVER="${WORK_DIR}/tcp6_server.py"
+UDP6_SERVER="${WORK_DIR}/udp6_server.py"
 CLIENT_CHECK="${WORK_DIR}/client_check.py"
 cat >"${TCP_SERVER}" <<'PY'
 import socket
@@ -141,6 +153,25 @@ if data != b"udp-ping":
     raise SystemExit("unexpected UDP payload")
 server.sendto(b"udp-ok", addr)
 PY
+cat >"${TCP6_SERVER}" <<'PY'
+import socket
+server = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("fd32:1::2", 18081))
+server.listen(1)
+conn, _ = server.accept()
+with conn:
+    conn.sendall(b"tcp6-ok")
+PY
+cat >"${UDP6_SERVER}" <<'PY'
+import socket
+server = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+server.bind(("fd32:1::2", 18082))
+data, addr = server.recvfrom(1024)
+if data != b"udp6-ping":
+    raise SystemExit("unexpected IPv6 UDP payload")
+server.sendto(b"udp6-ok", addr)
+PY
 cat >"${CLIENT_CHECK}" <<'PY'
 import socket
 
@@ -156,6 +187,21 @@ udp.sendto(b"udp-ping", ("10.32.2.100", 18080))
 data, _ = udp.recvfrom(32)
 if data != b"udp-ok":
     raise SystemExit(f"unexpected UDP response: {data!r}")
+
+tcp6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+tcp6.settimeout(3)
+tcp6.connect(("fd32:2::100", 18080))
+with tcp6:
+    data = tcp6.recv(32)
+if data != b"tcp6-ok":
+    raise SystemExit(f"unexpected IPv6 TCP response: {data!r}")
+
+udp6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+udp6.settimeout(3)
+udp6.sendto(b"udp6-ping", ("fd32:2::100", 18080))
+data, _ = udp6.recvfrom(32)
+if data != b"udp6-ok":
+    raise SystemExit(f"unexpected IPv6 UDP response: {data!r}")
 PY
 
 ip netns add "${CLIENT_NS}"
@@ -172,6 +218,10 @@ ip -n "${CLIENT_NS}" addr add 10.32.0.2/24 dev "${CLIENT_LINK}"
 ip -n "${ROUTER_NS}" addr add 10.32.0.1/24 dev "${ROUTER_CLIENT_LINK}"
 ip -n "${ROUTER_NS}" addr add 10.32.1.1/24 dev "${ROUTER_TARGET_LINK}"
 ip -n "${TARGET_NS}" addr add 10.32.1.2/24 dev "${TARGET_LINK}"
+ip -n "${CLIENT_NS}" -6 addr add fd32:0::2/64 dev "${CLIENT_LINK}" nodad
+ip -n "${ROUTER_NS}" -6 addr add fd32:0::1/64 dev "${ROUTER_CLIENT_LINK}" nodad
+ip -n "${ROUTER_NS}" -6 addr add fd32:1::1/64 dev "${ROUTER_TARGET_LINK}" nodad
+ip -n "${TARGET_NS}" -6 addr add fd32:1::2/64 dev "${TARGET_LINK}" nodad
 for ns in "${CLIENT_NS}" "${ROUTER_NS}" "${TARGET_NS}"; do
   ip -n "${ns}" link set lo up
 done
@@ -181,7 +231,10 @@ ip -n "${ROUTER_NS}" link set "${ROUTER_TARGET_LINK}" up
 ip -n "${TARGET_NS}" link set "${TARGET_LINK}" up
 ip -n "${CLIENT_NS}" route add 10.32.2.100/32 via 10.32.0.1
 ip -n "${TARGET_NS}" route add default via 10.32.1.1
+ip -n "${CLIENT_NS}" -6 route add fd32:2::100/128 via fd32:0::1
+ip -n "${TARGET_NS}" -6 route add default via fd32:1::1
 ip netns exec "${ROUTER_NS}" sysctl -q -w net.ipv4.ip_forward=1
+ip netns exec "${ROUTER_NS}" sysctl -q -w net.ipv6.conf.all.forwarding=1
 
 CONFIG="${WORK_DIR}/plugin.json"
 SOCKET="${WORK_DIR}/plugin.sock"
@@ -196,7 +249,7 @@ cat >"${CONFIG}" <<EOF
   "priority": -100,
   "rules": [
     {
-      "id": "tcp-namespace",
+      "id": "tcp4-namespace",
       "protocol": "tcp",
       "listen_address": "10.32.2.100",
       "listen_port": 18080,
@@ -205,13 +258,31 @@ cat >"${CONFIG}" <<EOF
       "comment": "namespace"
     },
     {
-      "id": "udp-namespace",
+      "id": "udp4-namespace",
       "protocol": "udp",
       "listen_address": "10.32.2.100",
       "listen_port": 18080,
       "target_address": "10.32.1.2",
       "target_port": 18082,
       "comment": "namespace"
+    },
+    {
+      "id": "tcp6-namespace",
+      "protocol": "tcp",
+      "listen_address": "fd32:2::100",
+      "listen_port": 18080,
+      "target_address": "fd32:1::2",
+      "target_port": 18081,
+      "comment": "namespace-v6"
+    },
+    {
+      "id": "udp6-namespace",
+      "protocol": "udp",
+      "listen_address": "fd32:2::100",
+      "listen_port": 18080,
+      "target_address": "fd32:1::2",
+      "target_port": 18082,
+      "comment": "namespace-v6"
     }
   ]
 }
@@ -223,6 +294,10 @@ ip netns exec "${TARGET_NS}" "${PYTHON_BIN}" "${TCP_SERVER}" &
 TCP_PID="$!"
 ip netns exec "${TARGET_NS}" "${PYTHON_BIN}" "${UDP_SERVER}" &
 UDP_PID="$!"
+ip netns exec "${TARGET_NS}" "${PYTHON_BIN}" "${TCP6_SERVER}" &
+TCP6_PID="$!"
+ip netns exec "${TARGET_NS}" "${PYTHON_BIN}" "${UDP6_SERVER}" &
+UDP6_PID="$!"
 ip netns exec "${ROUTER_NS}" "${AGENT_BINARY}" --anixops-config "${CONFIG}" --anixops-socket "${SOCKET}" --anixops-state "${STATE}" &
 PLUGIN_PID="$!"
 
@@ -232,9 +307,10 @@ for _ in {1..50}; do
 done
 [[ -S "${SOCKET}" ]] || fail "plugin socket did not become ready"
 RULESET="$(ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward 2>&1)" || fail "nftables table was not installed: ${RULESET}"
-grep -q "tcp-namespace" <<<"${RULESET}" || fail "TCP nftables rule was not installed: ${RULESET}"
-grep -q "udp-namespace" <<<"${RULESET}" || fail "UDP nftables rule was not installed: ${RULESET}"
-[[ "$(grep -c "counter packets" <<<"${RULESET}")" -eq 2 ]] || fail "per-rule nftables counters were not installed: ${RULESET}"
+for rule_id in tcp4-namespace udp4-namespace tcp6-namespace udp6-namespace; do
+  grep -q "${rule_id}" <<<"${RULESET}" || fail "nftables rule ${rule_id} was not installed: ${RULESET}"
+done
+[[ "$(grep -c "counter packets" <<<"${RULESET}")" -eq 4 ]] || fail "per-rule nftables counters were not installed: ${RULESET}"
 timeout 10 ip netns exec "${CLIENT_NS}" "${PYTHON_BIN}" "${CLIENT_CHECK}"
 OBSERVATION="${STATE}.observed.json"
 for _ in {1..70}; do
@@ -243,7 +319,7 @@ for _ in {1..70}; do
   fi
   sleep 0.1
 done
-counter_observation_ready "${OBSERVATION}" || fail "runtime observation did not report incremented TCP/UDP counters"
+counter_observation_ready "${OBSERVATION}" || fail "runtime observation did not report incremented IPv4/IPv6 TCP/UDP counters"
 
 kill -KILL "${PLUGIN_PID}"
 if wait "${PLUGIN_PID}"; then
@@ -291,19 +367,21 @@ for _ in {1..50}; do
 done
 [[ -S "${SOCKET}" ]] || fail "plugin socket did not become ready for snapshot test"
 RULESET="$(ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward 2>&1)" || fail "replacement nftables table was not installed: ${RULESET}"
-grep -q "tcp-namespace" <<<"${RULESET}" || fail "replacement nftables rule was not installed: ${RULESET}"
+grep -q "tcp4-namespace" <<<"${RULESET}" || fail "replacement nftables rule was not installed: ${RULESET}"
 kill "${PLUGIN_PID}"
 wait "${PLUGIN_PID}"
 PLUGIN_PID=""
 ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward | grep -q "pre-existing-marker" || fail "pre-existing nftables snapshot was not restored"
-if ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward | grep -q "tcp-namespace"; then
+if ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward | grep -q "tcp4-namespace"; then
   fail "replacement nftables rule survived snapshot rollback"
 fi
 
 printf 'status=PASS\n'
 printf 'plugin_id=nftables-forward\n'
-printf 'tcp_dnat=true\n'
-printf 'udp_dnat=true\n'
+printf 'ipv4_tcp_dnat=true\n'
+printf 'ipv4_udp_dnat=true\n'
+printf 'ipv6_tcp_dnat=true\n'
+printf 'ipv6_udp_dnat=true\n'
 printf 'rollback_created_table=deleted\n'
 printf 'rollback_existing_table=snapshot_restored\n'
 printf 'crash_restart_recovery=true\n'

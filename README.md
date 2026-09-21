@@ -66,8 +66,9 @@ sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
   bash plugin/nategress/namespace_acceptance.sh
 ```
 
-`nftables-forward` 还覆盖 TCP/UDP DNAT、正常回滚、`SIGKILL` journal 留存和
-同一 state path 的重启恢复：
+`nftables-forward` 还覆盖 IPv4/IPv6 TCP/UDP DNAT、内核规则计数、正常回滚、
+`SIGKILL` journal 留存和同一 state path 的重启恢复。常规 CI 使用预构建插件
+二进制执行同一 privileged namespace 验收：
 
 ```bash
 sudo env GOEXPERIMENT=jsonv2 GOWORK=off \

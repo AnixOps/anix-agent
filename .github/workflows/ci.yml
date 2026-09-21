@@ -87,3 +87,28 @@ jobs:
           bash api/grpc/gen.sh
           git diff --exit-code -- api/grpc/v2boardpb api/grpc/agent/v1
           test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb api/grpc/agent/v1)"
+
+  nftables-forward-integration:
+    name: nftables-forward IPv4/IPv6 namespace acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Install namespace test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 nftables python3
+
+      - name: Build nftables-forward Agent plugin
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go build -o "${RUNNER_TEMP}/nftables-forward" ./cmd/nftables-forward
+
+      - name: Verify IPv4/IPv6 DNAT, counters, restart recovery, and rollback
+        run: |
+          sudo bash plugin/nftablesforward/namespace_acceptance.sh \
+            --agent-binary "${RUNNER_TEMP}/nftables-forward"
