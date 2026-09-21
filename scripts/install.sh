@@ -519,6 +519,10 @@ install_files() {
 
     install -m 0755 "${extracted_binary}" "${BIN_PATH}"
 
+    if [[ -f "${extract_dir}/config.production.json" && ! -f "${CONFIG_DIR}/config.json" ]]; then
+        install -m 0600 "${extract_dir}/config.production.json" "${CONFIG_DIR}/config.json"
+    fi
+
     for f in geoip.dat geosite.dat; do
         if [[ -f "${extract_dir}/${f}" ]]; then
             install -m 0644 "${extract_dir}/${f}" "${CONFIG_DIR}/${f}"

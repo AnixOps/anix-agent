@@ -34,7 +34,6 @@ jobs:
           bash scripts/install.sh --help >/dev/null
           bash scripts/anix-agent.sh --help >/dev/null
           bash scripts/V2bX.sh --help >/dev/null
-          bash scripts/test_install_migration.sh
 
       - name: Enforce release build policy
         run: bash scripts/check_release_build_policy.sh
@@ -56,6 +55,9 @@ jobs:
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Test installer migration and generated production config
+        run: bash scripts/test_install_migration.sh
 
       - name: Run full Go test suite
         # Make CI robust if a go.work exists in the runner environment.

@@ -11,6 +11,7 @@ import (
 )
 
 type Conf struct {
+	Environment string       `json:"Environment"`
 	LogConfig   LogConfig    `json:"Log"`
 	CoresConfig []CoreConfig `json:"Cores"`
 	NodeConfig  []NodeConfig `json:"Nodes"`
@@ -18,6 +19,7 @@ type Conf struct {
 
 func New() *Conf {
 	return &Conf{
+		Environment: "development",
 		LogConfig: LogConfig{
 			Level:  "info",
 			Output: "",
@@ -41,6 +43,9 @@ func (p *Conf) LoadFromPath(filePath string) error {
 	err = json.Unmarshal(data, p)
 	if err != nil {
 		return fmt.Errorf("unmarshal config error: %s", err)
+	}
+	if err = p.ValidateForProduction(); err != nil {
+		return err
 	}
 
 	return nil

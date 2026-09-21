@@ -147,8 +147,38 @@ ensure_plugin_layout
 [[ "$(stat -c '%a' "${PLUGIN_ROOT}")" == "750" ]]
 [[ "$(stat -c '%a' "${PLUGIN_SOCKET_DIR}")" == "750" ]]
 
+install_fixture="${test_root}/release-fixture"
+tmp_dir="${test_root}/fresh-install-tmp"
+INSTALL_DIR="${test_root}/fresh-install/usr/local/anixops-agent"
+CONFIG_DIR="${test_root}/fresh-install/etc/anixops/agent"
+BIN_PATH="${INSTALL_DIR}/anix-agent"
+VERSION_FILE="${INSTALL_DIR}/.release-version"
+mkdir -p "${install_fixture}" "${tmp_dir}"
+printf '#!/bin/sh\nexit 0\n' >"${install_fixture}/anix-agent"
+chmod 0755 "${install_fixture}/anix-agent"
+printf '%s\n' production-template >"${install_fixture}/config.production.json"
+printf '%s\n' development-template >"${install_fixture}/config.json"
+touch "${test_root}/release-fixture.zip"
+unzip() {
+    local destination=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d)
+                destination="$2"
+                shift 2
+                ;;
+            *) shift ;;
+        esac
+    done
+    cp -a "${install_fixture}/." "${destination}/"
+}
+install_files "${test_root}/release-fixture.zip" "v9.9.9"
+[[ "$(cat "${CONFIG_DIR}/config.json")" == "production-template" ]]
+[[ "$(stat -c '%a' "${CONFIG_DIR}/config.json")" == "600" ]]
+[[ "$(cat "${VERSION_FILE}")" == "v9.9.9" ]]
+
 for example in \
-    config.json config.grpc.json config_auto_register.json config_realtime_sync.json \
+    config.json config.grpc.json config.production.json config_auto_register.json config_realtime_sync.json \
     config_test_local.json config.wireguard.json; do
     example_path="${repo_root}/example/${example}"
     grep -Fq '"PluginSupervisorEnabled": true' "${example_path}"
@@ -165,18 +195,22 @@ done
     prompt_text() {
         case "$1" in
             "选择内核类型"*) printf '%s' sing ;;
-            "面板地址"*) printf '%s' https://control.example.com ;;
             "节点类型"*) printf '%s' vless ;;
             "监听 IP"*) printf '%s' 0.0.0.0 ;;
             "发送 IP"*) printf '%s' 0.0.0.0 ;;
             "证书模式"*) printf '%s' self ;;
             "传输方式"*) printf '%s' http ;;
-            "Agent Control / gRPC 目标"*) printf '%s' control.example.com:443 ;;
-            "GRPCServerName"*) printf '%s' control.example.com ;;
+            "Agent Control / gRPC 目标"*) printf '%s' control.company.net:443 ;;
+            "GRPCServerName"*) printf '%s' control.company.net ;;
             *) printf '%s' "${2:-}" ;;
         esac
     }
-    prompt_required_text() { printf '%s' test-api-key; }
+    prompt_required_text() {
+        case "$1" in
+            "面板地址"*) printf '%s' https://control.company.net ;;
+            *) printf '%s' 0123456789abcdef0123456789abcdef ;;
+        esac
+    }
     prompt_int() { printf '%s' "${2:-1}"; }
     confirm() {
         case "$1" in
@@ -191,6 +225,9 @@ done
     grep -Fq '"AgentControlEnabled": true' "${wizard_config}"
     grep -Fq '"GRPCUseTLS": true' "${wizard_config}"
     grep -Fq '"AgentControlAllowInsecure": false' "${wizard_config}"
+    grep -Fq '"Environment": "production"' "${wizard_config}"
+    grep -Fq '"MaintenanceEnvironment": "production"' "${wizard_config}"
+    grep -Fq '"WSEndpoint": "/api/v2/agent/ws"' "${wizard_config}"
     grep -Fq '"PluginSupervisorEnabled": true' "${wizard_config}"
     grep -Fq '"PluginRoot": "/var/lib/anixops/plugins"' "${wizard_config}"
     grep -Fq '"PluginSocketDir": "/run/anixops/plugins"' "${wizard_config}"
@@ -199,5 +236,8 @@ done
     agent_control_host_is_loopback "[::1]:50051" "http://example.com"
     ! agent_control_host_is_loopback "control.example.com:50051" "http://127.0.0.1"
 )
+
+GOEXPERIMENT=jsonv2 GOWORK=off go run . validate-config \
+    -c "${test_root}/wizard/etc/anixops/agent/config.json" >/dev/null
 
 echo "installer migration compatibility test passed"

@@ -112,6 +112,8 @@ rm -f /tmp/anix-agent-install.sh
 ```bash
 sudo anix-agent initconfig
 sudo anix-agent config
+sudo /usr/local/anixops-agent/anix-agent validate-config \
+  -c /etc/anixops/agent/config.json
 sudo anix-agent start
 sudo anix-agent status
 sudo anix-agent log
@@ -123,6 +125,7 @@ sudo anix-agent log
 anix-agent start|stop|restart|status|log
 anix-agent update [version]
 anix-agent uninstall [--purge]
+anix-agent validate-config -c /etc/anixops/agent/config.json
 anix-agent server -c /etc/anixops/agent/config.json
 ```
 

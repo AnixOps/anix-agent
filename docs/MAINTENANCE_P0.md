@@ -4,7 +4,15 @@
 
 ## 启动和配置
 
-使用 GitHub Release 附件安装 Agent，运行 `anix-agent server -c /etc/V2bX/config.json`。兼容脚本命令仍为 `v2bx-anixops`。不在生产节点编译发行产物。
+使用 GitHub Release 附件安装 Agent，运行 `anix-agent server -c /etc/anixops/agent/config.json`。兼容脚本命令仍为 `v2bx-anixops`。不在生产节点编译发行产物。首次安装优先写入 `example/config.production.json` 对应的生产模板，但不会自动启动；所有 `REPLACE` 值由部署者在节点本地填写。
+
+启动前必须执行：
+
+```bash
+anix-agent validate-config -c /etc/anixops/agent/config.json
+```
+
+生产配置校验要求 HTTPS ApiHost、TLS gRPC、认证维护 WebSocket、官方签名根、插件目录、节点凭据和明确的 `Environment` / `MaintenanceEnvironment`。失败会返回非零退出码，systemd 不会把配置错误当成成功退出。
 
 节点 `ApiConfig` 需启用 `PluginSupervisorEnabled`，填写 `PluginRoot`、`PluginOfficialPublicKey`，推荐独立 `PluginSocketDir`。完整插件签名与安装约定见 [Supervisor](PLUGIN_SUPERVISOR.md)。
 
@@ -16,7 +24,7 @@
   "PluginRoot": "/var/lib/anixops/plugins",
   "PluginSocketDir": "/run/anixops/plugins",
   "PluginOfficialPublicKey": "BASE64_ED25519_PUBLIC_KEY",
-  "MaintenanceEnvironment": "staging"
+  "MaintenanceEnvironment": "production"
 }
 ```
 

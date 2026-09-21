@@ -1,0 +1,63 @@
+{
+  "Environment": "production",
+  "Log": {"Level": "info", "Output": ""},
+  "Cores": [
+    {
+      "Type": "sing",
+      "Log": {"Level": "warn", "Timestamp": true},
+      "NTP": {"Enable": false, "Server": "time.cloudflare.com", "ServerPort": 123},
+      "OriginalPath": "/etc/anixops/agent/sing_origin.json"
+    }
+  ],
+  "Nodes": [
+    {
+      "Core": "sing",
+      "ApiHost": "https://control.example.com",
+      "Transport": "grpc",
+      "GRPCHost": "control.example.com:443",
+      "GRPCUseTLS": true,
+      "GRPCServerName": "control.example.com",
+      "GRPCKeepalive": 30,
+      "AgentControlEnabled": true,
+      "AgentControlAllowInsecure": false,
+      "MaintenanceEnvironment": "production",
+      "PluginSupervisorEnabled": true,
+      "PluginRoot": "/var/lib/anixops/plugins",
+      "PluginSocketDir": "/run/anixops/plugins",
+      "PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
+      "ApiKey": "REPLACE-WITH-NODE-API-KEY",
+      "NodeID": 0,
+      "Timeout": 30,
+      "EnableSign": true,
+      "EncryptCredential": true,
+      "CredentialFile": "/var/lib/anixops/agent/credential.json.enc",
+      "SyncConfig": {
+        "EnableWebSocket": true,
+        "WSEndpoint": "/api/v2/agent/ws",
+        "WSEndpointFallbacks": ["/api/v2/node/ws"],
+        "ReconnectInterval": 5,
+        "MaxReconnectTries": 0,
+        "PingInterval": 30,
+        "PongTimeout": 10,
+        "AckTimeout": 5,
+        "AckRetries": 2,
+        "BufferSize": 100,
+        "EnableFallback": true,
+        "FallbackInterval": 60
+      },
+      "ListenIP": "0.0.0.0",
+      "SendIP": "0.0.0.0",
+      "DeviceOnlineMinTraffic": 200,
+      "MinReportTraffic": 0,
+      "TCPFastOpen": false,
+      "SniffEnabled": true,
+      "CertConfig": {
+        "CertMode": "file",
+        "RejectUnknownSni": true,
+        "CertDomain": "node.example.com",
+        "CertFile": "/etc/anixops/agent/fullchain.pem",
+        "KeyFile": "/etc/anixops/agent/private.key"
+      }
+    }
+  ]
+}

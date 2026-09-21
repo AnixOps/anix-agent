@@ -34,21 +34,26 @@ and installs these paths:
 | `anix-agent.service` | systemd service (`anix-agent` on OpenRC) |
 | `anix-agent` | CLI and service/configuration manager |
 
-If no configuration is available, the service is not started. Initialize and
-review the configuration first:
+On a fresh install the release archive's `config.production.json` is installed
+as `/etc/anixops/agent/config.json` with mode `0600`. It intentionally contains
+placeholders and the service is not started. Fill those values or run the
+interactive wizard, then validate before starting:
 
 ```bash
 sudo anix-agent initconfig
 sudo anix-agent config
+sudo /usr/local/anixops-agent/anix-agent validate-config \
+  -c /etc/anixops/agent/config.json
 sudo anix-agent start
 sudo anix-agent status
 sudo anix-agent log
 ```
 
-The wizard asks for panel URL, node ID, API key, core type, and the existing
+The wizard asks for the HTTPS panel URL, node ID, API key, core type, and the existing
 data-plane transport. It then asks separately whether to enable the Agent
 Control stream. When enabled, configure its gRPC target, TLS preference, SNI,
-and keepalive settings. Never paste API keys into public logs or support tickets.
+and keepalive settings. The installed binary validates the generated file before
+the wizard reports success. Never paste API keys into public logs or support tickets.
 
 ## Update And Rollback
 
@@ -99,6 +104,8 @@ then set it in `/etc/anixops/agent/config.json`. Verify after startup:
 3. Traffic and online reports arrive at the panel.
 4. The data-plane transport and optional Agent Control TLS settings match the
    Control endpoint.
+5. `validate-config` passes and the authenticated maintenance WebSocket remains
+   connected through a forced reconnect and Agent restart.
 
 ## WireGuard Relay Nodes
 
