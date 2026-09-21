@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://anixops.dev/contracts/maintenance-event.schema.json",
+  "title": "AnixOps Maintenance Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "occurred_at",
+    "environment",
+    "source",
+    "node_id",
+    "plugin_id",
+    "instance_id",
+    "plugin_version",
+    "error_code",
+    "severity",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "plugin_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "instance_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "node_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,127}$"
+    },
+    "agent_version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "config_version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "plugin_version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "first_failed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "healthy_since": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "environment": {
+      "enum": [
+        "production",
+        "staging",
+        "development"
+      ]
+    },
+    "source": {
+      "enum": [
+        "agent",
+        "control",
+        "networkcore",
+        "deployment"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "P0",
+        "P1",
+        "P2",
+        "P3"
+      ]
+    },
+    "status": {
+      "enum": [
+        "open",
+        "degraded",
+        "recovered"
+      ]
+    },
+    "self_heal_action": {
+      "enum": [
+        "none",
+        "retry",
+        "restart",
+        "circuit_break"
+      ]
+    },
+    "self_heal_result": {
+      "enum": [
+        "not_attempted",
+        "succeeded",
+        "failed",
+        "blocked"
+      ]
+    },
+    "error_code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_.-]{0,127}$"
+    },
+    "consecutive_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "diagnostic_ref": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "ticket_key": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "redacted_summary": {
+      "type": "string",
+      "maxLength": 2000
+    }
+  },
+  "$comment": "Runtime validates timestamps >=2020-01-01 and <=received time+5m; first_failed_at/healthy_since <=occurred_at. Regular faults require >=3 consecutive failures and >=2m; sensitive and major errors bypass the wait for manual attention. Recovered requires >=5m continuous health. Batch version anixops.maintenance/v1, max50/256KiB, max16KiB per event. Control minimizes free text server-side."
+}

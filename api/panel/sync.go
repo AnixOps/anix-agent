@@ -20,11 +20,13 @@ const (
 	MsgTypeForceReload  SyncMessageType = "force_reload"  // 强制重载
 
 	// 节点 -> 服务端
-	MsgTypeHeartbeat     SyncMessageType = "heartbeat"      // 心跳响应
-	MsgTypeAck           SyncMessageType = "ack"            // 消息确认
-	MsgTypeTrafficReport SyncMessageType = "traffic_report" // 流量上报
-	MsgTypeAlertReport   SyncMessageType = "alert"          // 告警上报
-	MsgTypePong          SyncMessageType = "pong"           // Pong 响应
+	MsgTypeMaintenanceEvents SyncMessageType = "maintenance_events"
+	MsgTypeMaintenanceAck    SyncMessageType = "maintenance_ack"
+	MsgTypeHeartbeat         SyncMessageType = "heartbeat"      // 心跳响应
+	MsgTypeAck               SyncMessageType = "ack"            // 消息确认
+	MsgTypeTrafficReport     SyncMessageType = "traffic_report" // 流量上报
+	MsgTypeAlertReport       SyncMessageType = "alert"          // 告警上报
+	MsgTypePong              SyncMessageType = "pong"           // Pong 响应
 )
 
 // ========== 同步消息结构 ==========

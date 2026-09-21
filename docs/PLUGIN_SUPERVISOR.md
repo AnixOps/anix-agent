@@ -12,6 +12,7 @@ Add the following fields to the node `ApiConfig` that owns the physical Agent:
 {
   "AgentControlEnabled": true,
   "PluginSupervisorEnabled": true,
+  "MaintenanceEnvironment": "staging",
   "PluginRoot": "/var/lib/anixops/plugins",
   "PluginSocketDir": "/run/anixops/plugins",
   "PluginOfficialPublicKey": "BASE64_ED25519_PUBLIC_KEY"
@@ -177,3 +178,7 @@ Signed field values are never silently trimmed or lowercased; non-canonical
 role, transport, endpoint, CIDR, and health values are rejected.
 Only entry tunnels declare source-policy `routing.table` and `priority`; exit
 tunnels must omit them or set both to zero.
+
+## Maintenance reporting
+
+Enabling the Supervisor starts node-scoped maintenance monitoring and a durable outbox. The first delivery uses the authenticated HTTP/WebSocket sync connection; HTTP/REST nodes reuse sync and gRPC nodes start a maintenance-only WebSocket bridge using the HTTP(S) ApiHost and existing registered node credentials alongside GRPCHost. WebSocket must remain enabled. Health failures and process exits follow the 3 failures / 2 minutes gate. Only machine-telemetry may restart automatically, at most twice per instance per rolling 30 minutes, persisted across Agent restarts. Credentials, permissions, signatures and invalid configuration always require manual handling. See [the maintenance runbook](MAINTENANCE_P0.md) for configuration, storage, acknowledgment, recovery and acceptance boundaries.

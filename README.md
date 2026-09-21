@@ -1,5 +1,9 @@
 # AnixOps Agent
 
+维护入口：[Agent 运维手册](docs/MAINTENANCE_P0.md)
+
+Agent 分批交付与验收状态：[docs/P4_EXECUTION_STATUS.md](docs/P4_EXECUTION_STATUS.md)；维护事件契约：[docs/contracts/maintenance-event.schema.json](docs/contracts/maintenance-event.schema.json)
+
 AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，用于连接 AnixOps
 Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、用户认证、
 流量统计、在线状态上报和证书管理。

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AnixOps/anix-agent/v4/common/maintenance"
 	"io"
 	"net/url"
 	"os"
@@ -370,12 +371,15 @@ type HealthChecker interface {
 }
 
 type Config struct {
-	RootDir   string
-	SocketDir string
-	PublicKey ed25519.PublicKey
-	Runner    Runner
-	Health    HealthChecker
-	Now       func() time.Time
+	Maintenance *maintenance.Store
+	// DisableMaintenanceMonitor leaves deterministic/manual polling to tests.
+	DisableMaintenanceMonitor bool
+	RootDir                   string
+	SocketDir                 string
+	PublicKey                 ed25519.PublicKey
+	Runner                    Runner
+	Health                    HealthChecker
+	Now                       func() time.Time
 }
 
 type PluginState struct {
@@ -449,6 +453,9 @@ func (lock *pluginLock) acquire(ctx context.Context) (func(), error) {
 }
 
 type Supervisor struct {
+	maintenance         *maintenance.Store
+	maintenanceCancel   context.CancelFunc
+	maintenanceDone     chan struct{}
 	lifecycle           *lifecycleGate
 	shutdown            *pluginLock
 	mu                  sync.Mutex
@@ -501,7 +508,7 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 		return nil, err
 	}
 	supervisor := &Supervisor{
-		lifecycle: newLifecycleGate(), shutdown: newPluginLock(),
+		lifecycle: newLifecycleGate(), shutdown: newPluginLock(), maintenance: config.Maintenance,
 		rootDir: rootDir, socketDir: socketDir, publicKey: append(ed25519.PublicKey(nil), config.PublicKey...),
 		runner: config.Runner, health: config.Health, now: config.Now,
 		state:     persistedState{Plugins: map[string]PluginState{}, Journal: map[string]JournalEntry{}},
@@ -516,6 +523,9 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 	}
 	supervisor.recoverPendingCleanup()
 	supervisor.restoreEnabled()
+	if !config.DisableMaintenanceMonitor {
+		supervisor.startMaintenanceMonitor()
+	}
 	return supervisor, nil
 }
 
@@ -1560,6 +1570,14 @@ func (s *Supervisor) Close(ctx context.Context) error {
 		return err
 	}
 	defer unlockShutdown()
+	if s.maintenanceCancel != nil {
+		s.maintenanceCancel()
+		select {
+		case <-s.maintenanceDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if err := s.lifecycle.beginClose(ctx); err != nil {
 		return err
 	}
@@ -1709,6 +1727,14 @@ func (s *Supervisor) observeProcessExit(id string, generation uint64, exited <-c
 	s.state.Plugins[id] = state
 	_ = s.persistLocked()
 	s.mu.Unlock()
+	if s.maintenance != nil {
+		observation := maintenanceObservation(state)
+		observation.ErrorCode = "PLUGIN_PROCESS_EXITED"
+		observation.RestartAllowed = false
+		if _, err := s.maintenance.Observe(observation, s.now()); err != nil {
+			logMaintenanceFailure(err)
+		}
+	}
 
 	manifest, verifyErr := s.verifyInstalledVersion(id, state.DesiredVersion)
 	var cleanupErr error
@@ -2139,6 +2165,9 @@ func (s *Supervisor) restoreEnabled() {
 	deferred := false
 	for id, state := range s.state.Plugins {
 		if state.Enabled && !state.CleanupPending {
+			if s.maintenance != nil && state.Health == "unhealthy" {
+				continue
+			}
 			if entry, blocked := s.interruptedRuntimeTransitionLocked(state); blocked {
 				state.Health = "interrupted"
 				state.LastError = fmt.Sprintf(

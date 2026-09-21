@@ -39,6 +39,7 @@ type ApiConfig struct {
 	AgentControlAllowInsecure bool `json:"AgentControlAllowInsecure"`
 	// PluginSupervisorEnabled activates the local official-plugin Supervisor for
 	// this Agent process. It is off by default for legacy compatibility.
+	MaintenanceEnvironment  string `json:"MaintenanceEnvironment"`
 	PluginSupervisorEnabled bool   `json:"PluginSupervisorEnabled"`
 	PluginRoot              string `json:"PluginRoot"`
 	PluginSocketDir         string `json:"PluginSocketDir"`

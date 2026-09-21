@@ -17,6 +17,7 @@ import (
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
 	grpcapi "github.com/AnixOps/anix-agent/v4/api/grpc"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/maintenance"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/AnixOps/anix-agent/v4/plugin"
@@ -127,6 +128,9 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 				return n.failStart(err)
 			}
 			n.controllers[i].SetPluginSupervisor(supervisor)
+			if err := n.controllers[i].attachMaintenanceTransport(supervisor); err != nil {
+				return n.failStart(err)
+			}
 		}
 		if nodes[i].ApiConfig.AgentControlEnabled {
 			candidate := agentNodeStart{
@@ -240,11 +244,12 @@ type agentNodeStart struct {
 }
 
 type pluginSupervisorSpec struct {
-	rootDir   string
-	socketDir string
-	publicKey ed25519.PublicKey
-	identity  string
-	legacy    bool
+	rootDir     string
+	socketDir   string
+	publicKey   ed25519.PublicKey
+	identity    string
+	environment string
+	legacy      bool
 }
 
 func countPluginSupervisorNodes(nodes []conf.NodeConfig) int {
@@ -286,10 +291,16 @@ func (n *Node) supervisorForNode(nodeID int, api conf.ApiConfig) (*plugin.Superv
 	if factory == nil {
 		factory = plugin.NewSupervisor
 	}
+	environment := spec.environment
+	store, err := maintenance.Open(filepath.Join(spec.rootDir, "maintenance.json"), strconv.Itoa(nodeID), environment, panel.Version)
+	if err != nil {
+		return nil, fmt.Errorf("open maintenance outbox for node %d: %w", nodeID, err)
+	}
 	supervisor, err := factory(plugin.Config{
-		RootDir:   spec.rootDir,
-		SocketDir: spec.socketDir,
-		PublicKey: spec.publicKey,
+		Maintenance: store,
+		RootDir:     spec.rootDir,
+		SocketDir:   spec.socketDir,
+		PublicKey:   spec.publicKey,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create plugin supervisor for node %d: %w", nodeID, err)
@@ -353,9 +364,13 @@ func pluginSupervisorSpecForNodeMode(nodeID int, api conf.ApiConfig, allowLegacy
 	if err != nil {
 		return pluginSupervisorSpec{}, err
 	}
+	environment := strings.TrimSpace(api.MaintenanceEnvironment)
+	if environment == "" {
+		environment = "development"
+	}
 	return pluginSupervisorSpec{
 		rootDir: rootDir, socketDir: socketDir, publicKey: publicKey,
-		identity: nodeControlIdentity(api), legacy: legacy,
+		identity: nodeControlIdentity(api), legacy: legacy, environment: environment,
 	}, nil
 }
 
@@ -428,5 +443,5 @@ func namespacedPluginPath(base string, nodeID int) (string, error) {
 func samePluginSupervisorSpec(left, right pluginSupervisorSpec) bool {
 	return left.rootDir == right.rootDir && left.socketDir == right.socketDir &&
 		len(left.publicKey) == len(right.publicKey) && string(left.publicKey) == string(right.publicKey) &&
-		left.identity == right.identity && left.legacy == right.legacy
+		left.identity == right.identity && left.legacy == right.legacy && left.environment == right.environment
 }

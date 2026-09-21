@@ -1,9 +1,11 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/maintenance"
 	"github.com/AnixOps/anix-agent/v4/common/sign"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/gorilla/websocket"
@@ -50,6 +53,7 @@ func (s SyncState) String() string {
 
 // SyncConfig 鍚屾閰嶇疆
 type SyncConfig struct {
+	MaintenanceOnly bool `json:"-"`
 	// WebSocket 閰嶇疆
 	EnableWebSocket     bool          `json:"EnableWebSocket"`
 	WSEndpoint          string        `json:"WSEndpoint"`
@@ -104,8 +108,12 @@ type SyncManager struct {
 	reconnecting int32 // atomic
 
 	// 娑堟伅閫氶亾
-	inbound  chan *panel.SyncMessage
-	outbound chan *panel.SyncMessage
+	inbound          chan *panel.SyncMessage
+	outbound         chan *panel.SyncMessage
+	maintenanceMu    sync.Mutex
+	maintenanceStore *maintenance.Store
+	workersOnce      sync.Once
+	writeMu          sync.Mutex
 
 	// 寰呯‘璁ゆ秷鎭?
 	pendingAcks sync.Map // map[msgID]*pendingAck
@@ -175,6 +183,8 @@ func (sm *SyncManager) Start() error {
 			sm.setState(SyncStateFallback)
 			sm.wg.Add(1)
 			go sm.runFallbackMode()
+		} else {
+			sm.startReconnect()
 		}
 		return nil
 	}
@@ -220,11 +230,19 @@ func (sm *SyncManager) connect() error {
 		}
 
 		sm.connMu.Lock()
+		if sm.ctx.Err() != nil || sm.getState() == SyncStateClosed {
+			sm.connMu.Unlock()
+			_ = conn.Close()
+			return sm.ctx.Err()
+		}
 		sm.conn = conn
+		conn.SetReadLimit(4 << 20)
 		sm.connMu.Unlock()
 
 		sm.setState(SyncStateConnected)
+		sm.maintenanceMu.Lock()
 		sm.stats.LastConnectedAt = time.Now()
+		sm.maintenanceMu.Unlock()
 
 		log.WithField("endpoint", endpoint).Info("WebSocket connected successfully")
 		return nil
@@ -338,11 +356,14 @@ func (sm *SyncManager) buildHeaders(endpoint string) http.Header {
 
 // startWorkers 鍚姩宸ヤ綔鍗忕▼
 func (sm *SyncManager) startWorkers() {
-	sm.wg.Add(4)
+	sm.workersOnce.Do(func() {
+		sm.wg.Add(3)
+		go sm.writeLoop()
+		go sm.processLoop()
+		go sm.heartbeatLoop()
+	})
+	sm.wg.Add(1)
 	go sm.readLoop()
-	go sm.writeLoop()
-	go sm.processLoop()
-	go sm.heartbeatLoop()
 }
 
 // readLoop 璇诲彇娑堟伅寰幆
@@ -381,7 +402,9 @@ func (sm *SyncManager) readLoop() {
 		msg.Type = normalizeIncomingMessageType(msg.Type)
 
 		atomic.AddInt64(&sm.stats.MessagesReceived, 1)
+		sm.maintenanceMu.Lock()
 		sm.stats.LastMessageAt = time.Now()
+		sm.maintenanceMu.Unlock()
 
 		// 浼樺厛澶勭悊绱ф€ユ秷鎭?
 		if msg.IsUrgent() {
@@ -469,6 +492,9 @@ func (sm *SyncManager) handleMessage(msg *panel.SyncMessage) {
 	}).Debug("Processing sync message")
 
 	var err error
+	if sm.config.MaintenanceOnly && msg.Type != panel.MsgTypeMaintenanceAck && msg.Type != panel.MsgTypePing {
+		return
+	}
 
 	switch msg.Type {
 	case panel.MsgTypeConfigUpdate:
@@ -485,6 +511,11 @@ func (sm *SyncManager) handleMessage(msg *panel.SyncMessage) {
 		err = sm.handlePing(msg)
 	case panel.MsgTypeForceReload:
 		err = sm.handleForceReload(msg)
+	case panel.MsgTypeMaintenanceAck:
+		if err := sm.handleMaintenanceAck(msg); err != nil {
+			log.WithError(err).Warn("Maintenance acknowledgment rejected")
+		}
+		return
 	case panel.MsgTypeAck:
 		sm.handleAck(msg)
 		return // Ack 娑堟伅涓嶉渶瑕佸啀纭
@@ -721,15 +752,92 @@ func (sm *SyncManager) sendAck(msgID string, err error) {
 
 // sendHeartbeat 鍙戦€佸績璺?
 func (sm *SyncManager) sendHeartbeat() error {
-	payload := &panel.HeartbeatPayload{
-		Uptime:  time.Since(sm.stats.LastConnectedAt).Milliseconds() / 1000,
-		Version: "1.0.0", // TODO: 浣跨敤瀹為檯鐗堟湰
+	sm.maintenanceMu.Lock()
+	connectedAt := sm.stats.LastConnectedAt
+	store := sm.maintenanceStore
+	sm.maintenanceMu.Unlock()
+	if sm.config.MaintenanceOnly {
+		if store == nil {
+			return nil
+		}
+		return sm.sendMaintenanceBatch(store)
 	}
+	payload := &panel.HeartbeatPayload{Uptime: int64(time.Since(connectedAt).Seconds()), Version: panel.Version}
+	msg, err := panel.NewSyncMessage(panel.MsgTypeHeartbeat, sm.client.GetNodeID(), payload)
+	if err != nil {
+		return err
+	}
+	select {
+	case sm.outbound <- msg:
+	case <-sm.ctx.Done():
+		return sm.ctx.Err()
+	}
+	if store == nil {
+		return nil
+	}
+	return sm.sendMaintenanceBatch(store)
+}
 
-	msg, _ := panel.NewSyncMessage(panel.MsgTypeHeartbeat, sm.client.GetNodeID(), payload)
-	sm.outbound <- msg
-
-	return nil
+func (sm *SyncManager) SetMaintenanceStore(store *maintenance.Store) {
+	sm.maintenanceMu.Lock()
+	defer sm.maintenanceMu.Unlock()
+	sm.maintenanceStore = store
+}
+func (sm *SyncManager) QueueMaintenanceEvent(event maintenance.Event) error {
+	sm.maintenanceMu.Lock()
+	store := sm.maintenanceStore
+	sm.maintenanceMu.Unlock()
+	if store == nil {
+		return fmt.Errorf("durable maintenance outbox is not configured")
+	}
+	return store.Queue(event)
+}
+func (sm *SyncManager) sendMaintenanceBatch(store *maintenance.Store) error {
+	events, err := store.Pending(maintenance.MaxBatchSize)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	batch := maintenance.Batch{Version: maintenance.Version, Events: events}
+	msg, err := panel.NewSyncMessage(panel.MsgTypeMaintenanceEvents, sm.client.GetNodeID(), batch)
+	if err != nil {
+		return err
+	}
+	if len(msg.Payload) > maintenance.MaxPayloadBytes {
+		return fmt.Errorf("maintenance batch exceeds payload limit")
+	}
+	select {
+	case sm.outbound <- msg:
+		return nil
+	case <-sm.ctx.Done():
+		return sm.ctx.Err()
+	}
+}
+func (sm *SyncManager) handleMaintenanceAck(msg *panel.SyncMessage) error {
+	if len(msg.Payload) > maintenance.MaxPayloadBytes {
+		return fmt.Errorf("maintenance acknowledgment exceeds payload limit")
+	}
+	if msg.NodeID != 0 && msg.NodeID != sm.client.GetNodeID() {
+		return fmt.Errorf("maintenance acknowledgment node mismatch")
+	}
+	var ack maintenance.Acknowledgment
+	decoder := json.NewDecoder(bytes.NewReader(msg.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&ack); err != nil {
+		return err
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return fmt.Errorf("invalid trailing acknowledgment data")
+	}
+	sm.maintenanceMu.Lock()
+	store := sm.maintenanceStore
+	sm.maintenanceMu.Unlock()
+	if store == nil {
+		return fmt.Errorf("durable maintenance outbox is not configured")
+	}
+	return store.Acknowledge(ack)
 }
 
 // send 鍙戦€佹秷鎭?
@@ -796,6 +904,11 @@ func nextMessageID() string {
 }
 
 func (sm *SyncManager) send(msg *panel.SyncMessage) error {
+	if msg == nil {
+		return nil
+	}
+	sm.writeMu.Lock()
+	defer sm.writeMu.Unlock()
 	sm.connMu.RLock()
 	conn := sm.conn
 	sm.connMu.RUnlock()
@@ -809,6 +922,9 @@ func (sm *SyncManager) send(msg *panel.SyncMessage) error {
 		return err
 	}
 
+	if err := conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		return err
 	}
@@ -830,10 +946,17 @@ func (sm *SyncManager) handleDisconnect() {
 		return
 	}
 
-	sm.setState(SyncStateDisconnected)
+	if !sm.compareAndSetState(SyncStateConnected, SyncStateDisconnected) {
+		return
+	}
 
-	// 鍚姩閲嶈繛
-	go sm.reconnectLoop()
+	// Reconnect is part of the manager lifetime.
+	sm.startReconnect()
+}
+
+func (sm *SyncManager) startReconnect() {
+	sm.wg.Add(1)
+	go func() { defer sm.wg.Done(); sm.reconnectLoop() }()
 }
 
 // reconnectLoop 閲嶈繛寰幆
@@ -906,6 +1029,9 @@ func (sm *SyncManager) runFallbackMode() {
 			}
 
 			// 缁х画浣跨敤杞
+			if sm.config.MaintenanceOnly {
+				continue
+			}
 			if err := sm.controller.nodeInfoMonitor(); err != nil {
 				log.WithError(err).Warn("Fallback poll failed")
 			}
@@ -947,6 +1073,8 @@ func (sm *SyncManager) Close() error {
 
 // Stats 鑾峰彇缁熻淇℃伅
 func (sm *SyncManager) Stats() *SyncStats {
+	sm.maintenanceMu.Lock()
+	defer sm.maintenanceMu.Unlock()
 	return &SyncStats{
 		MessagesReceived: atomic.LoadInt64(&sm.stats.MessagesReceived),
 		MessagesSent:     atomic.LoadInt64(&sm.stats.MessagesSent),
