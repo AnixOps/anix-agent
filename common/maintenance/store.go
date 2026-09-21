@@ -387,3 +387,16 @@ func (s *Store) CompleteRestart(observation Observation, now time.Time, restartE
 func manualError(code string) bool {
 	return oneOf(code, "PLUGIN_CREDENTIAL_INVALID", "PLUGIN_PERMISSION_DENIED", "PLUGIN_SIGNATURE_INVALID", "PLUGIN_CONFIG_INVALID")
 }
+
+// HasFailure gates startup restoration as well as live restarts. Graceful
+// shutdown changes a plugin's process state to stopped; the independent durable
+// incident state must still prevent that transition from clearing its budget.
+func (s *Store) HasFailure(instanceID string) (bool, error) {
+	failed := false
+	err := s.transaction(func(state *diskState) error {
+		instance := state.Instances[instanceID]
+		failed = instance.FirstFailedAt != nil
+		return nil
+	})
+	return failed, err
+}

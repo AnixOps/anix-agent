@@ -2165,8 +2165,18 @@ func (s *Supervisor) restoreEnabled() {
 	deferred := false
 	for id, state := range s.state.Plugins {
 		if state.Enabled && !state.CleanupPending {
-			if s.maintenance != nil && state.Health == "unhealthy" {
-				continue
+			if s.maintenance != nil {
+				pending, err := s.maintenance.HasFailure(id)
+				if err != nil {
+					state.Health = "unhealthy"
+					state.LastError = "maintenance state unavailable; automatic restore deferred"
+					s.state.Plugins[id] = state
+					deferred = true
+					continue
+				}
+				if pending || state.Health == "unhealthy" {
+					continue
+				}
 			}
 			if entry, blocked := s.interruptedRuntimeTransitionLocked(state); blocked {
 				state.Health = "interrupted"

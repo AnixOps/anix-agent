@@ -186,3 +186,38 @@ func TestMaintenanceInvalidOnDiskConfigRequiresManualAction(t *testing.T) {
 	require.Equal(t, 1, runner.Starts())
 	require.NoError(t, s.Close(context.Background()))
 }
+
+func TestMaintenanceGracefulAgentRestartCannotBypassIncidentBudget(t *testing.T) {
+	root := t.TempDir()
+	store, err := maintenance.Open(filepath.Join(root, "maintenance.json"), "1", "development", "1")
+	require.NoError(t, err)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	runner := &fakeRunner{}
+	now := time.Now().Add(-time.Hour)
+	cfg := Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: pub, Runner: runner, Health: &maintenanceHealth{}, Now: func() time.Time { return now }, Maintenance: store, DisableMaintenanceMonitor: true}
+	s, err := NewSupervisor(cfg)
+	require.NoError(t, err)
+	_, err = s.Install(context.Background(), signedRequest(t, priv, []byte("plugin"), "machine-telemetry", "1"))
+	require.NoError(t, err)
+	_, err = s.Handle(context.Background(), "plugin.configure", testEnvelope("configure", "machine-telemetry", "1", 1, []byte(`{}`)))
+	require.NoError(t, err)
+	_, err = s.Handle(context.Background(), "plugin.enable", testEnvelope("enable", "machine-telemetry", "1", 2, nil))
+	require.NoError(t, err)
+	observation := maintenance.Observation{PluginID: "machine-telemetry", PluginVersion: "1", ErrorCode: "PLUGIN_HEALTH_FAILED", RestartAllowed: true}
+	for i := 0; i < 4; i++ {
+		_, err := store.Observe(observation, now.Add(time.Duration(i)*time.Minute))
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.Close(context.Background()))
+	// Close wrote Health=stopped while the qualified fault and both attempts remain.
+	next := &fakeRunner{}
+	cfg.Runner = next
+	now = now.Add(4 * time.Minute)
+	restarted, err := NewSupervisor(cfg)
+	require.NoError(t, err)
+	require.Zero(t, next.Starts())
+	require.NoError(t, restarted.CheckMaintenance(context.Background()))
+	require.Zero(t, next.Starts())
+	require.NoError(t, restarted.Close(context.Background()))
+}
