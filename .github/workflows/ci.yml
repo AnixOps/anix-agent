@@ -62,7 +62,7 @@ jobs:
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
 
       - name: Verify durable maintenance transport and restart policy under race detector
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt)' -count=1
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt|InstanceState)' -count=1
 
       - name: Verify WireGuard relay and peer limit contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1

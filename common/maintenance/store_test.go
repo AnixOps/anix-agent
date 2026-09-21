@@ -1,11 +1,13 @@
 package maintenance
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -240,5 +242,75 @@ func TestCorruptStateFailsClosed(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, data, string(stored))
 		})
+	}
+}
+
+func TestOutboxByteBoundedBatchesDrainLargeEvents(t *testing.T) {
+	store := openStore(t, filepath.Join(t.TempDir(), "state.json"))
+	for i := 0; i < 50; i++ {
+		event := testEvent("large-" + strconv.Itoa(i))
+		event.RedactedSummary = strings.Repeat("\\", 2000)
+		event.DiagnosticRef = strings.Repeat("\\", 256)
+		event.TicketKey = strings.Repeat("\\", 256)
+		require.NoError(t, store.Queue(event))
+	}
+	total, batches := 0, 0
+	for {
+		events, err := store.Pending(50)
+		require.NoError(t, err)
+		if len(events) == 0 {
+			break
+		}
+		batches++
+		total += len(events)
+		encoded, err := json.Marshal(Batch{Version: Version, Events: events})
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(encoded), MaxPayloadBytes)
+		results := make([]EventResult, len(events))
+		for i, event := range events {
+			results[i] = EventResult{EventID: event.EventID, Persisted: true}
+		}
+		require.NoError(t, store.Acknowledge(Acknowledgment{Version: Version, Events: results}))
+	}
+	require.Equal(t, 50, total)
+	require.Greater(t, batches, 1)
+}
+func TestOutboxMixedInvalidAndDurableAcknowledgments(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "state.json"))
+	require.NoError(t, s.Queue(testEvent("durable")))
+	require.NoError(t, s.Queue(testEvent("rejected")))
+	require.NoError(t, s.Acknowledge(Acknowledgment{Version: Version, Events: []EventResult{{EventID: "", Persisted: false, Error: "invalid_event"}, {EventID: "durable", Persisted: true}, {EventID: "rejected", Persisted: false}, {EventID: "bad/id", Persisted: true}}}))
+	events, err := s.Pending(50)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.Equal(t, "rejected", events[0].EventID)
+}
+func TestInstanceStateNamespacesPluginAndInstance(t *testing.T) {
+	s := openStore(t, filepath.Join(t.TempDir(), "state.json"))
+	base := time.Now().Add(-time.Hour)
+	first := Observation{PluginID: "plugin-a", InstanceID: "default", PluginVersion: "1", ErrorCode: "PLUGIN_PROCESS_EXITED", RestartAllowed: true}
+	second := first
+	second.PluginID = "plugin-b"
+	for _, o := range []Observation{first, second} {
+		for i := 0; i < 3; i++ {
+			decision, err := s.Observe(o, base.Add(time.Duration(i)*time.Minute))
+			require.NoError(t, err)
+			require.Equal(t, i == 2, decision.Restart)
+		}
+		decision, err := s.Observe(o, base.Add(3*time.Minute))
+		require.NoError(t, err)
+		require.True(t, decision.Restart)
+		require.NoError(t, s.CompleteRestart(o, base.Add(3*time.Minute), nil))
+		decision, err = s.Observe(o, base.Add(4*time.Minute))
+		require.NoError(t, err)
+		require.False(t, decision.Restart)
+	}
+	events, err := s.Pending(50)
+	require.NoError(t, err)
+	require.Len(t, events, 8)
+	for _, o := range []Observation{first, second} {
+		hasFailure, err := s.HasFailure(o.PluginID, o.InstanceID)
+		require.NoError(t, err)
+		require.True(t, hasFailure)
 	}
 }

@@ -2166,7 +2166,7 @@ func (s *Supervisor) restoreEnabled() {
 	for id, state := range s.state.Plugins {
 		if state.Enabled && !state.CleanupPending {
 			if s.maintenance != nil {
-				pending, err := s.maintenance.HasFailure(id)
+				pending, err := s.maintenance.HasFailure(id, id)
 				if err != nil {
 					state.Health = "unhealthy"
 					state.LastError = "maintenance state unavailable; automatic restore deferred"
