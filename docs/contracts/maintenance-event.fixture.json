@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "event_id": "contract-event-001",
+  "occurred_at": "2026-09-22T00:02:00Z",
+  "environment": "staging",
+  "source": "agent",
+  "node_id": "42",
+  "plugin_id": "machine-telemetry",
+  "instance_id": "machine-telemetry:default",
+  "plugin_version": "1.0.0",
+  "agent_version": "1.2.3",
+  "config_version": "cfg-1",
+  "error_code": "PLUGIN_HEALTH_FAILED",
+  "severity": "P2",
+  "status": "open",
+  "first_failed_at": "2026-09-22T00:00:00Z",
+  "consecutive_failures": 3,
+  "self_heal_action": "restart",
+  "self_heal_result": "not_attempted"
+}
