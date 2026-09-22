@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -361,6 +362,114 @@ func testEnvelope(operationID, pluginID, version string, revision uint64, config
 		SessionID: "session-1", Revision: revision, PluginID: pluginID, TargetVersion: version,
 		ConfigHash: hex.EncodeToString(digest[:]), Config: config,
 	}
+}
+
+func testSecretEnvelope(operationID, pluginID, version string, revision uint64, config []byte, materials map[string]string) *agent.OperationEnvelope {
+	digest := sha256.Sum256(config)
+	envelope := &agent.OperationEnvelope{
+		Version: agent.OperationEnvelopeVersionV2, OperationID: operationID, IdempotencyKey: operationID,
+		SessionID: "session-1", Revision: revision, PluginID: pluginID, TargetVersion: version,
+		ConfigHash: hex.EncodeToString(digest[:]), Config: config,
+	}
+	for reference, content := range materials {
+		materialDigest := sha256.Sum256([]byte(content))
+		envelope.SecretMaterials = append(envelope.SecretMaterials, agent.SecretMaterial{
+			Reference: reference, SHA256: hex.EncodeToString(materialDigest[:]),
+			ContentBase64: base64.StdEncoding.EncodeToString([]byte(content)),
+		})
+	}
+	sort.Slice(envelope.SecretMaterials, func(i, j int) bool {
+		return envelope.SecretMaterials[i].Reference < envelope.SecretMaterials[j].Reference
+	})
+	return envelope
+}
+
+func TestSupervisorMaterializesAndRotatesPrivateSecretFiles(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	supervisor, err := NewSupervisor(Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("secret-runtime"), "gost-mesh", "1.0.0"))
+	require.NoError(t, err)
+
+	firstReference := "secret://mesh-edge@1/client.key"
+	firstConfig := []byte(`{"tls":{"key_file":"` + firstReference + `"}}`)
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", testSecretEnvelope(
+		"configure-secret-v1", "gost-mesh", "1.0.0", 1, firstConfig, map[string]string{firstReference: "private-key-v1"},
+	))
+	require.NoError(t, err)
+	firstPath := filepath.Join(root, "gost-mesh", "1.0.0", "private", "secrets", "mesh-edge", "1", "client.key")
+	contents, err := os.ReadFile(firstPath)
+	require.NoError(t, err)
+	require.Equal(t, "private-key-v1", string(contents))
+	info, err := os.Stat(firstPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	runtimeConfig, err := os.ReadFile(filepath.Join(root, "gost-mesh", "1.0.0", "config.json"))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"tls":{"key_file":"`+firstPath+`"}}`, string(runtimeConfig))
+	require.NotContains(t, string(runtimeConfig), "private-key-v1")
+
+	secondReference := "secret://mesh-edge@2/client.key"
+	secondConfig := []byte(`{"tls":{"key_file":"` + secondReference + `"}}`)
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", testSecretEnvelope(
+		"configure-secret-v2", "gost-mesh", "1.0.0", 2, secondConfig, map[string]string{secondReference: "private-key-v2"},
+	))
+	require.NoError(t, err)
+	_, err = os.Stat(firstPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	secondPath := filepath.Join(root, "gost-mesh", "1.0.0", "private", "secrets", "mesh-edge", "2", "client.key")
+	contents, err = os.ReadFile(secondPath)
+	require.NoError(t, err)
+	require.Equal(t, "private-key-v2", string(contents))
+	stateBytes, err := os.ReadFile(filepath.Join(root, "state.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(stateBytes), "private-key-v1")
+	require.NotContains(t, string(stateBytes), "private-key-v2")
+	require.Contains(t, string(stateBytes), secondReference)
+	secondDigest := sha256.Sum256([]byte("private-key-v2"))
+	require.Contains(t, string(stateBytes), hex.EncodeToString(secondDigest[:]))
+	var persisted persistedState
+	require.NoError(t, json.Unmarshal(stateBytes, &persisted))
+	require.Equal(t, []SecretMaterialAudit{{Reference: secondReference, SHA256: hex.EncodeToString(secondDigest[:])}}, persisted.Journal["configure-secret-v2"].SecretMaterials)
+
+	replayed := testSecretEnvelope("configure-secret-v2", "gost-mesh", "1.0.0", 2, secondConfig, map[string]string{secondReference: "changed-private-key"})
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", replayed)
+	require.ErrorContains(t, err, "operation_id is already bound")
+}
+
+func TestSupervisorSecretConfigureFailureRestoresConfigAndRemovesNewMaterial(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	runner := &configRecordingRunner{}
+	supervisor, err := NewSupervisor(Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: failingHealth{err: errors.New("injected health failure")}})
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("secret-rollback"), "gost-mesh", "1.0.0"))
+	require.NoError(t, err)
+	oldConfig := []byte(`{"mode":"old"}`)
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", testEnvelope("configure-old-secret-test", "gost-mesh", "1.0.0", 1, oldConfig))
+	require.NoError(t, err)
+	// Enable must fail with this health checker, so swap in a healthy checker
+	// for the existing process and then fail only the replacement start.
+	supervisor.health = &fakeHealth{}
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-old-secret-test", "gost-mesh", "1.0.0", 2, nil))
+	require.NoError(t, err)
+	supervisor.health = failingHealth{err: errors.New("injected health failure")}
+
+	reference := "secret://mesh-edge@3/client.key"
+	newConfig := []byte(`{"tls":{"key_file":"` + reference + `"}}`)
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", testSecretEnvelope(
+		"configure-failing-secret", "gost-mesh", "1.0.0", 3, newConfig, map[string]string{reference: "new-private-key"},
+	))
+	require.ErrorContains(t, err, "injected health failure")
+	stored, readErr := os.ReadFile(filepath.Join(root, "gost-mesh", "1.0.0", "config.json"))
+	require.NoError(t, readErr)
+	require.Equal(t, oldConfig, stored)
+	secretPath := filepath.Join(root, "gost-mesh", "1.0.0", "private", "secrets", "mesh-edge", "3", "client.key")
+	_, statErr := os.Stat(secretPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestSupervisorInstallLifecycleAndJournal(t *testing.T) {

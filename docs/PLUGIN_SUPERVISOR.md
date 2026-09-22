@@ -82,6 +82,18 @@ process. A package may be zip, tar, or tar.gz and uses a signed platform
 entrypoint (`agent-<goos>-<goarch>`, `agent-any`, or `agent`). The original
 package and materialized executable are both re-hashed before every start.
 
+Operation envelope `anixops.operation/v2` carries an exact set of encrypted-
+at-rest Control Secret materials for canonical config references of the form
+`secret://id@version/file`. The Agent verifies the reference set, canonical
+base64, size bounds and SHA-256 before writing files below
+`<plugin>/<version>/private/secrets/<id>/<secret-version>/<file>`. Directories
+use `0700`, files use `0600`, and symlinks or changed content for an immutable
+reference fail closed. Runtime `config.json` contains private absolute paths,
+never the material bytes. Successful rotation removes stale files; lifecycle
+failure restores prior config/state and removes newly created material.
+`state.json` journals only references and SHA-256 values, binding exact replay
+without retaining content.
+
 A packaged Agent entrypoint may declare signed auxiliary executables through
 the same `entrypoints` map:
 
@@ -165,10 +177,10 @@ recovery in regular CI. `gost-mesh` also consumes a signed pinned GOST
 runtime from `runtime/gost`; QUIC and WSS require mutual TLS, and its privileged
 namespace matrix proves TCP/UDP data flow, TLS rejection, policy routing, child
 cleanup, and unrelated-state preservation. TUIC is not a GOST Mesh v1
-capability. Signed artifact transport from Control now has an Agent-side
-contract and implementation; Control endpoint integration, Secret-ID
-materialization, topology apply, GOST-to-NAT composition, and sustained canary
-evidence remain release gates, so this phase must not be described as production
+capability. Signed artifact transport and Control-to-Agent Secret private-file
+materialization now have cross-repository process coverage. Topology apply,
+GOST-to-NAT composition, multi-node rollback and sustained canary evidence
+remain release gates, so this phase must not be described as production
 forwarding cutover.
 
 The signed `gost-mesh` executable also supports

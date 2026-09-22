@@ -39,6 +39,7 @@ const (
 	metricsProviderTimeout  = 2 * time.Second
 	maxPluginObservations   = 32
 	maxPluginRuleCounters   = 1024
+	maxControlMessageBytes  = 8 << 20
 	operationCancelKind     = "operation.cancel"
 	operationCancelledText  = "operation cancelled"
 	operationNotRunningText = "operation cancelled/not running"
@@ -593,11 +594,13 @@ func (c *Client) sessionWasStable(connectedAt time.Time) bool {
 }
 
 func (c *Client) dialOptions() []grpc.DialOption {
+	receiveLimit := grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxControlMessageBytes))
 	if len(c.config.DialOptions) > 0 {
-		return append([]grpc.DialOption(nil), c.config.DialOptions...)
+		return append([]grpc.DialOption{receiveLimit}, c.config.DialOptions...)
 	}
 	options := []grpc.DialOption{
 		grpc.WithBlock(),
+		receiveLimit,
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                c.config.KeepaliveTime,
 			Timeout:             10 * time.Second,

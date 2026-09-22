@@ -399,18 +399,26 @@ type PluginState struct {
 }
 
 type JournalEntry struct {
-	OperationID    string          `json:"operation_id"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	SessionID      string          `json:"session_id"`
-	Kind           string          `json:"kind"`
-	PluginID       string          `json:"plugin_id"`
-	TargetVersion  string          `json:"target_version"`
-	ConfigHash     string          `json:"config_hash"`
-	Revision       uint64          `json:"revision"`
-	State          string          `json:"state"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	Error          string          `json:"error,omitempty"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	OperationID     string                `json:"operation_id"`
+	IdempotencyKey  string                `json:"idempotency_key"`
+	SessionID       string                `json:"session_id"`
+	Kind            string                `json:"kind"`
+	PluginID        string                `json:"plugin_id"`
+	TargetVersion   string                `json:"target_version"`
+	ConfigHash      string                `json:"config_hash"`
+	Revision        uint64                `json:"revision"`
+	SecretMaterials []SecretMaterialAudit `json:"secret_materials,omitempty"`
+	State           string                `json:"state"`
+	Result          json.RawMessage       `json:"result,omitempty"`
+	Error           string                `json:"error,omitempty"`
+	UpdatedAt       time.Time             `json:"updated_at"`
+}
+
+// SecretMaterialAudit binds an operation journal entry to immutable material
+// metadata without retaining decrypted or base64-encoded content.
+type SecretMaterialAudit struct {
+	Reference string `json:"reference"`
+	SHA256    string `json:"sha256"`
 }
 
 type persistedState struct {
@@ -809,6 +817,7 @@ func (s *Supervisor) handle(ctx context.Context, kind string, envelope *agent.Op
 	envelopeCopy := *envelope
 	envelopeCopy.ConfigHash = strings.ToLower(envelopeCopy.ConfigHash)
 	envelopeCopy.Config = append(json.RawMessage(nil), envelope.Config...)
+	envelopeCopy.SecretMaterials = append([]agent.SecretMaterial(nil), envelope.SecretMaterials...)
 	envelope = &envelopeCopy
 
 	repairReplay := false
@@ -947,6 +956,48 @@ func (s *Supervisor) executeOperation(ctx context.Context, kind string, envelope
 		}
 		return json.Marshal(state)
 	}
+	materializedEnable := kind == "plugin.enable" && envelope.Version == agent.OperationEnvelopeVersionV2
+	if kind == "plugin.configure" || materializedEnable || kind == "plugin.update" || kind == "plugin.rollback" {
+		prepared, err := s.prepareSecretConfiguration(envelope)
+		if err != nil {
+			return nil, err
+		}
+		if err := prepared.stage(); err != nil {
+			return nil, errors.Join(err, prepared.rollback())
+		}
+		runtimeEnvelope := *envelope
+		runtimeEnvelope.Config = prepared.runtimeConfig
+		if materializedEnable {
+			configPath := filepath.Join(prepared.versionDir, "config.json")
+			oldConfig, existed, readErr := readOptionalFile(configPath)
+			if readErr != nil {
+				return nil, errors.Join(readErr, prepared.rollback())
+			}
+			if writeErr := writePrivateFile(configPath, prepared.runtimeConfig, 0o600); writeErr != nil {
+				return nil, errors.Join(writeErr, prepared.rollback())
+			}
+			result, operationErr := s.executePreparedOperation(ctx, kind, &runtimeEnvelope)
+			if operationErr != nil {
+				return nil, errors.Join(operationErr, restoreOptionalFile(configPath, oldConfig, existed), prepared.rollback())
+			}
+			if commitErr := prepared.commit(); commitErr != nil {
+				return nil, commitErr
+			}
+			return result, nil
+		}
+		result, operationErr := s.executePreparedOperation(ctx, kind, &runtimeEnvelope)
+		if operationErr != nil {
+			return nil, errors.Join(operationErr, prepared.rollback())
+		}
+		if commitErr := prepared.commit(); commitErr != nil {
+			return nil, commitErr
+		}
+		return result, nil
+	}
+	return s.executePreparedOperation(ctx, kind, envelope)
+}
+
+func (s *Supervisor) executePreparedOperation(ctx context.Context, kind string, envelope *agent.OperationEnvelope) (json.RawMessage, error) {
 	switch kind {
 	case "plugin.inspect":
 		return s.inspect(envelope.PluginID)
@@ -1801,6 +1852,16 @@ func (s *Supervisor) load() error {
 		if entry.Result != nil && !json.Valid(entry.Result) {
 			return fmt.Errorf("read plugin supervisor state: invalid journal result for %q", operationID)
 		}
+		seenSecretMaterials := make(map[string]struct{}, len(entry.SecretMaterials))
+		for _, material := range entry.SecretMaterials {
+			if _, err := agent.ParseSecretReference(material.Reference); err != nil || !validSHA256(material.SHA256) || material.SHA256 != strings.ToLower(material.SHA256) {
+				return fmt.Errorf("read plugin supervisor state: invalid secret audit metadata for %q", operationID)
+			}
+			if _, duplicate := seenSecretMaterials[material.Reference]; duplicate {
+				return fmt.Errorf("read plugin supervisor state: duplicate secret audit metadata for %q", operationID)
+			}
+			seenSecretMaterials[material.Reference] = struct{}{}
+		}
 		if entry.State == "running" {
 			entry.State = "interrupted"
 			entry.Error = "plugin operation was interrupted by agent restart and is eligible for exact replay"
@@ -2244,19 +2305,41 @@ func operationBlocksAutomaticRestore(kind string) bool {
 }
 
 func newJournalEntry(kind string, envelope *agent.OperationEnvelope, now time.Time) JournalEntry {
-	return JournalEntry{
+	entry := JournalEntry{
 		OperationID: envelope.OperationID, IdempotencyKey: envelope.IdempotencyKey,
 		SessionID: envelope.SessionID, Kind: kind, PluginID: envelope.PluginID,
 		TargetVersion: envelope.TargetVersion, ConfigHash: envelope.ConfigHash,
 		Revision: envelope.Revision, State: "running", UpdatedAt: now,
 	}
+	entry.SecretMaterials = make([]SecretMaterialAudit, 0, len(envelope.SecretMaterials))
+	for _, material := range envelope.SecretMaterials {
+		entry.SecretMaterials = append(entry.SecretMaterials, SecretMaterialAudit{Reference: material.Reference, SHA256: material.SHA256})
+	}
+	sort.Slice(entry.SecretMaterials, func(i, j int) bool { return entry.SecretMaterials[i].Reference < entry.SecretMaterials[j].Reference })
+	return entry
 }
 
 func journalMatches(entry JournalEntry, kind string, envelope *agent.OperationEnvelope) bool {
 	return entry.OperationID == envelope.OperationID && entry.IdempotencyKey == envelope.IdempotencyKey &&
 		entry.Kind == kind && entry.PluginID == envelope.PluginID &&
 		entry.TargetVersion == envelope.TargetVersion && strings.EqualFold(entry.ConfigHash, envelope.ConfigHash) &&
-		entry.Revision == envelope.Revision
+		entry.Revision == envelope.Revision && journalSecretMaterialsMatch(entry.SecretMaterials, envelope.SecretMaterials)
+}
+
+func journalSecretMaterialsMatch(audited []SecretMaterialAudit, materials []agent.SecretMaterial) bool {
+	if len(audited) != len(materials) {
+		return false
+	}
+	actual := make(map[string]string, len(materials))
+	for _, material := range materials {
+		actual[material.Reference] = material.SHA256
+	}
+	for _, material := range audited {
+		if actual[material.Reference] != material.SHA256 {
+			return false
+		}
+	}
+	return true
 }
 
 func validateOperation(kind string, envelope *agent.OperationEnvelope) error {
@@ -2265,7 +2348,7 @@ func validateOperation(kind string, envelope *agent.OperationEnvelope) error {
 	default:
 		return fmt.Errorf("unsupported plugin operation %q", kind)
 	}
-	if envelope.Version != agent.OperationEnvelopeVersion {
+	if envelope.Version != agent.OperationEnvelopeVersion && envelope.Version != agent.OperationEnvelopeVersionV2 {
 		return fmt.Errorf("unsupported plugin operation envelope version %q", envelope.Version)
 	}
 	if !safeIdentity(envelope.OperationID, 160) || !safeIdentity(envelope.IdempotencyKey, 160) || !safeIdentity(envelope.SessionID, 160) {
@@ -2286,6 +2369,9 @@ func validateOperation(kind string, envelope *agent.OperationEnvelope) error {
 	digest := sha256.Sum256(envelope.Config)
 	if !strings.EqualFold(envelope.ConfigHash, hex.EncodeToString(digest[:])) {
 		return errors.New("plugin operation config_hash does not match config")
+	}
+	if err := envelope.ValidateSecretMaterials(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -14,6 +15,64 @@ import (
 	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDecodeOperationEnvelopeRejectsOversizedPayload(t *testing.T) {
+	operation := &agentv1pb.DesiredOperation{
+		OperationId: "oversized-operation", Revision: 1,
+		PayloadJson: bytes.Repeat([]byte("x"), maxOperationEnvelopeBytes+1),
+	}
+	_, err := DecodeOperationEnvelope(operation)
+	require.ErrorContains(t, err, "size limit")
+}
+
+func TestDecodeOperationEnvelopeV2ValidatesExactSecretMaterialSet(t *testing.T) {
+	config := []byte(`{"tls":{"ca_file":"secret://mesh-edge@1/ca.pem","key_file":"secret://mesh-edge@1/client.key"}}`)
+	configDigest := sha256.Sum256(config)
+	material := func(reference, content string) SecretMaterial {
+		digest := sha256.Sum256([]byte(content))
+		return SecretMaterial{Reference: reference, SHA256: hex.EncodeToString(digest[:]), ContentBase64: base64.StdEncoding.EncodeToString([]byte(content))}
+	}
+	envelope := OperationEnvelope{
+		Version: OperationEnvelopeVersionV2, OperationID: "operation-v2", IdempotencyKey: "operation-v2-key",
+		SessionID: "session-v2", Revision: 4, PluginID: "gost-mesh", TargetVersion: "1.0.0",
+		ConfigHash: hex.EncodeToString(configDigest[:]), Config: config,
+		SecretMaterials: []SecretMaterial{
+			material("secret://mesh-edge@1/ca.pem", "ca"),
+			material("secret://mesh-edge@1/client.key", "key"),
+		},
+	}
+	payload, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	operation := &agentv1pb.DesiredOperation{OperationId: envelope.OperationID, Revision: envelope.Revision, PayloadJson: payload}
+	decoded, err := DecodeOperationEnvelope(operation)
+	require.NoError(t, err)
+	require.Equal(t, envelope.SecretMaterials, decoded.SecretMaterials)
+
+	missing := envelope
+	missing.SecretMaterials = missing.SecretMaterials[:1]
+	payload, err = json.Marshal(missing)
+	require.NoError(t, err)
+	operation.PayloadJson = payload
+	_, err = DecodeOperationEnvelope(operation)
+	require.ErrorContains(t, err, "does not match config references")
+
+	tampered := envelope
+	tampered.SecretMaterials = append([]SecretMaterial(nil), envelope.SecretMaterials...)
+	tampered.SecretMaterials[0].ContentBase64 = base64.StdEncoding.EncodeToString([]byte("different"))
+	payload, err = json.Marshal(tampered)
+	require.NoError(t, err)
+	operation.PayloadJson = payload
+	_, err = DecodeOperationEnvelope(operation)
+	require.ErrorContains(t, err, "sha256 does not match")
+
+	legacy := envelope
+	legacy.Version = OperationEnvelopeVersion
+	payload, err = json.Marshal(legacy)
+	require.NoError(t, err)
+	operation.PayloadJson = payload
+	_, err = DecodeOperationEnvelope(operation)
+	require.ErrorContains(t, err, "v1 cannot carry")
+}
 
 func readAgentOperationEnvelopeGolden(t *testing.T) []byte {
 	t.Helper()
