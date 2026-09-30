@@ -2,6 +2,7 @@
 package maintenance
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 const Version = "anixops.maintenance/v1"
 const MaxBatchSize = 50
 const MaxPayloadBytes = 256 << 10
+const MaxEventBytes = 16 << 10
 
 var identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 var errorPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_.-]{0,127}$`)
@@ -123,6 +125,13 @@ func (e Event) ValidateAt(now time.Time) error {
 	}
 	if e.Status != "recovered" && (e.FirstFailedAt == nil || e.ConsecutiveFailures == 0 || e.HealthySince != nil) {
 		return errors.New("invalid failure")
+	}
+	encoded, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > MaxEventBytes {
+		return errors.New("event exceeds maximum encoded size")
 	}
 	return nil
 }

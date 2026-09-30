@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,6 +127,11 @@ func (s *Store) transaction(change func(*diskState) error) error {
 	if state.Version != Version || state.NodeID != s.nodeID || state.Environment != s.environment || state.Events == nil || state.Instances == nil {
 		return errors.New("maintenance state identity or version mismatch")
 	}
+	for key := range state.Instances {
+		if !strings.Contains(key, "\x00") {
+			return errors.New("maintenance instance state lacks plugin namespace; explicit migration is required")
+		}
+	}
 	if state.Order == nil {
 		state.Order = map[string]uint64{}
 	}
@@ -226,10 +232,33 @@ func (s *Store) Pending(limit int) ([]Event, error) {
 		}
 		return events[i].OccurredAt.Before(events[j].OccurredAt)
 	})
+	if err != nil {
+		return nil, err
+	}
 	if len(events) > limit {
 		events = events[:limit]
 	}
-	return events, err
+	overhead, _ := json.Marshal(Batch{Version: Version, Events: []Event{}})
+	size := len(overhead)
+	for index, event := range events {
+		encoded, encodeErr := json.Marshal(event)
+		if encodeErr != nil {
+			return nil, encodeErr
+		}
+		nextSize := size + len(encoded)
+		if index > 0 {
+			nextSize++
+		}
+		if nextSize > MaxPayloadBytes {
+			if index == 0 {
+				return nil, errors.New("queued event exceeds batch payload limit")
+			}
+			events = events[:index]
+			break
+		}
+		size = nextSize
+	}
+	return events, nil
 }
 
 // Acknowledge removes only explicitly durable acknowledgments. Message-level ACKs,
@@ -238,14 +267,9 @@ func (s *Store) Acknowledge(ack Acknowledgment) error {
 	if ack.Version != Version || len(ack.Events) > MaxBatchSize {
 		return errors.New("invalid maintenance acknowledgment")
 	}
-	for _, result := range ack.Events {
-		if !identityPattern.MatchString(result.EventID) {
-			return errors.New("invalid maintenance acknowledgment event_id")
-		}
-	}
 	return s.transaction(func(state *diskState) error {
 		for _, result := range ack.Events {
-			if result.Persisted {
+			if result.Persisted && identityPattern.MatchString(result.EventID) {
 				delete(state.Events, result.EventID)
 				delete(state.Order, result.EventID)
 			}
@@ -262,7 +286,7 @@ func (s *Store) Observe(observation Observation, now time.Time) (Decision, error
 		return decision, errors.New("invalid plugin instance")
 	}
 	err := s.transaction(func(state *diskState) error {
-		instance := state.Instances[observation.InstanceID]
+		instance := state.Instances[instanceKey(observation.PluginID, observation.InstanceID)]
 		if now.Before(instance.LastObservedAt) {
 			return errors.New("maintenance observation clock moved backwards")
 		}
@@ -348,7 +372,7 @@ func (s *Store) Observe(observation Observation, now time.Time) (Decision, error
 				instance.ErrorCode = ""
 			}
 		}
-		state.Instances[observation.InstanceID] = instance
+		state.Instances[instanceKey(observation.PluginID, observation.InstanceID)] = instance
 		return nil
 	})
 	if err != nil {
@@ -368,7 +392,7 @@ func (s *Store) CompleteRestart(observation Observation, now time.Time, restartE
 		observation.InstanceID = observation.PluginID
 	}
 	return s.transaction(func(state *diskState) error {
-		instance, ok := state.Instances[observation.InstanceID]
+		instance, ok := state.Instances[instanceKey(observation.PluginID, observation.InstanceID)]
 		if !ok || !instance.Open {
 			return errors.New("restart has no persisted incident")
 		}
@@ -391,12 +415,14 @@ func manualError(code string) bool {
 // HasFailure gates startup restoration as well as live restarts. Graceful
 // shutdown changes a plugin's process state to stopped; the independent durable
 // incident state must still prevent that transition from clearing its budget.
-func (s *Store) HasFailure(instanceID string) (bool, error) {
+func (s *Store) HasFailure(pluginID, instanceID string) (bool, error) {
 	failed := false
 	err := s.transaction(func(state *diskState) error {
-		instance := state.Instances[instanceID]
+		instance := state.Instances[instanceKey(pluginID, instanceID)]
 		failed = instance.FirstFailedAt != nil
 		return nil
 	})
 	return failed, err
 }
+
+func instanceKey(pluginID, instanceID string) string { return pluginID + "\x00" + instanceID }

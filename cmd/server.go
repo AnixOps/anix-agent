@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,7 +25,7 @@ var (
 var serverCommand = cobra.Command{
 	Use:   "server",
 	Short: "Run AnixOps Agent",
-	Run:   serverHandle,
+	RunE:  serverHandle,
 	Args:  cobra.NoArgs,
 }
 
@@ -62,7 +63,7 @@ func getDefaultConfigPath() string {
 	return defaultConfigPath
 }
 
-func serverHandle(_ *cobra.Command, _ []string) {
+func serverHandle(_ *cobra.Command, _ []string) error {
 	showVersion()
 
 	// 检查配置文件是否存在
@@ -75,7 +76,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		} else {
 			log.Info("On Linux/macOS, the default config path is " + defaultConfigPath)
 		}
-		return
+		return fmt.Errorf("config file not found: %s", config)
 	}
 
 	log.WithField("config", config).Info("Loading config file")
@@ -83,7 +84,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	err := c.LoadFromPath(config)
 	if err != nil {
 		log.WithField("err", err).Error("Load config file failed")
-		return
+		return fmt.Errorf("load config file: %w", err)
 	}
 	switch c.LogConfig.Level {
 	case "debug":
@@ -107,12 +108,12 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	vc, err := vCore.NewCore(c.CoresConfig)
 	if err != nil {
 		log.WithField("err", err).Error("new core failed")
-		return
+		return fmt.Errorf("create core: %w", err)
 	}
 	err = vc.Start()
 	if err != nil {
 		log.WithField("err", err).Error("Start core failed")
-		return
+		return fmt.Errorf("start core: %w", err)
 	}
 	defer vc.Close()
 	log.Info("Core ", vc.Type(), " started")
@@ -129,7 +130,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	err = nodes.Start(c.NodeConfig, vc)
 	if err != nil {
 		log.WithField("err", err).Error("Run nodes failed")
-		return
+		return fmt.Errorf("start nodes: %w", err)
 	}
 	log.Info("Nodes started")
 	xdns := os.Getenv("XRAY_DNS_PATH")
@@ -163,7 +164,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		})
 		if err != nil {
 			log.WithField("err", err).Error("start watch failed")
-			return
+			return fmt.Errorf("start config watcher: %w", err)
 		}
 	}
 	// clear memory
@@ -174,4 +175,5 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
 		<-osSignals
 	}
+	return nil
 }

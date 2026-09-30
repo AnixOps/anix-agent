@@ -348,7 +348,7 @@ init_config_wizard() {
         warn "仅支持 sing / xray / hysteria2"
     done
 
-    api_host="$(prompt_text "面板地址 ApiHost" "http://127.0.0.1")"
+    api_host="$(prompt_required_text "面板地址 ApiHost（生产环境必须使用 HTTPS）")"
     api_key="$(prompt_required_text "面板 API Key")"
     node_id="$(prompt_int "节点 ID NodeID" "1")"
     node_type="$(prompt_text "节点类型 NodeType(面板分类)" "v2ray")"
@@ -442,6 +442,7 @@ init_config_wizard() {
 
     cat >"${cfg}" <<EOF
 {
+  "Environment": "production",
   "Log": {
     "Level": "info",
     "Output": ""
@@ -460,6 +461,7 @@ init_config_wizard() {
       "GRPCKeepalive": ${grpc_keepalive},
       "AgentControlEnabled": ${agent_control_enabled},
       "AgentControlAllowInsecure": ${agent_control_allow_insecure},
+      "MaintenanceEnvironment": "production",
       "PluginSupervisorEnabled": ${plugin_supervisor_enabled},
       "PluginRoot": "${DEFAULT_PLUGIN_ROOT}",
       "PluginSocketDir": "${DEFAULT_PLUGIN_SOCKET_DIR}",
@@ -468,6 +470,23 @@ init_config_wizard() {
       "NodeID": ${node_id},
       "NodeType": "$(json_escape "${node_type}")",
       "Timeout": ${timeout},
+      "EnableSign": true,
+      "EncryptCredential": true,
+      "CredentialFile": "/var/lib/anixops/agent/credential.json.enc",
+      "SyncConfig": {
+        "EnableWebSocket": true,
+        "WSEndpoint": "/api/v2/agent/ws",
+        "WSEndpointFallbacks": ["/api/v2/node/ws"],
+        "ReconnectInterval": 5,
+        "MaxReconnectTries": 0,
+        "PingInterval": 30,
+        "PongTimeout": 10,
+        "AckTimeout": 5,
+        "AckRetries": 2,
+        "BufferSize": 100,
+        "EnableFallback": true,
+        "FallbackInterval": 60
+      },
       "ListenIP": "$(json_escape "${listen_ip}")",
       "SendIP": "$(json_escape "${send_ip}")",
       "DeviceOnlineMinTraffic": 200,
@@ -481,7 +500,12 @@ init_config_wizard() {
 EOF
 
     chmod 600 "${cfg}" || true
+    if is_installed && ! "${BIN_PATH}" validate-config -c "${cfg}"; then
+        error "配置校验失败；请修正 ${cfg} 后再次运行 validate-config，服务不会自动启动"
+        return 1
+    fi
     info "配置初始化完成: ${cfg}"
+    info "启动前运行: ${BIN_PATH} validate-config -c ${cfg}"
     info "默认仍使用: ${BIN_PATH} server -c ${cfg}"
 }
 

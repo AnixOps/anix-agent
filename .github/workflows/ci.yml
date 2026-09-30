@@ -34,7 +34,6 @@ jobs:
           bash scripts/install.sh --help >/dev/null
           bash scripts/anix-agent.sh --help >/dev/null
           bash scripts/V2bX.sh --help >/dev/null
-          bash scripts/test_install_migration.sh
 
       - name: Enforce release build policy
         run: bash scripts/check_release_build_policy.sh
@@ -57,12 +56,15 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Test installer migration and generated production config
+        run: bash scripts/test_install_migration.sh
+
       - name: Run full Go test suite
         # Make CI robust if a go.work exists in the runner environment.
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
 
       - name: Verify durable maintenance transport and restart policy under race detector
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt)' -count=1
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt|InstanceState)' -count=1
 
       - name: Verify WireGuard relay and peer limit contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
@@ -85,3 +87,28 @@ jobs:
           bash api/grpc/gen.sh
           git diff --exit-code -- api/grpc/v2boardpb
           test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb)"
+
+  nftables-forward-integration:
+    name: nftables-forward IPv4/IPv6 namespace acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Install namespace test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 nftables python3
+
+      - name: Build nftables-forward Agent plugin
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go build -o "${RUNNER_TEMP}/nftables-forward" ./cmd/nftables-forward
+
+      - name: Verify IPv4/IPv6 DNAT, counters, restart recovery, and rollback
+        run: |
+          sudo bash plugin/nftablesforward/namespace_acceptance.sh \
+            --agent-binary "${RUNNER_TEMP}/nftables-forward"

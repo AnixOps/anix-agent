@@ -15,7 +15,7 @@ NetworkCore 的订阅实际运行、进程管理、MITM、浏览器捕获与跨�
 
 ```bash
 GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
-GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt)' -count=1
+GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt|InstanceState)' -count=1
 ```
 
 `plugin/machine_telemetry_process_test.go` 启动实际签名包子进程，读取 gRPC 监测结果，杀死进程并检查事件、允许的重启及连续恢复。`node/maintenance_test.go` 通过认证 WebSocket 测试断连、数据库未确认、重复投递和 durable ACK。Control 的数据库工单/通知闭环由 Control 仓库集成测试单独证明。

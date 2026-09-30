@@ -4,7 +4,15 @@
 
 ## 启动和配置
 
-使用 GitHub Release 附件安装 Agent，运行 `anix-agent server -c /etc/V2bX/config.json`。兼容脚本命令仍为 `v2bx-anixops`。不在生产节点编译发行产物。
+使用 GitHub Release 附件安装 Agent，运行 `anix-agent server -c /etc/anixops/agent/config.json`。兼容脚本命令仍为 `v2bx-anixops`。不在生产节点编译发行产物。首次安装优先写入 `example/config.production.json` 对应的生产模板，但不会自动启动；所有 `REPLACE` 值由部署者在节点本地填写。
+
+启动前必须执行：
+
+```bash
+anix-agent validate-config -c /etc/anixops/agent/config.json
+```
+
+生产配置校验要求 HTTPS ApiHost、TLS gRPC、认证维护 WebSocket、官方签名根、插件目录、节点凭据和明确的 `Environment` / `MaintenanceEnvironment`。失败会返回非零退出码，systemd 不会把配置错误当成成功退出。
 
 节点 `ApiConfig` 需启用 `PluginSupervisorEnabled`，填写 `PluginRoot`、`PluginOfficialPublicKey`，推荐独立 `PluginSocketDir`。完整插件签名与安装约定见 [Supervisor](PLUGIN_SUPERVISOR.md)。
 
@@ -16,7 +24,7 @@
   "PluginRoot": "/var/lib/anixops/plugins",
   "PluginSocketDir": "/run/anixops/plugins",
   "PluginOfficialPublicKey": "BASE64_ED25519_PUBLIC_KEY",
-  "MaintenanceEnvironment": "staging"
+  "MaintenanceEnvironment": "production"
 }
 ```
 
@@ -43,7 +51,7 @@
 - `maintenance.json`：待发送事件、故障序列、健康起点、30 分钟重启预算。原子写入、文件及目录 fsync，文件权限 0600。
 - `maintenance.json.lock`：跨进程事务锁，防并发读写覆盖事件或预算。
 
-`maintenance_events` 使用 `anixops.maintenance/v1` 批次版本，单批最多 50 条、256 KiB。服务端 `maintenance_ack` 的每条 `persisted=true` 才允许删除。成功写入 WebSocket、普通消息 ACK、超时、拒绝和数据库失败都不能清空队列。重复上报保留原事件 ID，由 Control 去重。队列容量 100000 条且文件上限 256 MiB；满容量或损坏时拒绝接受新事件并记错，不静默覆盖证据。
+`maintenance_events` 使用 `anixops.maintenance/v1` 批次版本，单批最多 50 条、256 KiB，按实际 JSON 编码长度分批，单事件最多 16 KiB。服务端 `maintenance_ack` 的每条 `persisted=true` 才允许删除。成功写入 WebSocket、普通消息 ACK、超时、拒绝和数据库失败都不能清空队列。重复上报保留原事件 ID，由 Control 去重。混合 ACK 中无法回显 ID 的拒绝项不会阻止其他已持久化事件出队。实例状态按插件 ID 和实例 ID 共同隔离；早期开发队列若缺少插件命名空间将拒绝启动，需先人工迁移，不能静默重置预算。队列容量 100000 条且文件上限 256 MiB；满容量或损坏时拒绝接受新事件并记错，不静默覆盖证据。
 
 日志检查：`plugin maintenance observation failed` 表示探针/持久化或动作失败，`Maintenance acknowledgment rejected` 表示协议或节点不符，`Failed to send heartbeat` 包括队列读取/发送失败。查 Control 连接、磁盘空间和文件权限，再查看 Control 工单时间线。日志与本地状态按受保护运维数据处理。
 
