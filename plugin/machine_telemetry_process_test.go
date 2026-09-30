@@ -9,10 +9,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"github.com/AnixOps/anix-agent/v4/common/maintenance"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,7 +81,12 @@ func TestMachineTelemetryBinaryWithProductionRuntime(t *testing.T) {
 
 	rootDir := filepath.Join(dir, "state")
 	socketDir := filepath.Join(dir, "sockets")
+	store, err := maintenance.Open(filepath.Join(rootDir, "maintenance.json"), "77", "development", "1.0.0")
+	require.NoError(t, err)
+	var observedTime atomic.Int64
+	observedTime.Store(time.Now().Add(-time.Hour).UnixNano())
 	supervisor, err := NewSupervisor(Config{
+		Maintenance: store, DisableMaintenanceMonitor: true, Now: func() time.Time { return time.Unix(0, observedTime.Load()) },
 		RootDir: rootDir, SocketDir: socketDir, PublicKey: publicKey,
 		Runner: CommandRunner{}, Health: GRPCHealthChecker{Service: IDForMachineTelemetryTest, Timeout: 10 * time.Second},
 	})
@@ -115,6 +122,41 @@ func TestMachineTelemetryBinaryWithProductionRuntime(t *testing.T) {
 	require.Contains(t, metrics, "plugin.machine-telemetry.memory_usage_percent")
 	require.Contains(t, metrics, "plugin.machine-telemetry.disk_usage_percent")
 	require.Contains(t, metrics, "plugin.machine-telemetry.uptime_seconds")
+
+	require.NoError(t, supervisor.CheckMaintenance(context.Background()))
+	supervisor.mu.Lock()
+	pid := supervisor.processes[IDForMachineTelemetryTest].PID()
+	supervisor.mu.Unlock()
+	observedTime.Add(int64(time.Second))
+	crashed, err := os.FindProcess(pid)
+	require.NoError(t, err)
+	require.NoError(t, crashed.Kill())
+	require.Eventually(t, func() bool {
+		supervisor.mu.Lock()
+		defer supervisor.mu.Unlock()
+		state := supervisor.state.Plugins[IDForMachineTelemetryTest]
+		return state.Health == "unhealthy" && !state.CleanupPending
+	}, 5*time.Second, 10*time.Millisecond)
+	for i := 0; i < 2; i++ {
+		observedTime.Add(int64(time.Minute))
+		require.NoError(t, supervisor.CheckMaintenance(context.Background()))
+	}
+	events, err := store.Pending(50)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	require.Equal(t, "PLUGIN_PROCESS_EXITED", events[0].ErrorCode)
+	require.Equal(t, "succeeded", events[1].SelfHealResult)
+	metrics, err = supervisor.TelemetryMetrics(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, metrics)
+	for i := 0; i < 6; i++ {
+		observedTime.Add(int64(time.Minute))
+		require.NoError(t, supervisor.CheckMaintenance(context.Background()))
+	}
+	events, err = store.Pending(50)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+	require.Equal(t, "recovered", events[2].Status)
 
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelStop()

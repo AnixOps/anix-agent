@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, dev_new]
+    branches: [master, dev_new, "maintenance/**"]
     tags: ["v*"]
   pull_request:
     branches: [master, dev_new]
@@ -60,6 +60,9 @@ jobs:
       - name: Run full Go test suite
         # Make CI robust if a go.work exists in the runner environment.
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
+
+      - name: Verify durable maintenance transport and restart policy under race detector
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt)' -count=1
 
       - name: Verify WireGuard relay and peer limit contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
