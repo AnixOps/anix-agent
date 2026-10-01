@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"testing"
 
-	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	"github.com/stretchr/testify/require"
 )
 
