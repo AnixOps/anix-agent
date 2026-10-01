@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 	"github.com/AnixOps/anix-agent/v4/conf"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 
 func TestResolveAgentControlTargetSecurity(t *testing.T) {

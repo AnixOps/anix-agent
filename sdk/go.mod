@@ -1,3 +1,5 @@
+// Deprecated: the Agent contract moved to github.com/AnixOps/anix-control/sdk
+// (api/agent/v1, agentcontrol, plugincontrol). This module is frozen at v1.1.0.
 module github.com/AnixOps/anix-agent/sdk
 
 go 1.25.0

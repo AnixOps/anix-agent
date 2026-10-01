@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	agentcontrol "github.com/AnixOps/anix-agent/sdk/agentcontrol"
-	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/AnixOps/anix-agent/v4/plugin"
+	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
 )
 

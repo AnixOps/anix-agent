@@ -1,4 +1,12 @@
-# Anix Agent SDK
+# Anix Agent SDK (frozen)
+
+> **Moved.** The Agent contract now lives in Control's SDK module,
+> `github.com/AnixOps/anix-control/sdk`: `api/agent/v1` (Go package
+> `agentv1pb`), `agentcontrol` and `plugincontrol`. It is wire-identical to
+> this module's v1.1.0 (only `go_package` changed). This module is frozen at
+> `sdk/v1.1.0` and receives no further changes. Never link both modules into
+> one binary: both register `anix.agent.v1`, which panics at startup.
+
 
 This nested Go module is the canonical source for public Anix Agent protocol
 contracts. Consumers import the generated v1 bindings as:

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/common/monitor"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/AnixOps/anix-agent/v4/limiter"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 
 var _ apiclient.NodeAPI = (*errorTestNodeAPI)(nil)

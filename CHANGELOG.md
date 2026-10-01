@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+
+- The Agent contract now comes from Control's SDK module,
+  `github.com/AnixOps/anix-control/sdk` (`api/agent/v1`, `agentcontrol`,
+  `plugincontrol`), at the commit that moved it there. The wire protocol is
+  unchanged: the descriptors are identical to `sdk/v1.1.0` apart from
+  `go_package`.
+  - The nested `sdk/` module is deprecated and frozen at v1.1.0.
+  - The Control SDK's requirements raise `google.golang.org/grpc` to v1.83.2
+    and `google.golang.org/protobuf` to v1.36.11, with matching
+    `golang.org/x` updates.
+
 ## 3.1.0-alpha.2 - 2026-07-18
 
 ### Added
