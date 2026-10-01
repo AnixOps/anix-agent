@@ -32,7 +32,7 @@ var command = &cobra.Command{
 	  anix-agent server                   Run with default config file
 	  anix-agent version                  Show version information`,
 	// 直接运行 anix-agent 或 anix-agent -c xxx 时执行 server 命令
-	Run: serverHandle,
+	RunE: serverHandle,
 }
 
 func init() {
@@ -50,7 +50,7 @@ func init() {
 	command.PersistentFlags().BoolVarP(&reRegister, "re-register", "r", false, "force re-register node (delete existing credentials)")
 }
 
-func Run() {
+func Run() error {
 	panel.Version = version
 
 	// 检查是否是子命令（server, version 等）
@@ -69,6 +69,7 @@ func Run() {
 	if err != nil {
 		log.WithField("err", err).Error("Execute command failed")
 	}
+	return err
 }
 
 // isSubCommand 检查是否是已知的子命令

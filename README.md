@@ -1,5 +1,9 @@
 # AnixOps Agent
 
+维护入口：[Agent 运维手册](docs/MAINTENANCE_P0.md)
+
+Agent 分批交付与验收状态：[docs/P4_EXECUTION_STATUS.md](docs/P4_EXECUTION_STATUS.md)；维护事件契约：[docs/contracts/maintenance-event.schema.json](docs/contracts/maintenance-event.schema.json)
+
 AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，用于连接 AnixOps
 Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、用户认证、
 流量统计、在线状态上报和证书管理。
@@ -62,8 +66,9 @@ sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
   bash plugin/nategress/namespace_acceptance.sh
 ```
 
-`nftables-forward` 还覆盖 TCP/UDP DNAT、正常回滚、`SIGKILL` journal 留存和
-同一 state path 的重启恢复：
+`nftables-forward` 还覆盖 IPv4/IPv6 TCP/UDP DNAT、内核规则计数、正常回滚、
+`SIGKILL` journal 留存和同一 state path 的重启恢复。常规 CI 使用预构建插件
+二进制执行同一 privileged namespace 验收：
 
 ```bash
 sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
@@ -108,6 +113,8 @@ rm -f /tmp/anix-agent-install.sh
 ```bash
 sudo anix-agent initconfig
 sudo anix-agent config
+sudo /usr/local/anixops-agent/anix-agent validate-config \
+  -c /etc/anixops/agent/config.json
 sudo anix-agent start
 sudo anix-agent status
 sudo anix-agent log
@@ -119,6 +126,7 @@ sudo anix-agent log
 anix-agent start|stop|restart|status|log
 anix-agent update [version]
 anix-agent uninstall [--purge]
+anix-agent validate-config -c /etc/anixops/agent/config.json
 anix-agent server -c /etc/anixops/agent/config.json
 ```
 
