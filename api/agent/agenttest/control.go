@@ -6,7 +6,10 @@
 // cursors and paged resyncs), modelled on anix-control's internal/grpc
 // agent_control_server.go, agent_control_config.go and
 // agent_control_users.go; A2-5: reports with batch ids recorded once and
-// ReportAck, package reports.
+// ReportAck, package reports; A2-6b: the maintenance outbox
+// (maintenance.v1), the alive list (alive.v1), AgentArtifacts by client
+// certificate (artifacts.v1), error codes in refusals and acknowledgements
+// and the capability offer as an intersection.
 package agenttest
 
 import (
@@ -57,6 +60,7 @@ const ConfigFormat = "anixops.nodeconfig/v1"
 type Control struct {
 	agentv1pb.UnimplementedAgentControlServiceServer
 	agentv1pb.UnimplementedAgentEnrollmentServer
+	agentv1pb.UnimplementedAgentArtifactsServer
 
 	NodeID  uint32
 	APIKey  string
@@ -114,6 +118,22 @@ type Control struct {
 	loseAcks       int
 	refuse         func(batchID string) string
 	deliveries     int
+	// transientAcks: Control echoes transient_ack and answers
+	// report_unavailable; unavailableReports counts the batches still to
+	// answer so.
+	transientAcks      bool
+	unavailableReports int
+
+	// Maintenance (maintenance.v1), alive list (alive.v1), artifacts
+	// (artifacts.v1), operations and certificate refusals: streams.go.
+	maintenance maintenanceState
+	alive       aliveState
+	artifacts   artifactsState
+	operations  operationsState
+	// refuseCertificate makes the certificate check of the serials in
+	// refusedSerials fail with this code (agent_cert_*).
+	refuseCertificate string
+	refusedSerials    map[string]bool
 }
 
 // userChange is one row of the subscriber change log.
@@ -145,6 +165,11 @@ type session struct {
 	usersCursor  uint64
 	usersStarted bool
 	usersMu      sync.Mutex
+	// transientAcks: the session negotiated transient_ack.
+	transientAcks bool
+	// aliveRevision counts the alive lists sent; aliveMu serializes them.
+	aliveRevision uint64
+	aliveMu       sync.Mutex
 }
 
 func (s *session) send(message *agentv1pb.ControlToAgent) error {
@@ -162,7 +187,9 @@ func New(t testing.TB, mode string, serves ...string) *Control {
 		mode: mode, serves: map[string]bool{}, credentials: map[string]bool{}, sessions: map[string]*session{},
 		users: map[uint64]*agentv1pb.NodeUser{}, pageSize: 500,
 		batches: map[string]bool{}, appliedTraffic: map[uint64][2]uint64{},
+		transientAcks: true,
 	}
+	control.initStreams()
 	for _, name := range serves {
 		control.serves[name] = true
 	}
@@ -197,6 +224,7 @@ func New(t testing.TB, mode string, serves ...string) *Control {
 	control.server = grpc.NewServer(grpc.Creds(grpccredentials.NewTLS(tlsConfig)))
 	agentv1pb.RegisterAgentControlServiceServer(control.server, control)
 	agentv1pb.RegisterAgentEnrollmentServer(control.server, control)
+	agentv1pb.RegisterAgentArtifactsServer(control.server, control)
 	go func() { _ = control.server.Serve(listener) }()
 	t.Cleanup(control.server.Stop)
 	return control
@@ -588,6 +616,23 @@ func (c *Control) RefuseStreams(refuse bool) {
 	}
 }
 
+// UnavailableReports makes Control unable to record the next count
+// batches: it answers report_unavailable (retry_after_ms 200) to an Agent
+// that negotiated transient_ack, and nothing to others.
+func (c *Control) UnavailableReports(count int) {
+	c.mu.Lock()
+	c.unavailableReports = count
+	c.mu.Unlock()
+}
+
+// SetTransientAcks sets whether Control echoes transient_ack to later
+// sessions (an older Control does not).
+func (c *Control) SetTransientAcks(on bool) {
+	c.mu.Lock()
+	c.transientAcks = on
+	c.mu.Unlock()
+}
+
 // HoldReportAcks makes Control answer no ReportAck, as when its database
 // fails: the batches are not recorded and the Agent resends them.
 func (c *Control) HoldReportAcks(hold bool) {
@@ -623,6 +668,30 @@ func (c *Control) handleBatch(current *session, message *agentv1pb.AgentToContro
 		c.mu.Unlock()
 		return nil
 	}
+	if c.unavailableReports > 0 {
+		// The database failed: silence, or report_unavailable to an
+		// Agent that negotiated transient_ack.
+		c.unavailableReports--
+		transient := current.transientAcks
+		c.mu.Unlock()
+		if !transient {
+			return nil
+		}
+		switch payload := message.Payload.(type) {
+		case *agentv1pb.AgentToControl_Traffic:
+			batchID = payload.Traffic.GetBatchId()
+		case *agentv1pb.AgentToControl_Logs:
+			batchID = payload.Logs.GetBatchId()
+		}
+		ack := &agentv1pb.ReportAck{BatchId: batchID, ErrorCode: agentcontrol.ReportErrorCodeUnavailable, RetryAfterMs: 200}
+		c.mu.Lock()
+		c.reportAcks = append(c.reportAcks, proto.Clone(ack).(*agentv1pb.ReportAck))
+		c.mu.Unlock()
+		return current.send(&agentv1pb.ControlToAgent{
+			RequestId: message.RequestId, NodeId: c.NodeID,
+			Payload: &agentv1pb.ControlToAgent_ReportAck{ReportAck: ack},
+		})
+	}
 	switch payload := message.Payload.(type) {
 	case *agentv1pb.AgentToControl_Traffic:
 		batchID = payload.Traffic.GetBatchId()
@@ -632,9 +701,9 @@ func (c *Control) handleBatch(current *session, message *agentv1pb.AgentToContro
 	ack := &agentv1pb.ReportAck{BatchId: batchID}
 	switch {
 	case batchID == "" || len(batchID) > 128:
-		ack.Error = "batch_id is required and at most 128 bytes"
+		ack.Error, ack.ErrorCode = "batch_id is required and at most 128 bytes", agentcontrol.ReportErrorCodeBatchIDInvalid
 	case c.refuse != nil && c.refuse(batchID) != "":
-		ack.Error = c.refuse(batchID)
+		ack.Error, ack.ErrorCode = c.refuse(batchID), agentcontrol.ReportErrorCodeInvalid
 	case c.batches[batchID]:
 		// Recorded before: nothing counts again.
 	default:
@@ -756,18 +825,54 @@ func peerChain(ctx context.Context) []*x509.Certificate {
 	return info.State.PeerCertificates
 }
 
-func (c *Control) verifyPeer(chain []*x509.Certificate) (*x509.Certificate, error) {
+func (c *Control) verifyPeer(ctx context.Context, chain []*x509.Certificate) (*x509.Certificate, error) {
 	roots := x509.NewCertPool()
 	roots.AddCert(c.agentCACert)
 	leaf := chain[0]
+	c.mu.Lock()
+	refusal := c.refuseCertificate
+	if !c.refusedSerials[hex.EncodeToString(leaf.SerialNumber.Bytes())] {
+		refusal = ""
+	}
+	c.mu.Unlock()
+	if refusal != "" {
+		return nil, refuse(ctx, codes.Unauthenticated, refusal, "the agent certificate is refused")
+	}
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
-		return nil, status.Error(codes.Unauthenticated, "the client certificate is not a valid agent certificate of this cluster")
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "the client certificate is not a valid agent certificate of this cluster")
 	}
 	identity, err := agentcontrol.AgentIdentityFromCertificate(leaf)
-	if err != nil || identity.Cluster != c.Cluster || identity.Node.ID != c.NodeID {
-		return nil, status.Error(codes.Unauthenticated, "the client certificate is not a valid agent certificate of this node")
+	switch {
+	case err != nil:
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "the client certificate is not an agent certificate")
+	case identity.Cluster != c.Cluster:
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongCluster, "the client certificate is of another cluster")
+	case identity.Node.ID != c.NodeID:
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongNode, "the client certificate names another node")
 	}
 	return leaf, nil
+}
+
+// refuse answers a call with Control's error code: in the trailer and at
+// the start of the status message.
+func refuse(ctx context.Context, code codes.Code, errorCode, message string) error {
+	_ = grpc.SetTrailer(ctx, metadata.Pairs(agentcontrol.MetadataErrorCode, errorCode))
+	return status.Error(code, errorCode+": "+message)
+}
+
+// RefuseCertificates makes the check of every certificate issued so far
+// fail with errorCode (agent_cert_revoked, ...), as a revocation would;
+// later certificates are accepted. "" accepts them all again.
+func (c *Control) RefuseCertificates(errorCode string) {
+	c.mu.Lock()
+	c.refuseCertificate = errorCode
+	c.refusedSerials = map[string]bool{}
+	if errorCode != "" {
+		for _, serial := range c.issued {
+			c.refusedSerials[serial] = true
+		}
+	}
+	c.mu.Unlock()
 }
 
 func (c *Control) issue(csrDER []byte) (*agentv1pb.AgentCertificate, error) {
@@ -815,7 +920,7 @@ func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequ
 		return nil, status.Error(codes.FailedPrecondition, "agent enrollment needs the built-in CA")
 	}
 	if metadataValue(ctx, agentcontrol.MetadataNodeID) != strconv.FormatUint(uint64(c.NodeID), 10) {
-		return nil, status.Error(codes.Unauthenticated, "agent enrollment rejected")
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
 	}
 	if credential := request.EnrollmentCredential; credential != "" {
 		c.mu.Lock()
@@ -825,7 +930,7 @@ func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequ
 		}
 		c.mu.Unlock()
 		if !known || used {
-			return nil, status.Error(codes.Unauthenticated, "agent enrollment rejected")
+			return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
 		}
 	} else {
 		if mode == ModeRequired {
@@ -833,7 +938,7 @@ func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequ
 			return nil, status.Error(codes.Unauthenticated, agentcontrol.ErrorCodeMTLSRequired+": an enrollment credential is required (agent_control.mtls: required)")
 		}
 		if metadataValue(ctx, agentcontrol.MetadataAPIKey) != c.APIKey {
-			return nil, status.Error(codes.Unauthenticated, "agent enrollment rejected")
+			return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
 		}
 	}
 	certificate, err := c.issue(request.CsrDer)
@@ -847,9 +952,9 @@ func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequ
 func (c *Control) Renew(ctx context.Context, request *agentv1pb.RenewAgentCertificateRequest) (*agentv1pb.RenewAgentCertificateResponse, error) {
 	chain := peerChain(ctx)
 	if len(chain) == 0 {
-		return nil, status.Error(codes.Unauthenticated, "renewal requires the current agent client certificate")
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "renewal requires the current agent client certificate")
 	}
-	if _, err := c.verifyPeer(chain); err != nil {
+	if _, err := c.verifyPeer(ctx, chain); err != nil {
 		return nil, err
 	}
 	certificate, err := c.issue(request.CsrDer)
@@ -860,20 +965,27 @@ func (c *Control) Renew(ctx context.Context, request *agentv1pb.RenewAgentCertif
 }
 
 // serverCapabilities lists what Control serves to an agent's Hello, as
-// AgentControlGRPCServer.serverCapabilities: config, reports and
-// package-reports when the agent lists them too, users always.
-func (c *Control) serverCapabilities(hello *agentv1pb.Hello) []*agentv1pb.Capability {
+// AgentControlGRPCServer.serverCapabilities: the offer rule, the
+// intersection of what the agent lists and what Control serves the node;
+// artifacts.v1 only on a session authenticated by client certificate;
+// reports.v1 echoes transient_ack when the agent asked for it.
+func (c *Control) serverCapabilities(hello *agentv1pb.Hello, certificate bool) []*agentv1pb.Capability {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var capabilities []*agentv1pb.Capability
-	for _, name := range []string{agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityPackageReports} {
-		if !c.serves[name] {
+	for _, name := range agentcontrol.DataPlaneCapabilities {
+		if !c.serves[name] || !agentcontrol.HasCapabilityVersion(hello.GetCapabilities(), name, agentcontrol.CapabilityVersionV1) {
 			continue
 		}
-		if name != agentcontrol.CapabilityUsers && !agentcontrol.HasCapabilityVersion(hello.GetCapabilities(), name, agentcontrol.CapabilityVersionV1) {
+		if name == agentcontrol.CapabilityArtifacts && !certificate {
 			continue
 		}
-		capabilities = append(capabilities, &agentv1pb.Capability{Name: name, Version: agentcontrol.CapabilityVersionV1})
+		capability := &agentv1pb.Capability{Name: name, Version: agentcontrol.CapabilityVersionV1}
+		echo := []*agentv1pb.Capability{{Name: name, Version: agentcontrol.CapabilityVersionV1, Attributes: map[string]string{agentcontrol.ReportsAttributeTransientAck: agentcontrol.ReportsTransientAckV1}}}
+		if name == agentcontrol.CapabilityReports && c.transientAcks && agentcontrol.TransientReportAcks(hello.GetCapabilities(), echo) {
+			capability.Attributes = map[string]string{agentcontrol.ReportsAttributeTransientAck: agentcontrol.ReportsTransientAckV1}
+		}
+		capabilities = append(capabilities, capability)
 	}
 	return capabilities
 }
@@ -896,11 +1008,13 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 		change(&c.streams[index])
 		c.mu.Unlock()
 	}
+	certificate := false
 	if chain := peerChain(ctx); len(chain) > 0 && mode != ModeOff {
-		leaf, err := c.verifyPeer(chain)
+		leaf, err := c.verifyPeer(ctx, chain)
 		if err != nil {
 			return err
 		}
+		certificate = true
 		update(func(record *StreamAuth) { record.CertificateSerial = hex.EncodeToString(leaf.SerialNumber.Bytes()) })
 	} else {
 		if mode == ModeRequired {
@@ -922,12 +1036,13 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 		return status.Error(codes.PermissionDenied, "hello node_id does not match authenticated node")
 	}
 	update(func(record *StreamAuth) { record.Accepted = true })
-	serverCapabilities := c.serverCapabilities(hello)
+	serverCapabilities := c.serverCapabilities(hello, certificate)
 	c.mu.Lock()
 	c.sessionSeq++
 	current := &session{
 		id: "session-" + strconv.Itoa(c.sessionSeq), stream: stream, cancel: cancel,
 		hello: proto.Clone(hello).(*agentv1pb.Hello), negotiated: map[string]bool{},
+		transientAcks: agentcontrol.TransientReportAcks(hello.GetCapabilities(), serverCapabilities),
 	}
 	for _, capability := range serverCapabilities {
 		if agentcontrol.HasCapabilityVersion(hello.Capabilities, capability.Name, capability.Version) {
@@ -964,6 +1079,11 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 	}
 	if current.negotiated[agentcontrol.CapabilityUsers] {
 		if err := c.startUsers(current, hello.GetUsersCursor()); err != nil {
+			return err
+		}
+	}
+	if current.negotiated[agentcontrol.CapabilityAlive] {
+		if err := c.sendAlive(current); err != nil {
 			return err
 		}
 	}
@@ -1043,7 +1163,15 @@ func (c *Control) handle(current *session, message *agentv1pb.AgentToControl) er
 		c.mu.Lock()
 		c.packageReports = append(c.packageReports, proto.Clone(payload.PackageReport).(*agentv1pb.PackageReport))
 		c.mu.Unlock()
-	case *agentv1pb.AgentToControl_OperationAck, *agentv1pb.AgentToControl_ObservedState:
+	case *agentv1pb.AgentToControl_MaintenanceEvents:
+		if !current.negotiated[agentcontrol.CapabilityMaintenance] {
+			return status.Error(codes.InvalidArgument, agentcontrol.ErrorCodeCapabilityNotNegotiated+": maintenance_events needs capability maintenance.v1")
+		}
+		return c.handleMaintenance(current, message.RequestId, payload.MaintenanceEvents)
+	case *agentv1pb.AgentToControl_OperationAck:
+		c.recordOperationAck(payload.OperationAck)
+	case *agentv1pb.AgentToControl_ObservedState:
+		c.recordObserved(payload.ObservedState)
 	default:
 		return status.Error(codes.InvalidArgument, fmt.Sprintf("control message payload %T is not handled", payload))
 	}

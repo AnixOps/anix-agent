@@ -184,6 +184,7 @@ func TestDataPlaneRestartReportsTheStoredRevisionAndIsNotSentItAgain(t *testing.
 }
 
 func TestDataPlaneRefusesASnapshotThatDoesNotVerify(t *testing.T) {
+	codes := map[string]string{"hash": agentcontrol.ConfigErrorCodeHashMismatch, "format": agentcontrol.ConfigErrorCodeFormatUnsupported}
 	for name, mutate := range map[string]func(*agentv1pb.ConfigSnapshot){
 		"hash":   func(snapshot *agentv1pb.ConfigSnapshot) { snapshot.ConfigHash = "00" },
 		"format": func(snapshot *agentv1pb.ConfigSnapshot) { snapshot.Format = "anixops.nodeconfig/v2" },
@@ -204,6 +205,7 @@ func TestDataPlaneRefusesASnapshotThatDoesNotVerify(t *testing.T) {
 			assert.Equal(t, uint64(4), status.ConfigRevision)
 			assert.False(t, status.Applied)
 			assert.NotEmpty(t, status.Error)
+			assert.Equal(t, codes[name], status.ErrorCode)
 			assert.Empty(t, applier.revisions())
 			assert.Nil(t, client.DataPlane().PersistedConfig())
 			assert.Equal(t, float64(1), heartbeatMetric(t, control, agentapi.MetricConfigApplyFailures))
@@ -230,9 +232,18 @@ func TestDataPlaneReportsApplyErrorsAndKeepsTheRunningRevision(t *testing.T) {
 	assert.Equal(t, uint64(3), failed.ConfigRevision)
 	assert.False(t, failed.Applied)
 	assert.Contains(t, failed.Error, "core refused the inbound")
+	assert.Equal(t, agentcontrol.ConfigErrorCodeApplyFailed, failed.ErrorCode)
+	assert.Empty(t, statusesOf(control)[0].ErrorCode, "no code when applied")
+
+	// A document the node cannot read is config_invalid.
+	applier.setErr(agentapi.InvalidConfig(errors.New("no legacy_pull")))
+	control.SetDesiredConfig(agenttest.Snapshot(4, configDocument("c")), true)
+	require.Eventually(t, func() bool { return len(statusesOf(control)) == 3 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, agentcontrol.ConfigErrorCodeInvalid, statusesOf(control)[2].ErrorCode)
+	assert.Equal(t, "no legacy_pull", statusesOf(control)[2].Error)
 
 	// The node still runs revision 2: that is what is stored and what the
-	// next Hello reports, so Control sends revision 3 again.
+	// next Hello reports, so Control sends the desired revision again.
 	stored, err := openState(t, root).LoadConfig()
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), stored.ConfigRevision)
@@ -240,9 +251,9 @@ func TestDataPlaneReportsApplyErrorsAndKeepsTheRunningRevision(t *testing.T) {
 	control.DropSessions()
 	require.Eventually(t, func() bool { return len(control.Hellos()) == 2 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, uint64(2), control.Hellos()[1].ConfigRevision)
-	require.Eventually(t, func() bool { return len(statusesOf(control)) == 3 }, 5*time.Second, 10*time.Millisecond)
-	assert.True(t, statusesOf(control)[2].Applied)
-	assert.Equal(t, uint64(3), statusesOf(control)[2].ConfigRevision)
+	require.Eventually(t, func() bool { return len(statusesOf(control)) == 4 }, 5*time.Second, 10*time.Millisecond)
+	assert.True(t, statusesOf(control)[3].Applied)
+	assert.Equal(t, uint64(4), statusesOf(control)[3].ConfigRevision)
 }
 
 func TestDataPlaneDeliversAStatusAfterReconnectingWhenTheSessionEndedDuringTheApply(t *testing.T) {
