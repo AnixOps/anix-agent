@@ -4,6 +4,27 @@
 
 ### Added
 
+- Agent control stream, A2 negotiation (AG-1). The client reads
+  `HelloAck.server_capabilities`, logs them with the negotiated set at each
+  connection, and exposes them (`Client.ServerCapabilities`,
+  `Client.Negotiated`, `Client.TransportStatus`). `Negotiated` is false while
+  the stream is down, when the legacy transports carry the data.
+  - The Agent advertises only what it implements. It implements no
+    data-plane capability yet (`config.v1`, `users.v1`, `reports.v1`,
+    `package-reports.v1`, `diag.v1`), so configuration, users and reports
+    stay on REST, gRPC and WebSocket until AG-3 to AG-5. `NewClient` refuses
+    a Hello that lists one of them.
+  - A data-plane payload Control sends without negotiation is dropped and
+    counted; the stream stays up.
+  - Control's deprecation signal for the node API key
+    (`x-anix-auth-deprecated`, with its link and sunset; Control 4.1.0,
+    `agent_control.mtls: preferred`) is logged once and reported in the
+    heartbeat metric `agent_control_legacy_auth_deprecated`.
+  - A refusal with `agent_mtls_required` (Control 4.2 default,
+    `agent_control.mtls: required`) is reported as `ErrMTLSRequired` with an
+    explanation, logged at most every 10 minutes, and counted in
+    `agent_control_mtls_required_refusals_total`.
+
 - `machine-telemetry` accepts the `systemd_services` configuration key that
   Control's `machine-telemetry` 4.1 package pushes (per-node `enabled`,
   `include`, `exclude`). Before, the plugin refused the key as unknown and
@@ -22,6 +43,10 @@
   at the version already in the module graph.
 
 ### Changed
+
+- The Control SDK requirement moves to go_dev `46718e54fe35`
+  (`v0.0.0-20261003185058-46718e54fe35`). `anix.agent.v1` and
+  `agentcontrol` are unchanged since `3f23349fceda`.
 
 - The Control SDK requirement moves to go_dev `3f23349fceda`, which has
   `sdk/telemetry/systemdreport` (the report schema and sanitizer). The

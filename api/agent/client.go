@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	mathrand "math/rand"
 	"runtime"
@@ -109,6 +110,13 @@ type Client struct {
 	completedOrder   []string
 	started          atomic.Bool
 	closed           atomic.Bool
+
+	// Session negotiation and transport state, guarded by mu.
+	serverCapabilities []*agentv1pb.Capability
+	authentication     string
+	deprecation        *AuthDeprecation
+	lastError          string
+	counters           transportCounters
 }
 
 func NewClient(config Config) (*Client, error) {
@@ -145,6 +153,9 @@ func NewClient(config Config) (*Client, error) {
 	}
 	if config.InstanceID == "" {
 		config.InstanceID = newID("instance")
+	}
+	if err := validateAdvertisedCapabilities(config.Capabilities); err != nil {
+		return nil, err
 	}
 	if config.Handler == nil {
 		config.Handler = OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
@@ -205,16 +216,63 @@ func (c *Client) SessionID() string {
 	return c.sessionID
 }
 
+// ServerCapabilities returns HelloAck.server_capabilities of the current
+// session, nil while disconnected.
+func (c *Client) ServerCapabilities() []*agentv1pb.Capability {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.ready {
+		return nil
+	}
+	return cloneCapabilities(c.serverCapabilities)
+}
+
+// Negotiated reports whether a data-plane capability (config, users,
+// reports, package-reports) is in use on the current session: both this
+// Agent's Hello and Control's HelloAck list it. It is false while the stream
+// is down, when the legacy transports carry that data.
+func (c *Client) Negotiated(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ready && agentcontrol.Negotiated(c.config.Capabilities, c.serverCapabilities, name)
+}
+
+// TransportStatus describes the control stream for status output.
+func (c *Client) TransportStatus() TransportStatus {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	status := TransportStatus{
+		Connected:            c.ready,
+		SessionID:            c.sessionID,
+		Authentication:       c.authentication,
+		MTLSRequiredRefusals: c.counters.mtlsRequiredRefusals.Load(),
+		UnnegotiatedPayloads: c.counters.unnegotiatedPayloads.Load(),
+		LastError:            c.lastError,
+	}
+	if c.ready {
+		status.ServerCapabilities = capabilityNames(c.serverCapabilities)
+		status.Negotiated = negotiatedNames(c.config.Capabilities, c.serverCapabilities)
+	}
+	if c.deprecation != nil {
+		deprecation := *c.deprecation
+		status.Deprecation = &deprecation
+	}
+	return status
+}
+
 func (c *Client) run() {
 	defer c.wg.Done()
 	attempt := 0
 	for {
 		connected, err := c.runSession()
-		c.setDisconnected()
+		c.setDisconnected(err)
 		if c.ctx.Err() != nil {
 			return
 		}
-		if err != nil {
+		if errors.Is(err, ErrMTLSRequired) {
+			c.counters.mtlsRequiredRefusals.Add(1)
+			c.logMTLSRequired(err)
+		} else if err != nil {
 			log.WithFields(log.Fields{
 				"component": "agent-control",
 				"node_id":   c.config.NodeID,
@@ -468,12 +526,13 @@ func (c *Client) runSession() (bool, error) {
 	defer sessionCancel()
 	authCtx := metadata.AppendToOutgoingContext(
 		sessionCtx,
-		"x-node-id", strconv.Itoa(c.config.NodeID),
-		"x-api-key", c.config.APIKey,
+		agentcontrol.MetadataNodeID, strconv.Itoa(c.config.NodeID),
+		agentcontrol.MetadataAPIKey, c.config.APIKey,
 	)
+	c.setAuthentication(authenticationAPIKey)
 	stream, err := agentv1pb.NewAgentControlServiceClient(conn).ControlStream(authCtx)
 	if err != nil {
-		return false, fmt.Errorf("open control stream: %w", err)
+		return false, c.streamFailure(nil, fmt.Errorf("open control stream: %w", err))
 	}
 
 	receiveCh := make(chan receiveResult, 1)
@@ -494,7 +553,8 @@ func (c *Client) runSession() (bool, error) {
 				Labels:       cloneStringMap(c.config.Labels),
 			},
 		},
-	}); err != nil {
+	}); err != nil && !errors.Is(err, io.EOF) {
+		// io.EOF means Control ended the stream; its status arrives on Recv.
 		return false, fmt.Errorf("send hello: %w", err)
 	}
 
@@ -508,7 +568,7 @@ func (c *Client) runSession() (bool, error) {
 		return false, fmt.Errorf("agent control hello timed out")
 	case received := <-receiveCh:
 		if received.err != nil {
-			return false, fmt.Errorf("receive hello ACK: %w", received.err)
+			return false, c.streamFailure(stream, fmt.Errorf("receive hello ACK: %w", received.err))
 		}
 		if received.message.RequestId != helloRequestID {
 			return false, fmt.Errorf("hello ACK request_id mismatch")
@@ -519,8 +579,14 @@ func (c *Client) runSession() (bool, error) {
 		}
 	}
 
+	// Control's header metadata arrived with the HelloAck, so Header does
+	// not block here.
+	var deprecation *AuthDeprecation
+	if header, err := stream.Header(); err == nil {
+		deprecation = authDeprecation(header)
+	}
 	c.desiredRevision.Store(helloAck.DesiredRevision)
-	c.setConnected(helloAck.SessionId)
+	c.setConnected(helloAck.SessionId, helloAck.ServerCapabilities, deprecation)
 	connectedAt = time.Now()
 	heartbeatInterval := c.config.Heartbeat
 	if helloAck.HeartbeatIntervalSeconds > 0 {
@@ -553,7 +619,7 @@ func (c *Client) runSession() (bool, error) {
 			}
 		case received := <-receiveCh:
 			if received.err != nil {
-				return c.sessionWasStable(connectedAt), received.err
+				return c.sessionWasStable(connectedAt), c.streamFailure(stream, received.err)
 			}
 			if received.message.NodeId != uint32(c.config.NodeID) {
 				return c.sessionWasStable(connectedAt), fmt.Errorf("control message node_id mismatch")
@@ -580,6 +646,12 @@ func (c *Client) runSession() (bool, error) {
 				}
 			case *agentv1pb.ControlToAgent_HelloAck:
 				return c.sessionWasStable(connectedAt), fmt.Errorf("unexpected duplicate hello ACK")
+			case *agentv1pb.ControlToAgent_Config, *agentv1pb.ControlToAgent_Users, *agentv1pb.ControlToAgent_ReportAck:
+				// No data-plane capability is implemented yet, so none is
+				// negotiated and Control must not send these (PROTOCOL.md,
+				// "Negotiation").
+				kind, capability, _ := payloadCapability(payload)
+				c.dropUnnegotiatedPayload(kind, capability)
 			default:
 				return c.sessionWasStable(connectedAt), fmt.Errorf("control message payload is required")
 			}
@@ -842,9 +914,8 @@ func operationDeadlineExceeded(operation *agentv1pb.DesiredOperation, now time.T
 }
 
 func (c *Client) sendHeartbeat(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, startedAt time.Time) error {
-	metrics := map[string]float64{
-		"go_goroutines": float64(runtime.NumGoroutine()),
-	}
+	metrics := c.transportMetrics()
+	metrics["go_goroutines"] = float64(runtime.NumGoroutine())
 	if c.config.MetricsProvider != nil {
 		providerCtx, cancel := context.WithTimeout(c.ctx, metricsProviderTimeout)
 		provided, err := c.config.MetricsProvider(providerCtx)
@@ -1002,19 +1073,83 @@ func (c *Client) send(stream agentv1pb.AgentControlService_ControlStreamClient, 
 	return stream.Send(message)
 }
 
-func (c *Client) setConnected(sessionID string) {
+// authenticationAPIKey is TransportStatus.Authentication of a session that
+// authenticated with the node API key.
+const authenticationAPIKey = "api-key"
+
+func (c *Client) setConnected(sessionID string, serverCapabilities []*agentv1pb.Capability, deprecation *AuthDeprecation) {
 	c.mu.Lock()
 	c.sessionID = sessionID
 	c.ready = true
+	c.serverCapabilities = cloneCapabilities(serverCapabilities)
+	c.deprecation = deprecation
+	c.lastError = ""
+	authentication := c.authentication
 	c.mu.Unlock()
 	c.readyOnce.Do(func() { close(c.readyCh) })
+
+	log.WithFields(log.Fields{
+		"component":           "agent-control",
+		"node_id":             c.config.NodeID,
+		"session_id":          sessionID,
+		"authentication":      authentication,
+		"server_capabilities": strings.Join(capabilityNames(serverCapabilities), ","),
+		"negotiated":          strings.Join(negotiatedNames(c.config.Capabilities, serverCapabilities), ","),
+	}).Info("Agent control stream connected")
+	c.logDeprecation(deprecation)
 }
 
-func (c *Client) setDisconnected() {
+func (c *Client) setDisconnected(err error) {
 	c.mu.Lock()
 	c.sessionID = ""
 	c.ready = false
+	c.serverCapabilities = nil
+	if err != nil && c.ctx.Err() == nil {
+		c.lastError = err.Error()
+	}
 	c.mu.Unlock()
+}
+
+func (c *Client) setAuthentication(method string) {
+	c.mu.Lock()
+	c.authentication = method
+	c.mu.Unlock()
+}
+
+// streamFailure interprets the error that ended a stream. With stream set,
+// err came from Recv, so the trailer is complete: it may carry Control's
+// deprecation signal and the agent_mtls_required code.
+func (c *Client) streamFailure(stream agentv1pb.AgentControlService_ControlStreamClient, err error) error {
+	var trailer metadata.MD
+	if stream != nil {
+		trailer = stream.Trailer()
+		if deprecation := authDeprecation(trailer); deprecation != nil {
+			c.mu.Lock()
+			c.deprecation = deprecation
+			c.mu.Unlock()
+			c.logDeprecation(deprecation)
+		}
+	}
+	if refused := mtlsRequiredError("control stream", err, trailer); refused != nil {
+		return refused
+	}
+	return err
+}
+
+// transportMetrics are the client's heartbeat metrics.
+func (c *Client) transportMetrics() map[string]float64 {
+	c.mu.RLock()
+	deprecated := c.deprecation != nil && c.authentication == authenticationAPIKey
+	c.mu.RUnlock()
+	metrics := map[string]float64{
+		MetricLegacyAuthDeprecated: 0,
+		MetricMTLSRequiredRefusals: float64(c.counters.mtlsRequiredRefusals.Load()),
+		MetricUnnegotiatedPayloads: float64(c.counters.unnegotiatedPayloads.Load()),
+	}
+	if deprecated {
+		metrics[MetricLegacyAuthDeprecated] = 1
+	}
+	return metrics
 }
 
 func (c *Client) storeDesiredRevision(revision uint64) {
