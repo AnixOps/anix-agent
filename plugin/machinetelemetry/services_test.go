@@ -492,3 +492,37 @@ func TestRunServicesCollectorStopsAndCloses(t *testing.T) {
 	}
 	assert.Equal(t, 1, lister.closed)
 }
+
+// blockingLister holds ListServices until released, like a hung systemd.
+type blockingLister struct {
+	fakeLister
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingLister) ListServices(ctx context.Context) ([]ServiceUnit, error) {
+	b.entered <- struct{}{}
+	<-b.release
+	return b.fakeLister.ListServices(ctx)
+}
+
+func TestLatestDoesNotWaitForASlowCollection(t *testing.T) {
+	fs := newFakeCgroupfs(t)
+	lister := &blockingLister{fakeLister: fakeLister{units: []ServiceUnit{running("nginx.service")}}, entered: make(chan struct{}, 2), release: make(chan struct{}, 2)}
+	collector := NewServicesCollector(fs.platform(lister), ServicesNodeConfig{Enabled: true}, nil)
+	lister.release <- struct{}{}
+	mustCollect(t, collector)
+	<-lister.entered
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = collector.Collect(context.Background())
+	}()
+	<-lister.entered
+	report, ok := collector.Latest()
+	require.True(t, ok, "the previous report is served while a collection is in progress")
+	decodeReport(t, report)
+	lister.release <- struct{}{}
+	<-done
+}

@@ -317,8 +317,10 @@ func (c *telemetryClient) Snapshot(ctx context.Context) (Snapshot, error) {
 }
 
 // SystemdServices reads the latest systemd.services report. ok is false when
-// the plugin has none to give: collection is off for the node, no sample was
-// taken yet, or the plugin predates the collector (Unimplemented).
+// the plugin has none to give: collection is off for the node
+// (FailedPrecondition), no sample was taken yet (NotFound), or the plugin
+// predates the collector (Unimplemented). Transport failures, Unavailable
+// among them, are errors.
 func (c *telemetryClient) SystemdServices(ctx context.Context) (report ServicesReport, ok bool, err error) {
 	if c == nil || c.connection == nil {
 		return ServicesReport{}, false, errors.New("telemetry client connection is unavailable")
@@ -326,7 +328,7 @@ func (c *telemetryClient) SystemdServices(ctx context.Context) (report ServicesR
 	response := new(structpb.Struct)
 	if err := c.connection.Invoke(ctx, "/"+TelemetryServiceName+"/"+ServicesMethodName, &emptypb.Empty{}, response); err != nil {
 		switch status.Code(err) {
-		case codes.Unimplemented, codes.FailedPrecondition, codes.Unavailable:
+		case codes.Unimplemented, codes.FailedPrecondition, codes.NotFound:
 			return ServicesReport{}, false, nil
 		}
 		return ServicesReport{}, false, err
@@ -435,7 +437,7 @@ func (r telemetryRPC) SystemdServices(ctx context.Context, _ *emptypb.Empty) (*s
 	}
 	report, ok := r.services.Latest()
 	if !ok {
-		return nil, status.Error(codes.Unavailable, "no systemd services report has been collected yet")
+		return nil, status.Error(codes.NotFound, "no systemd services report has been collected yet")
 	}
 	return report.toStruct(), nil
 }

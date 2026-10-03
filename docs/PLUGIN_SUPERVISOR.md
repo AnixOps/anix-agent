@@ -266,7 +266,7 @@ only the latest is kept. The plugin serves it on its Unix socket as
 `anixops.plugin.v1.Telemetry/SystemdServices` (`google.protobuf.Empty` in, a
 `google.protobuf.Struct` `{kind, payload_json, observed_at_unix_ms}` out);
 `payload_json` is exactly the `systemd.services` PackageReport payload.
-`FailedPrecondition` means collection is off for the node, `Unavailable`
+`FailedPrecondition` means collection is off for the node, `NotFound`
 that nothing was collected yet, and older plugins answer `Unimplemented`.
 The Supervisor does not yet set `ANIXOPS_NODE_ID`, poll this method or send
 the `PackageReport`; that is the next step (systemd panel 4/7).

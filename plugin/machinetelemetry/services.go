@@ -188,10 +188,15 @@ type ServicesCollector struct {
 	node     ServicesNodeConfig
 	now      func() time.Time
 
+	// mu guards the collection state. Collect holds it across D-Bus calls,
+	// so the latest report has its own lock: a slow systemd must not delay
+	// the hand-off of the previous report.
 	mu     sync.Mutex
 	lister ServiceLister
 	series map[string]*unitSeries
-	latest *ServicesReport
+
+	latestMu sync.RWMutex
+	latest   *ServicesReport
 }
 
 // NewServicesCollector returns a collector for one node's settings.
@@ -207,8 +212,8 @@ func (c *ServicesCollector) Latest() (ServicesReport, bool) {
 	if c == nil {
 		return ServicesReport{}, false
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.latestMu.RLock()
+	defer c.latestMu.RUnlock()
 	if c.latest == nil {
 		return ServicesReport{}, false
 	}
@@ -248,7 +253,9 @@ func (c *ServicesCollector) Collect(ctx context.Context) (ServicesReport, error)
 		return ServicesReport{}, fmt.Errorf("systemd services report does not pass the SDK sanitizer: %w", err)
 	}
 	latest := ServicesReport{Kind: systemdreport.Kind, PayloadJSON: payload, ObservedAtUnixMs: now.UnixMilli()}
+	c.latestMu.Lock()
 	c.latest = &latest
+	c.latestMu.Unlock()
 	result := latest
 	result.PayloadJSON = append([]byte(nil), payload...)
 	return result, nil
