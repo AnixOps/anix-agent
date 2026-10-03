@@ -207,6 +207,37 @@ Windows：
 不是私钥；Control 与 Agent 必须使用同一个信任根。安装向导会生成这些字段，
 并以 `Transport: "http"` 保留旧数据面回退。
 
+### 控制流 mTLS 身份（AgentIdentity）
+
+开启 `AgentControlEnabled` 且控制流使用 TLS 时，Agent 会向 Control 的
+`AgentEnrollment` 申请客户端证书（SAN `spiffe://anixops/<cluster>/agent/proxy-<NodeID>`）：
+
+- 首次使用节点 API key 注册一次；若配置了 `EnrollCredentialFile`，优先使用其中的
+  一次性 `anixagt_` 凭证（`anix-control agent token create -node proxy-<id>`）。
+  Control 4.2 默认 `agent_control.mtls: required`，此时只接受一次性凭证。
+- 私钥在本机生成（ECDSA P-256），与证书一起保存在
+  `CertDir/proxy-<NodeID>/identity.pem`，CA 包在 `ca.pem`，元数据在
+  `identity.json`；目录 0700、文件 0600，属主为运行 Agent 的用户（root）。
+  权限过宽或属主不符的文件会被拒绝并重新注册。私钥不做“派生密钥加密”。
+- 在 Control 给出的续期时间（证书寿命的三分之二，7 天证书约第 4.7 天）自动续期；
+  证书被吊销、过期或不属于本集群时丢弃并重新注册。
+- 注册成功后，控制流只出示证书，不再发送 `x-api-key`。仅当 Control 未请求客户端
+  证书（`agent_control.mtls: off`，或 Control 未启用内置 CA）时才回退到 API key。
+  REST/UniProxy、旧版 gRPC 与 WebSocket 链路在 AG-3 至 AG-5 之前仍使用 API key。
+
+```json
+"AgentIdentity": {
+  "Enroll": "auto",
+  "CertDir": "/var/lib/anix-agent/pki",
+  "EnrollCredentialFile": "/etc/anixops/agent/enroll.token",
+  "Cluster": ""
+}
+```
+
+`Enroll` 为 `auto`（默认）或 `off`（不注册；已有身份仍会使用和续期）。
+`anix-agent identity [--json]` 显示每个节点的 SPIFFE ID、证书序列号、过期与续期时间，
+只读本地文件，不连接 Control。容器部署需把 `CertDir` 挂载为持久卷。
+
 面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 
 ## Docker

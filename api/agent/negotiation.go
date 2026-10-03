@@ -69,8 +69,12 @@ type MTLSRequiredError struct {
 }
 
 func (e *MTLSRequiredError) Error() string {
-	return fmt.Sprintf("%s: Control refused the node API key for the %s (agent_control.mtls: required); the Agent must enroll and present its client certificate: %s",
-		agentcontrol.ErrorCodeMTLSRequired, e.Operation, e.Message)
+	hint := "the Agent must enroll and present its client certificate"
+	if e.Operation == "enrollment" {
+		hint = "enrolling now needs a one-time enrollment credential"
+	}
+	return fmt.Sprintf("%s: Control refused the node API key for the %s (agent_control.mtls: required); %s: %s",
+		agentcontrol.ErrorCodeMTLSRequired, e.Operation, hint, e.Message)
 }
 
 func (e *MTLSRequiredError) Unwrap() error { return ErrMTLSRequired }
@@ -201,8 +205,8 @@ type transportCounters struct {
 type TransportStatus struct {
 	Connected bool   `json:"connected"`
 	SessionID string `json:"session_id,omitempty"`
-	// Authentication is how the current or last session authenticated
-	// ("api-key").
+	// Authentication is how the current or last session authenticated:
+	// "api-key", or "certificate" for an enrolled Agent.
 	Authentication string `json:"authentication,omitempty"`
 	// ServerCapabilities is HelloAck.server_capabilities of the current
 	// session, as name.version.
@@ -217,6 +221,8 @@ type TransportStatus struct {
 	UnnegotiatedPayloads uint64           `json:"unnegotiated_payloads"`
 	// LastError is the last session error, if any.
 	LastError string `json:"last_error,omitempty"`
+	// Identity is the Agent's mTLS identity, nil when it is off.
+	Identity *IdentityStatus `json:"identity,omitempty"`
 }
 
 // logDeprecation logs Control's deprecation signal once per client.

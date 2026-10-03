@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,13 @@ type Config struct {
 	DialContext                DialContextFunc
 	DialOptions                []grpc.DialOption
 	Rand                       *mathrand.Rand
+	// Identity turns on enrollment and the mTLS client certificate (AG-2).
+	// It needs UseTLS. Without it the stream authenticates with APIKey.
+	Identity *IdentityConfig
+	// RootCAs verifies Control's TLS certificate; nil uses the system
+	// roots. Control's agent CA bundle is never used for this: it signs
+	// client certificates only.
+	RootCAs *x509.CertPool
 }
 
 type Client struct {
@@ -99,6 +107,11 @@ type Client struct {
 	sendMu sync.Mutex
 	randMu sync.Mutex
 	mu     sync.RWMutex
+
+	identity *identityManager
+	// recycle asks a session authenticated with the API key to end, so the
+	// next one presents the certificate an enrollment just installed.
+	recycle chan struct{}
 
 	sessionID        string
 	ready            bool
@@ -170,13 +183,29 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Client{
+	client := &Client{
 		config:    config,
 		ctx:       ctx,
 		cancel:    cancel,
 		readyCh:   make(chan struct{}),
 		completed: make(map[string]*agentv1pb.ObservedState),
-	}, nil
+		recycle:   make(chan struct{}, 1),
+	}
+	if config.Identity != nil {
+		identity, err := newIdentityManager(client, *config.Identity)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		identity.onEnrolled = func() {
+			select {
+			case client.recycle <- struct{}{}:
+			default:
+			}
+		}
+		client.identity = identity
+	}
+	return client, nil
 }
 
 func (c *Client) Start() error {
@@ -185,6 +214,13 @@ func (c *Client) Start() error {
 	}
 	if !c.started.CompareAndSwap(false, true) {
 		return nil
+	}
+	if c.identity != nil {
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.identity.maintain(c.ctx)
+		}()
 	}
 	c.wg.Add(1)
 	go c.run()
@@ -257,6 +293,10 @@ func (c *Client) TransportStatus() TransportStatus {
 		deprecation := *c.deprecation
 		status.Deprecation = &deprecation
 	}
+	if c.identity != nil {
+		identity := c.identity.status()
+		status.Identity = &identity
+	}
 	return status
 }
 
@@ -264,6 +304,9 @@ func (c *Client) run() {
 	defer c.wg.Done()
 	attempt := 0
 	for {
+		if c.identity != nil {
+			c.identity.prepare(c.ctx)
+		}
 		connected, err := c.runSession()
 		c.setDisconnected(err)
 		if c.ctx.Err() != nil {
@@ -272,6 +315,9 @@ func (c *Client) run() {
 		if errors.Is(err, ErrMTLSRequired) {
 			c.counters.mtlsRequiredRefusals.Add(1)
 			c.logMTLSRequired(err)
+		} else if errors.Is(err, errSessionRecycled) {
+			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID}).
+				Info("Reconnecting the Agent control stream with the new client certificate")
 		} else if err != nil {
 			log.WithFields(log.Fields{
 				"component": "agent-control",
@@ -516,7 +562,11 @@ func (c *Client) runSession() (bool, error) {
 	dialCtx, dialCancel := context.WithTimeout(c.ctx, c.config.DialTimeout)
 	defer dialCancel()
 
-	conn, err := c.config.DialContext(dialCtx, c.config.Target, c.dialOptions()...)
+	var session *sessionCredentials
+	if c.identity != nil {
+		session = &sessionCredentials{identity: c.identity.certificate()}
+	}
+	conn, err := c.config.DialContext(dialCtx, c.config.Target, c.dialOptions(session)...)
 	if err != nil {
 		return false, fmt.Errorf("dial agent control: %w", err)
 	}
@@ -524,15 +574,36 @@ func (c *Client) runSession() (bool, error) {
 
 	sessionCtx, sessionCancel := context.WithCancel(c.ctx)
 	defer sessionCancel()
-	authCtx := metadata.AppendToOutgoingContext(
-		sessionCtx,
-		agentcontrol.MetadataNodeID, strconv.Itoa(c.config.NodeID),
-		agentcontrol.MetadataAPIKey, c.config.APIKey,
-	)
-	c.setAuthentication(authenticationAPIKey)
-	stream, err := agentv1pb.NewAgentControlServiceClient(conn).ControlStream(authCtx)
+	// The TLS handshake is done (WithBlock), so the client certificate was
+	// either presented or never asked for. With it, the node comes from the
+	// certificate and the API key is not sent. Control asks for it unless
+	// agent_control.mtls is off or it runs without its agent PKI; only then
+	// does an enrolled Agent fall back to the API key.
+	pairs := []string{agentcontrol.MetadataNodeID, strconv.Itoa(c.config.NodeID)}
+	authentication := authenticationAPIKey
+	requested, presented := session.state()
+	// An API key session on a listener that asked for a certificate ends
+	// once an enrollment installs one.
+	recycle := c.recycle
+	if presented {
+		authentication = authenticationCertificate
+	}
+	if presented || !requested {
+		recycle = nil
+	}
+	if !presented {
+		if session != nil && session.identity != nil && !requested {
+			c.identity.noteCertificateNotRequested()
+		}
+		pairs = append(pairs, agentcontrol.MetadataAPIKey, c.config.APIKey)
+	}
+	c.setAuthentication(authentication)
+	failure := func(stream agentv1pb.AgentControlService_ControlStreamClient, err error) error {
+		return c.streamFailure(stream, session, err)
+	}
+	stream, err := agentv1pb.NewAgentControlServiceClient(conn).ControlStream(metadata.AppendToOutgoingContext(sessionCtx, pairs...))
 	if err != nil {
-		return false, c.streamFailure(nil, fmt.Errorf("open control stream: %w", err))
+		return false, failure(nil, fmt.Errorf("open control stream: %w", err))
 	}
 
 	receiveCh := make(chan receiveResult, 1)
@@ -568,7 +639,7 @@ func (c *Client) runSession() (bool, error) {
 		return false, fmt.Errorf("agent control hello timed out")
 	case received := <-receiveCh:
 		if received.err != nil {
-			return false, c.streamFailure(stream, fmt.Errorf("receive hello ACK: %w", received.err))
+			return false, failure(stream, fmt.Errorf("receive hello ACK: %w", received.err))
 		}
 		if received.message.RequestId != helloRequestID {
 			return false, fmt.Errorf("hello ACK request_id mismatch")
@@ -617,9 +688,13 @@ func (c *Client) runSession() (bool, error) {
 			if err := c.sendHeartbeat(stream, helloAck.SessionId, startedAt); err != nil {
 				return c.sessionWasStable(connectedAt), err
 			}
+		case <-recycle:
+			if c.identity.certificate() != nil {
+				return true, errSessionRecycled
+			}
 		case received := <-receiveCh:
 			if received.err != nil {
-				return c.sessionWasStable(connectedAt), c.streamFailure(stream, received.err)
+				return c.sessionWasStable(connectedAt), failure(stream, received.err)
 			}
 			if received.message.NodeId != uint32(c.config.NodeID) {
 				return c.sessionWasStable(connectedAt), fmt.Errorf("control message node_id mismatch")
@@ -666,7 +741,7 @@ func (c *Client) sessionWasStable(connectedAt time.Time) bool {
 	return time.Since(connectedAt) >= c.config.Heartbeat
 }
 
-func (c *Client) dialOptions() []grpc.DialOption {
+func (c *Client) dialOptions(session *sessionCredentials) []grpc.DialOption {
 	receiveLimit := grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxControlMessageBytes))
 	if len(c.config.DialOptions) > 0 {
 		return append([]grpc.DialOption{receiveLimit}, c.config.DialOptions...)
@@ -681,14 +756,40 @@ func (c *Client) dialOptions() []grpc.DialOption {
 		}),
 	}
 	if c.config.UseTLS {
-		options = append(options, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			ServerName: c.config.ServerName,
-			MinVersion: tls.VersionTLS12,
-		})))
+		tlsConfig := c.tlsConfig()
+		if session != nil {
+			tlsConfig.GetClientCertificate = session.getClientCertificate
+		}
+		options = append(options, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	} else {
 		options = append(options, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 	return options
+}
+
+// tlsConfig verifies Control's server certificate.
+func (c *Client) tlsConfig() *tls.Config {
+	return &tls.Config{
+		ServerName: c.config.ServerName,
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    c.config.RootCAs,
+	}
+}
+
+// dialIdentity connects to AgentEnrollment over TLS, presenting certificate
+// when set (Renew) and none otherwise (Enroll).
+func (c *Client) dialIdentity(ctx context.Context, certificate *tls.Certificate) (*grpc.ClientConn, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, c.config.DialTimeout)
+	defer cancel()
+	tlsConfig := c.tlsConfig()
+	if certificate != nil {
+		tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return certificate, nil }
+	}
+	return c.config.DialContext(dialCtx, c.config.Target,
+		grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxControlMessageBytes)),
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
+	)
 }
 
 func receiveControlMessages(ctx context.Context, stream agentv1pb.AgentControlService_ControlStreamClient, output chan<- receiveResult) {
@@ -1073,9 +1174,15 @@ func (c *Client) send(stream agentv1pb.AgentControlService_ControlStreamClient, 
 	return stream.Send(message)
 }
 
-// authenticationAPIKey is TransportStatus.Authentication of a session that
-// authenticated with the node API key.
-const authenticationAPIKey = "api-key"
+// errSessionRecycled ends an API key session after an enrollment, so the
+// next session presents the client certificate.
+var errSessionRecycled = errors.New("agent control session recycled for the client certificate")
+
+// Authentication methods of a session (TransportStatus.Authentication).
+const (
+	authenticationAPIKey      = "api-key"
+	authenticationCertificate = "certificate"
+)
 
 func (c *Client) setConnected(sessionID string, serverCapabilities []*agentv1pb.Capability, deprecation *AuthDeprecation) {
 	c.mu.Lock()
@@ -1096,6 +1203,12 @@ func (c *Client) setConnected(sessionID string, serverCapabilities []*agentv1pb.
 		"negotiated":          strings.Join(negotiatedNames(c.config.Capabilities, serverCapabilities), ","),
 	}).Info("Agent control stream connected")
 	c.logDeprecation(deprecation)
+	if c.identity != nil && authentication == authenticationAPIKey {
+		c.identity.apiKeyAccepted()
+		if deprecation != nil {
+			c.identity.enrollSoon()
+		}
+	}
 	c.readyOnce.Do(func() { close(c.readyCh) })
 }
 
@@ -1119,7 +1232,7 @@ func (c *Client) setAuthentication(method string) {
 // streamFailure interprets the error that ended a stream. With stream set,
 // err came from Recv, so the trailer is complete: it may carry Control's
 // deprecation signal and the agent_mtls_required code.
-func (c *Client) streamFailure(stream agentv1pb.AgentControlService_ControlStreamClient, err error) error {
+func (c *Client) streamFailure(stream agentv1pb.AgentControlService_ControlStreamClient, session *sessionCredentials, err error) error {
 	var trailer metadata.MD
 	if stream != nil {
 		trailer = stream.Trailer()
@@ -1128,9 +1241,22 @@ func (c *Client) streamFailure(stream agentv1pb.AgentControlService_ControlStrea
 			c.deprecation = deprecation
 			c.mu.Unlock()
 			c.logDeprecation(deprecation)
+			if c.identity != nil {
+				c.identity.enrollSoon()
+			}
 		}
 	}
+	if _, presented := session.state(); presented {
+		// Control refused the certificate itself: drop it and enroll again.
+		if reason, refused := certificateRefusal(err); refused {
+			c.identity.rejected(session.identity, reason)
+		}
+		return err
+	}
 	if refused := mtlsRequiredError("control stream", err, trailer); refused != nil {
+		if c.identity != nil {
+			c.identity.enrollSoon()
+		}
 		return refused
 	}
 	return err
@@ -1148,6 +1274,11 @@ func (c *Client) transportMetrics() map[string]float64 {
 	}
 	if deprecated {
 		metrics[MetricLegacyAuthDeprecated] = 1
+	}
+	if c.identity != nil {
+		for key, value := range c.identity.metrics() {
+			metrics[key] = value
+		}
 	}
 	return metrics
 }

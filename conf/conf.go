@@ -44,6 +44,9 @@ func (p *Conf) LoadFromPath(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("unmarshal config error: %s", err)
 	}
+	if err = p.validateAgentIdentities(); err != nil {
+		return err
+	}
 	if err = p.ValidateForProduction(); err != nil {
 		return err
 	}

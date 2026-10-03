@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
+	"github.com/AnixOps/anix-agent/v4/api/agent/pki"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
@@ -45,6 +46,11 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		return nil, err
 	}
 
+	identity, err := agentControlIdentity(apiConfig, nodeID, useTLS)
+	if err != nil {
+		return nil, err
+	}
+
 	hostname, _ := os.Hostname()
 	keepaliveTime := time.Duration(apiConfig.GRPCKeepalive) * time.Second
 	return agentapi.NewClient(agentapi.Config{
@@ -53,6 +59,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		APIKey:       apiKey,
 		UseTLS:       useTLS,
 		ServerName:   serverName,
+		Identity:     identity,
 		AgentVersion: panel.Version,
 		InstanceID:   fmt.Sprintf("%s-%d-%d", hostname, os.Getpid(), nodeID),
 		Capabilities: agentCapabilities(core, supervisor != nil),
@@ -76,6 +83,39 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 			return supervisor.PluginObservations(ctx)
 		},
 	})
+}
+
+// agentControlIdentity is the stream's mTLS identity configuration (AG-2),
+// nil when the stream is not on TLS: a client certificate needs TLS, and an
+// enrollment must never send the node API key in the clear. A forced
+// re-registration drops the stored identity, as it drops the node
+// credentials.
+func agentControlIdentity(apiConfig *conf.ApiConfig, nodeID int, useTLS bool) (*agentapi.IdentityConfig, error) {
+	settings := apiConfig.AgentIdentity
+	if err := settings.Validate(); err != nil {
+		return nil, err
+	}
+	if !useTLS {
+		log.WithFields(log.Fields{"component": "agent-identity", "node_id": nodeID}).
+			Warn("Agent control stream is not on TLS; the Agent cannot enroll or present a client certificate and authenticates with the node API key. Control 4.2 (agent_control.mtls: required) refuses it")
+		return nil, nil
+	}
+	if apiConfig.ForceReRegister && nodeID > 0 {
+		store, err := pki.NewStore(settings.Dir(), agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(nodeID)}) // #nosec G115 -- node IDs are uint32 on the wire.
+		if err == nil {
+			if err := store.Discard(); err != nil {
+				log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the agent identity on re-registration")
+			} else {
+				log.WithField("dir", store.Dir()).Info("Force re-register: removed the stored agent identity")
+			}
+		}
+	}
+	return &agentapi.IdentityConfig{
+		Dir:                  settings.Dir(),
+		Enroll:               settings.EnrollMode() == conf.AgentIdentityEnrollAuto,
+		EnrollCredentialFile: strings.TrimSpace(settings.EnrollCredentialFile),
+		Cluster:              strings.TrimSpace(settings.Cluster),
+	}, nil
 }
 
 func resolveAgentControlTarget(config *conf.ApiConfig) (target string, useTLS bool, serverName string, err error) {
