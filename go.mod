@@ -3,13 +3,14 @@ module github.com/AnixOps/anix-agent/v4
 go 1.25.0
 
 require (
-	github.com/AnixOps/anix-control/sdk v0.0.0-20261001080452-0cdc264c2da5
+	github.com/AnixOps/anix-control/sdk v0.0.0-20261003161501-3f23349fceda
 	github.com/apernet/hysteria/core/v2 v2.6.4
 	github.com/apernet/hysteria/extras/v2 v2.6.4
 	github.com/beevik/ntp v1.4.4-0.20240716062501-06ef196b89ec
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-acme/lego/v4 v4.25.2
 	github.com/go-resty/resty/v2 v2.16.5
+	github.com/godbus/dbus/v5 v5.1.1-0.20230522191255-76236955d466
 	github.com/gofrs/flock v0.12.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/juju/ratelimit v1.0.2
@@ -128,7 +129,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
-	github.com/godbus/dbus/v5 v5.1.1-0.20230522191255-76236955d466 // indirect
 	github.com/gofrs/uuid/v5 v5.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
