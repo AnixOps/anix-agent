@@ -11,6 +11,7 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/monitor"
 	"github.com/AnixOps/anix-agent/v4/plugin"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -57,6 +58,10 @@ type nodeDataPlane struct {
 	online     map[*Controller]map[int][]string
 	onlineSent bool
 	logBuffer  []*agentv1pb.LogEntry
+	// lastSystem is the last system usage read, for a status when a new
+	// sample fails; health is the runtime health last reported.
+	lastSystem *monitor.SystemInfo
+	health     *runtimeHealth
 	stop       chan struct{}
 	stopped    chan struct{}
 	stopOnce   sync.Once
@@ -134,6 +139,38 @@ func (n *nodeDataPlane) ApplyUsers(ctx context.Context, set agentapi.UserSet) er
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ApplyAlive implements agentapi.AliveApplier: every controller's device
+// limits count the alive list from Control (alive.v1), each user missing
+// from it at 0.
+func (n *nodeDataPlane) ApplyAlive(ctx context.Context, alive map[uint64]uint32) {
+	for _, controller := range n.controllers {
+		if ctx.Err() != nil {
+			return
+		}
+		controller.applyStreamAlive(aliveMap(alive))
+	}
+}
+
+// startupAliveList is the alive list a controller starts with during a
+// stream start: Control's latest (alive.v1), else empty.
+func (n *nodeDataPlane) startupAliveList() map[int]int {
+	if n != nil && n.client != nil && n.client.DataPlane() != nil {
+		if alive, ok := n.client.DataPlane().AliveList(); ok {
+			return aliveMap(alive)
+		}
+	}
+	return make(map[int]int)
+}
+
+// aliveMap converts an alive list to the limiter's map.
+func aliveMap(alive map[uint64]uint32) map[int]int {
+	converted := make(map[int]int, len(alive))
+	for uid, count := range alive {
+		converted[int(uid)] = int(count) // #nosec G115 -- user ids and device counts fit the limiter's int fields.
+	}
+	return converted
 }
 
 // startupUserList returns a copy of the users to start with, ok false when

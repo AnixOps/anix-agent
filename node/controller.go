@@ -47,6 +47,8 @@ type Controller struct {
 	// stream is the node's control-stream data plane, nil when it is off:
 	// the legacy transports then carry everything.
 	stream *nodeDataPlane
+	// agentClient is the node's Agent control client, nil without one.
+	agentClient *agentapi.Client
 	// nodeType is the configured NodeType; it picks the controller's entry
 	// of a configuration snapshot (legacy_pull.types), empty for the node's
 	// default answer.
@@ -99,9 +101,9 @@ func (c *Controller) Start() error {
 // stream start (users.v1), else the legacy pull.
 func (c *Controller) startUsers() ([]panel.UserInfo, map[int]int, error) {
 	if users, ok := c.stream.startupUserList(); ok {
-		// The stream carries no alive list (UniProxy alivelist): device
-		// limits count this node's own connections.
-		return users, make(map[int]int), nil
+		// The alive list comes from the stream too (alive.v1); without
+		// one, device limits count this node's own connections.
+		return users, c.stream.startupAliveList(), nil
 	}
 	return c.fetchLegacyUsers()
 }
@@ -126,7 +128,8 @@ func (c *Controller) fetchLegacyUsers() ([]panel.UserInfo, map[int]int, error) {
 func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 	node, err := nodeInfoFromSnapshot(snapshot, c.nodeType, c.apiClient.GetNodeID())
 	if err != nil {
-		return err
+		// The document itself is wrong: config_invalid.
+		return agentapi.InvalidConfig(err)
 	}
 	if node.Type != "" {
 		c.apiClient.SetNodeType(node.Type)
@@ -142,6 +145,18 @@ func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 	defer c.reconcileMu.Unlock()
 	c.lastConfigMode = agentapi.DataPlaneStream
 	return c.reconcileLocked(node, nil, nil)
+}
+
+// applyStreamAlive makes the running node's device limits count alive,
+// Control's alive list (alive.v1). A controller that is not started yet
+// takes it at startup.
+func (c *Controller) applyStreamAlive(alive map[int]int) {
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+	c.aliveMap = alive
+	if c.isStarted() && c.limiter != nil {
+		c.limiter.AliveList = alive
+	}
 }
 
 // applyStreamUsers brings the running node to users, the node's set from
@@ -167,14 +182,16 @@ func (c *Controller) streamCarriesNodeData() bool {
 }
 
 // retireLegacySync stops the WebSocket once the control stream carries the
-// node's configuration and users. A plugin maintenance outbox keeps its
-// own maintenance-only WebSocket (Control has no stream payload for it).
-// The WebSocket's own goroutines may call here, so the work is done in the
+// node's configuration and users. A plugin maintenance outbox keeps a
+// maintenance-only WebSocket only while the stream does not carry it
+// (maintenance.v1); a maintenance-only WebSocket stops once it does. The
+// WebSocket's own goroutines may call here, so the work is done in the
 // background.
 func (c *Controller) retireLegacySync() {
 	c.syncMu.Lock()
 	syncManager := c.syncManager
-	if syncManager == nil || syncManager.config.MaintenanceOnly || c.closed {
+	maintenanceOnStream := c.streamCarriesMaintenance()
+	if syncManager == nil || c.closed || (syncManager.config.MaintenanceOnly && !maintenanceOnStream) {
 		c.syncMu.Unlock()
 		return
 	}
@@ -182,6 +199,10 @@ func (c *Controller) retireLegacySync() {
 	c.syncMu.Unlock()
 	go func() {
 		_ = syncManager.Close()
+		if syncManager.config.MaintenanceOnly {
+			log.WithField("tag", c.tag).Info("The Agent control stream carries the plugin maintenance outbox (maintenance.v1); stopped the maintenance WebSocket")
+			return
+		}
 		log.WithField("tag", c.tag).Info("The Agent control stream carries the node's configuration and users; stopped the legacy WebSocket")
 		if c.pluginSupervisor == nil {
 			return
@@ -190,6 +211,12 @@ func (c *Controller) retireLegacySync() {
 			log.WithError(err).WithField("tag", c.tag).Error("Could not restart the plugin maintenance WebSocket")
 		}
 	}()
+}
+
+// streamCarriesMaintenance tells whether the control stream carries the
+// plugin maintenance outbox now (or within its grace period).
+func (c *Controller) streamCarriesMaintenance() bool {
+	return c.stream.mode(agentcontrol.CapabilityMaintenance) != agentapi.DataPlaneLegacy
 }
 
 // reportNodeLogs sends the controller's log entries: to the node's LogBatch

@@ -47,17 +47,24 @@ var dataPlaneCapabilities = []string{
 	agentcontrol.CapabilityPackageReports,
 	agentcontrol.CapabilityDiag,
 	agentcontrol.CapabilityForward,
+	agentcontrol.CapabilityMaintenance,
+	agentcontrol.CapabilityAlive,
+	agentcontrol.CapabilityArtifacts,
 }
 
 // implementedDataPlane lists the data-plane capabilities this Agent
 // implements and may advertise. Each feature (AG-3 configuration, AG-4
-// users, AG-5 reports) adds its name with its payload handling. A Hello
-// lists one only when the client's DataPlane has a handler for it.
+// users, AG-5 reports, AG-5b maintenance, alive list and artifacts) adds
+// its name with its payload handling. A Hello lists one only when the
+// client's DataPlane has a handler for it.
 var implementedDataPlane = map[string]bool{
 	agentcontrol.CapabilityConfig:         true,
 	agentcontrol.CapabilityUsers:          true,
 	agentcontrol.CapabilityReports:        true,
 	agentcontrol.CapabilityPackageReports: true,
+	agentcontrol.CapabilityMaintenance:    true,
+	agentcontrol.CapabilityAlive:          true,
+	agentcontrol.CapabilityArtifacts:      true,
 }
 
 // ErrMTLSRequired reports that Control refused the node credential because
@@ -155,6 +162,10 @@ func payloadCapability(payload any) (kind, capability string, ok bool) {
 		return "users", agentcontrol.CapabilityUsers, true
 	case *agentv1pb.ControlToAgent_ReportAck:
 		return "report_ack", agentcontrol.CapabilityReports, true
+	case *agentv1pb.ControlToAgent_MaintenanceAck:
+		return "maintenance_ack", agentcontrol.CapabilityMaintenance, true
+	case *agentv1pb.ControlToAgent_AliveList:
+		return "alive_list", agentcontrol.CapabilityAlive, true
 	default:
 		return "", "", false
 	}
@@ -228,7 +239,7 @@ type transportCounters struct {
 	unnegotiatedPayloads  atomic.Uint64
 	deprecationLogged     atomic.Bool
 	lastMTLSRequiredLogNs atomic.Int64
-	unnegotiatedLogged    [3]atomic.Bool
+	unnegotiatedLogged    [16]atomic.Bool
 }
 
 // TransportStatus describes the client's control stream for status output.
@@ -300,11 +311,10 @@ func (c *Client) logMTLSRequired(err error) {
 func (c *Client) dropUnnegotiatedPayload(kind, capability string) {
 	c.counters.unnegotiatedPayloads.Add(1)
 	index := 0
-	switch capability {
-	case agentcontrol.CapabilityUsers:
-		index = 1
-	case agentcontrol.CapabilityReports:
-		index = 2
+	for position, name := range dataPlaneCapabilities {
+		if name == capability && position < len(c.counters.unnegotiatedLogged) {
+			index = position
+		}
 	}
 	if c.counters.unnegotiatedLogged[index].Swap(true) {
 		return

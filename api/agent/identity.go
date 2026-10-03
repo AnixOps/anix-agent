@@ -68,6 +68,9 @@ const (
 	enrollFailureWaiting     = "waiting"
 )
 
+// wrongNodeLogInterval spaces out the error logged for agent_cert_wrong_node.
+const wrongNodeLogInterval = 10 * time.Minute
+
 // IdentityStatus describes the Agent's identity for status output.
 type IdentityStatus struct {
 	Enrolled   bool      `json:"enrolled"`
@@ -107,6 +110,10 @@ type identityManager struct {
 	refusedCredential string
 	lastError         string
 	certNotRequested  bool
+	// wrongNodeLoggedAt and wrongNodeRefusals track agent_cert_wrong_node
+	// refusals (a configuration error).
+	wrongNodeLoggedAt time.Time
+	wrongNodeRefusals uint64
 	// enrolling is set while an enrollment runs, so prepare and maintain
 	// never enroll twice at once.
 	enrolling bool
@@ -258,6 +265,24 @@ func (m *identityManager) rejected(identity *pki.Identity, reason string) {
 	m.discardLocked()
 }
 
+// wrongNode logs, at most once per wrongNodeLogInterval, that Control
+// refused the certificate as another node's: the configuration names
+// another node than the certificate. The certificate is kept; enrolling
+// again would not fix the configuration.
+func (m *identityManager) wrongNode(err error) {
+	m.mu.Lock()
+	now := m.now()
+	due := m.wrongNodeLoggedAt.IsZero() || now.Sub(m.wrongNodeLoggedAt) >= wrongNodeLogInterval
+	if due {
+		m.wrongNodeLoggedAt = now
+	}
+	m.wrongNodeRefusals++
+	m.mu.Unlock()
+	if due {
+		log.WithFields(m.fields()).WithError(err).Error("Control refused the agent certificate as another node's (agent_cert_wrong_node): this Agent's NodeID does not match its certificate. This is a configuration error; the Agent keeps the certificate and retries slowly. Fix NodeID, or remove the identity directory to enroll again")
+	}
+}
+
 // enrollSoon brings the next enrollment forward after a signal that Control
 // can enroll now (a deprecation notice, an agent_mtls_required refusal),
 // unless the last attempt found enrollment unavailable.
@@ -318,7 +343,7 @@ func (m *identityManager) status() IdentityStatus {
 func (m *identityManager) metrics() map[string]float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	metrics := map[string]float64{MetricIdentityEnrolled: 0}
+	metrics := map[string]float64{MetricIdentityEnrolled: 0, MetricIdentityWrongNode: float64(m.wrongNodeRefusals)}
 	if m.current != nil {
 		metrics[MetricIdentityEnrolled] = 1
 		metrics[MetricIdentityExpiresIn] = m.current.NotAfter.Sub(m.now()).Seconds()
@@ -333,6 +358,9 @@ const (
 	// MetricIdentityExpiresIn is the time left on the certificate, in
 	// seconds.
 	MetricIdentityExpiresIn = "agent_identity_expires_in_seconds"
+	// MetricIdentityWrongNode counts agent_cert_wrong_node refusals: the
+	// certificate names another node than the configuration.
+	MetricIdentityWrongNode = "agent_identity_wrong_node_refusals_total"
 )
 
 // readCredential reads the one-time enrollment credential, "" without
@@ -479,7 +507,7 @@ func (m *identityManager) enrollWith(ctx context.Context, method, credential str
 		if refused := mtlsRequiredError("enrollment", err, trailer); refused != nil {
 			return nil, refused
 		}
-		return nil, err
+		return nil, withControlCode(err, trailer)
 	}
 	identity, err := pki.FromIssued(key, response.GetCertificate(), pki.Expectation{
 		Node: m.store.Node(), Cluster: m.cluster, Now: m.now(),
@@ -507,6 +535,7 @@ func (m *identityManager) installLocked(expected, identity *pki.Identity) bool {
 
 func (m *identityManager) classifyEnrollFailure(method, credential string, err error) {
 	st, _ := grpcStatus(err)
+	rejected := errorCodeOf(err) == agentcontrol.ErrorCodeEnrollmentRejected
 	switch {
 	case errors.Is(err, ErrMTLSRequired):
 		m.mu.Lock()
@@ -517,7 +546,9 @@ func (m *identityManager) classifyEnrollFailure(method, credential string, err e
 		m.enrollFailed(enrollFailureUnsupported, fmt.Errorf("Control does not serve AgentEnrollment (a Control before v4.1); the control stream keeps the node API key: %w", err))
 	case st != nil && st.Code() == codes.FailedPrecondition:
 		m.enrollFailed(enrollFailureUnsupported, fmt.Errorf("Control cannot enroll agents now (agent_control.mtls: off, or Control runs without its built-in CA); the control stream keeps the node API key: %w", err))
-	case st != nil && (st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied):
+	case rejected || (st != nil && (st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied)):
+		// agent_enrollment_rejected: this bootstrap is unusable; it is
+		// not tried again.
 		if method == pki.BootstrapEnrollmentCredential {
 			m.mu.Lock()
 			m.refusedCredential = credentialDigest(credential)
@@ -630,9 +661,12 @@ func (m *identityManager) renew(ctx context.Context, identity *pki.Identity) {
 		}).Info("Agent certificate renewed")
 		return
 	}
-	if reason, refused := certificateRefusal(err); refused {
+	switch reason, action := certificateRefusal(err); action {
+	case certificateReenroll:
 		m.rejected(identity, reason)
 		return
+	case certificateWrongNode:
+		m.wrongNode(err)
 	}
 	m.mu.Lock()
 	m.renewFailures++
@@ -669,9 +703,10 @@ func (m *identityManager) renewWith(ctx context.Context, identity *pki.Identity)
 	defer conn.Close()
 	callCtx, cancel := context.WithTimeout(ctx, identityRPCTimeout)
 	defer cancel()
-	response, err := agentv1pb.NewAgentEnrollmentClient(conn).Renew(callCtx, &agentv1pb.RenewAgentCertificateRequest{CsrDer: csr})
+	var trailer metadata.MD
+	response, err := agentv1pb.NewAgentEnrollmentClient(conn).Renew(callCtx, &agentv1pb.RenewAgentCertificateRequest{CsrDer: csr}, grpc.Trailer(&trailer))
 	if err != nil {
-		return nil, err
+		return nil, withControlCode(err, trailer)
 	}
 	renewed, err := pki.FromIssued(key, response.GetCertificate(), pki.Expectation{
 		Node: m.store.Node(), Cluster: m.cluster, Now: m.now(),
@@ -681,24 +716,6 @@ func (m *identityManager) renewWith(ctx context.Context, identity *pki.Identity)
 	}
 	renewed.EnrolledAt, renewed.RenewedAt, renewed.Bootstrap = identity.EnrolledAt, m.now().UTC(), identity.Bootstrap
 	return renewed, nil
-}
-
-// certificateRefusal tells whether Control refused a presented client
-// certificate for good: revoked, expired, not an agent certificate of this
-// cluster, or naming another node. Control sends no error code for these
-// (only agent_mtls_required has one), so the status message is read.
-func certificateRefusal(err error) (string, bool) {
-	st, ok := grpcStatus(err)
-	if !ok || st.Code() != codes.Unauthenticated {
-		return "", false
-	}
-	message := strings.ToLower(st.Message())
-	for _, marker := range []string{"revoked", "expired", "not a valid agent certificate", "does not match the client certificate", "renewal requires the current agent client certificate"} {
-		if strings.Contains(message, marker) {
-			return st.Message(), true
-		}
-	}
-	return "", false
 }
 
 // sessionCredentials presents an identity on one connection and records

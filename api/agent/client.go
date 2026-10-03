@@ -135,12 +135,17 @@ type Client struct {
 	// Session negotiation and transport state, guarded by mu.
 	// stream is the current session's stream, for data-plane sends from
 	// outside the session loop.
-	stream             agentv1pb.AgentControlService_ControlStreamClient
+	stream agentv1pb.AgentControlService_ControlStreamClient
+	// helloCapabilities is what the current session's Hello listed: the
+	// configured capabilities, artifacts.v1 only on a session that
+	// presented the client certificate.
+	helloCapabilities  []*agentv1pb.Capability
 	serverCapabilities []*agentv1pb.Capability
 	authentication     string
 	deprecation        *AuthDeprecation
 	lastError          string
 	counters           transportCounters
+	artifacts          artifactCounters
 }
 
 func NewClient(config Config) (*Client, error) {
@@ -210,7 +215,13 @@ func NewClient(config Config) (*Client, error) {
 		client.dataPlane = plane
 		for _, name := range plane.capabilities() {
 			if !agentcontrol.HasCapabilityVersion(client.config.Capabilities, name, agentcontrol.CapabilityVersionV1) {
-				client.config.Capabilities = append(client.config.Capabilities, &agentv1pb.Capability{Name: name, Version: agentcontrol.CapabilityVersionV1})
+				capability := &agentv1pb.Capability{Name: name, Version: agentcontrol.CapabilityVersionV1}
+				if name == agentcontrol.CapabilityReports {
+					// Ask for report_unavailable answers instead of
+					// silence when Control cannot record a batch now.
+					capability.Attributes = map[string]string{agentcontrol.ReportsAttributeTransientAck: agentcontrol.ReportsTransientAckV1}
+				}
+				client.config.Capabilities = append(client.config.Capabilities, capability)
 			}
 		}
 	}
@@ -309,7 +320,7 @@ func (c *Client) ServerCapabilities() []*agentv1pb.Capability {
 func (c *Client) Negotiated(name string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.ready && agentcontrol.Negotiated(c.config.Capabilities, c.serverCapabilities, name)
+	return c.ready && agentcontrol.Negotiated(c.helloCapabilities, c.serverCapabilities, name)
 }
 
 // TransportStatus describes the control stream for status output.
@@ -326,7 +337,7 @@ func (c *Client) TransportStatus() TransportStatus {
 	}
 	if c.ready {
 		status.ServerCapabilities = capabilityNames(c.serverCapabilities)
-		status.Negotiated = negotiatedNames(c.config.Capabilities, c.serverCapabilities)
+		status.Negotiated = negotiatedNames(c.helloCapabilities, c.serverCapabilities)
 	}
 	if c.deprecation != nil {
 		deprecation := *c.deprecation
@@ -355,9 +366,13 @@ func (c *Client) run() {
 		if c.ctx.Err() != nil {
 			return
 		}
+		wrongNode := errors.Is(err, ErrCertificateWrongNode)
 		if errors.Is(err, ErrMTLSRequired) {
 			c.counters.mtlsRequiredRefusals.Add(1)
 			c.logMTLSRequired(err)
+		} else if wrongNode {
+			// Logged by the identity; reconnecting fast would only repeat
+			// the refusal.
 		} else if errors.Is(err, errSessionRecycled) {
 			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID}).
 				Info("Reconnecting the Agent control stream with the new client certificate")
@@ -372,6 +387,9 @@ func (c *Client) run() {
 			attempt = 0
 		}
 		delay := c.reconnectDelay(attempt)
+		if wrongNode {
+			delay = max(delay, wrongNodeReconnect)
+		}
 		if attempt < 62 {
 			attempt++
 		}
@@ -653,13 +671,14 @@ func (c *Client) runSession() (bool, error) {
 	go receiveControlMessages(sessionCtx, stream, receiveCh)
 
 	helloRequestID := newID("hello")
+	helloCapabilities := c.sessionCapabilities(presented)
 	if err := c.send(stream, &agentv1pb.AgentToControl{
 		RequestId:    helloRequestID,
 		NodeId:       uint32(c.config.NodeID),
 		Revision:     c.observedRevision.Load(),
 		SentAtUnixMs: time.Now().UnixMilli(),
 		Payload: &agentv1pb.AgentToControl_Hello{
-			Hello: c.hello(),
+			Hello: c.hello(helloCapabilities),
 		},
 	}); err != nil && !errors.Is(err, io.EOF) {
 		// io.EOF means Control ended the stream; its status arrives on Recv.
@@ -694,9 +713,10 @@ func (c *Client) runSession() (bool, error) {
 		deprecation = authDeprecation(header)
 	}
 	c.desiredRevision.Store(helloAck.DesiredRevision)
-	c.setConnected(helloAck.SessionId, stream, helloAck.ServerCapabilities, deprecation)
+	c.setConnected(helloAck.SessionId, stream, helloCapabilities, helloAck.ServerCapabilities, deprecation)
 	if c.dataPlane != nil {
-		c.dataPlane.sessionStarted(helloAck.SessionId, negotiatedCapabilities(c.config.Capabilities, helloAck.ServerCapabilities))
+		c.dataPlane.sessionStarted(helloAck.SessionId, negotiatedCapabilities(helloCapabilities, helloAck.ServerCapabilities),
+			agentcontrol.TransientReportAcks(helloCapabilities, helloAck.ServerCapabilities))
 		defer c.dataPlane.sessionEnded(helloAck.SessionId)
 	}
 	connectedAt = time.Now()
@@ -764,16 +784,17 @@ func (c *Client) runSession() (bool, error) {
 				}
 			case *agentv1pb.ControlToAgent_HelloAck:
 				return c.sessionWasStable(connectedAt), fmt.Errorf("unexpected duplicate hello ACK")
-			case *agentv1pb.ControlToAgent_Config, *agentv1pb.ControlToAgent_Users, *agentv1pb.ControlToAgent_ReportAck:
+			case *agentv1pb.ControlToAgent_Config, *agentv1pb.ControlToAgent_Users, *agentv1pb.ControlToAgent_ReportAck,
+				*agentv1pb.ControlToAgent_MaintenanceAck, *agentv1pb.ControlToAgent_AliveList:
 				// Control sends these only when the session negotiated
 				// their capability (PROTOCOL.md, "Negotiation"); others
 				// are dropped and counted.
 				kind, capability, _ := payloadCapability(payload)
-				if c.dataPlane == nil || !agentcontrol.Negotiated(c.config.Capabilities, helloAck.ServerCapabilities, capability) {
+				if c.dataPlane == nil || !agentcontrol.Negotiated(helloCapabilities, helloAck.ServerCapabilities, capability) {
 					c.dropUnnegotiatedPayload(kind, capability)
 					continue
 				}
-				c.dataPlane.receive(helloAck.SessionId, payload)
+				c.dataPlane.receive(helloAck.SessionId, received.message.RequestId, payload)
 			default:
 				return c.sessionWasStable(connectedAt), fmt.Errorf("control message payload is required")
 			}
@@ -1221,14 +1242,29 @@ func (c *Client) send(stream agentv1pb.AgentControlService_ControlStreamClient, 
 	return stream.Send(message)
 }
 
-// hello is the session's Hello: the Agent's capabilities and, for the
-// negotiable data-plane features, where its state stands.
-func (c *Client) hello() *agentv1pb.Hello {
+// sessionCapabilities is what a session's Hello lists: the configured
+// capabilities, without artifacts.v1 unless the session presented the
+// client certificate (AgentArtifacts reads no node API key, so only an
+// enrolled Agent can use it).
+func (c *Client) sessionCapabilities(presented bool) []*agentv1pb.Capability {
+	capabilities := make([]*agentv1pb.Capability, 0, len(c.config.Capabilities))
+	for _, capability := range cloneCapabilities(c.config.Capabilities) {
+		if capability.Name == agentcontrol.CapabilityArtifacts && !presented {
+			continue
+		}
+		capabilities = append(capabilities, capability)
+	}
+	return capabilities
+}
+
+// hello is the session's Hello: capabilities and, for the negotiable
+// data-plane features, where the Agent's state stands.
+func (c *Client) hello(capabilities []*agentv1pb.Capability) *agentv1pb.Hello {
 	hello := &agentv1pb.Hello{
 		Protocol:     ProtocolVersion,
 		AgentVersion: c.config.AgentVersion,
 		InstanceId:   c.config.InstanceID,
-		Capabilities: cloneCapabilities(c.config.Capabilities),
+		Capabilities: cloneCapabilities(capabilities),
 		Labels:       cloneStringMap(c.config.Labels),
 	}
 	if c.dataPlane != nil {
@@ -1246,7 +1282,7 @@ func (c *Client) sendData(sessionID, capability string, message *agentv1pb.Agent
 	c.mu.RLock()
 	stream := c.stream
 	current := c.ready && c.sessionID == sessionID && stream != nil &&
-		agentcontrol.Negotiated(c.config.Capabilities, c.serverCapabilities, capability)
+		agentcontrol.Negotiated(c.helloCapabilities, c.serverCapabilities, capability)
 	c.mu.RUnlock()
 	if !current {
 		return ErrSessionGone
@@ -1256,6 +1292,11 @@ func (c *Client) sendData(sessionID, capability string, message *agentv1pb.Agent
 	}
 	return nil
 }
+
+// wrongNodeReconnect is the least wait before reconnecting after
+// agent_cert_wrong_node, a configuration error that a reconnect does not fix
+// (a variable for tests).
+var wrongNodeReconnect = 5 * time.Minute
 
 // errSessionRecycled ends an API key session after an enrollment, so the
 // next session presents the client certificate.
@@ -1279,11 +1320,12 @@ const (
 	authenticationCertificate = "certificate"
 )
 
-func (c *Client) setConnected(sessionID string, stream agentv1pb.AgentControlService_ControlStreamClient, serverCapabilities []*agentv1pb.Capability, deprecation *AuthDeprecation) {
+func (c *Client) setConnected(sessionID string, stream agentv1pb.AgentControlService_ControlStreamClient, helloCapabilities, serverCapabilities []*agentv1pb.Capability, deprecation *AuthDeprecation) {
 	c.mu.Lock()
 	c.sessionID = sessionID
 	c.stream = stream
 	c.ready = true
+	c.helloCapabilities = cloneCapabilities(helloCapabilities)
 	c.serverCapabilities = cloneCapabilities(serverCapabilities)
 	c.deprecation = deprecation
 	c.lastError = ""
@@ -1296,7 +1338,7 @@ func (c *Client) setConnected(sessionID string, stream agentv1pb.AgentControlSer
 		"session_id":          sessionID,
 		"authentication":      authentication,
 		"server_capabilities": strings.Join(capabilityNames(serverCapabilities), ","),
-		"negotiated":          strings.Join(negotiatedNames(c.config.Capabilities, serverCapabilities), ","),
+		"negotiated":          strings.Join(negotiatedNames(helloCapabilities, serverCapabilities), ","),
 	}).Info("Agent control stream connected")
 	c.logDeprecation(deprecation)
 	if c.identity != nil && authentication == authenticationAPIKey {
@@ -1313,6 +1355,7 @@ func (c *Client) setDisconnected(err error) {
 	c.sessionID = ""
 	c.stream = nil
 	c.ready = false
+	c.helloCapabilities = nil
 	c.serverCapabilities = nil
 	if err != nil && c.ctx.Err() == nil {
 		c.lastError = err.Error()
@@ -1343,10 +1386,17 @@ func (c *Client) streamFailure(stream agentv1pb.AgentControlService_ControlStrea
 			}
 		}
 	}
+	err = withControlCode(err, trailer)
 	if _, presented := session.state(); presented {
-		// Control refused the certificate itself: drop it and enroll again.
-		if reason, refused := certificateRefusal(err); refused {
+		switch reason, action := certificateRefusal(err); action {
+		case certificateReenroll:
+			// Control refused the certificate itself: drop it and enroll
+			// again.
 			c.identity.rejected(session.identity, reason)
+		case certificateWrongNode:
+			// A configuration error: keep the certificate, retry slowly.
+			c.identity.wrongNode(err)
+			return &CertificateWrongNodeError{Err: err}
 		}
 		return err
 	}
@@ -1382,6 +1432,7 @@ func (c *Client) transportMetrics() map[string]float64 {
 			metrics[key] = value
 		}
 	}
+	c.artifactsMetrics(metrics)
 	return metrics
 }
 

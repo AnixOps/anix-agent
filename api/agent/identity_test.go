@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -389,23 +390,54 @@ func TestIdentityNeedsTLS(t *testing.T) {
 }
 
 func TestCertificateRefusalClassification(t *testing.T) {
+	// Controls before the error codes: their messages.
 	for _, message := range []string{
 		"agent client certificate revoked", "agent certificate revoked", "agent client certificate expired",
 		"the client certificate is not a valid agent certificate of this cluster",
-		"x-node-id does not match the client certificate",
 	} {
-		_, refused := certificateRefusal(status.Error(codes.Unauthenticated, message))
-		assert.True(t, refused, message)
+		_, action := certificateRefusal(status.Error(codes.Unauthenticated, message))
+		assert.Equal(t, certificateReenroll, action, message)
 	}
+	_, action := certificateRefusal(status.Error(codes.Unauthenticated, "x-node-id does not match the client certificate"))
+	assert.Equal(t, certificateWrongNode, action, "another node's certificate is a configuration error, not a reason to enroll again")
+
+	// The codes: the message prefix, or the trailer.
+	for code, want := range map[string]certificateAction{
+		agentcontrol.ErrorCodeCertRevoked:      certificateReenroll,
+		agentcontrol.ErrorCodeCertExpired:      certificateReenroll,
+		agentcontrol.ErrorCodeCertInvalid:      certificateReenroll,
+		agentcontrol.ErrorCodeCertWrongCluster: certificateReenroll,
+		agentcontrol.ErrorCodeCertWrongNode:    certificateWrongNode,
+		agentcontrol.ErrorCodeMTLSRequired:     certificateKept,
+		"agent_cert_something_new":             certificateKept,
+	} {
+		_, action := certificateRefusal(status.Error(codes.Unauthenticated, code+": refused"))
+		assert.Equal(t, want, action, code)
+		coded := withControlCode(status.Error(codes.Unauthenticated, "refused"), metadata.Pairs(agentcontrol.MetadataErrorCode, code))
+		_, action = certificateRefusal(coded)
+		assert.Equal(t, want, action, "trailer "+code)
+	}
+	// agent_cert_revoked also comes as PermissionDenied (a node disabled
+	// after the certificate check).
+	_, action = certificateRefusal(status.Error(codes.PermissionDenied, agentcontrol.ErrorCodeCertRevoked+": node is disabled"))
+	assert.Equal(t, certificateReenroll, action)
+
 	for _, err := range []error{
 		status.Error(codes.Unavailable, "agent certificate check failed"),
 		status.Error(codes.PermissionDenied, "node is disabled or no longer exists"),
 		status.Error(codes.Unauthenticated, "invalid node credentials"),
 		errors.New("agent client certificate revoked"),
 	} {
-		_, refused := certificateRefusal(err)
-		assert.False(t, refused, err.Error())
+		_, action := certificateRefusal(err)
+		assert.Equal(t, certificateKept, action, err.Error())
 	}
+}
+
+func TestControlErrorCodeShape(t *testing.T) {
+	assert.Equal(t, "plugin_release_download_busy", controlErrorCode(status.Error(codes.ResourceExhausted, "plugin_release_download_busy: two downloads run"), nil))
+	assert.Equal(t, "", controlErrorCode(status.Error(codes.Unavailable, "database: down"), nil), "a first word without _ is no code")
+	assert.Equal(t, "", controlErrorCode(status.Error(codes.Unavailable, "Agent_Cert: x"), nil))
+	assert.Equal(t, "agent_cert_expired", controlErrorCode(status.Error(codes.Unauthenticated, "expired"), metadata.Pairs(agentcontrol.MetadataErrorCode, "agent_cert_expired")))
 }
 
 func assertPrivate(t *testing.T, path string, mode os.FileMode) {

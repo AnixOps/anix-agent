@@ -224,6 +224,16 @@ func logEntry(entry panel.NodeLogEntry) *agentv1pb.LogEntry {
 // when all are).
 func (n *nodeDataPlane) nodeStatus(context.Context) (*agentv1pb.NodeStatus, error) {
 	info, err := monitor.GetSystemInfo()
+	n.reportMu.Lock()
+	if err == nil {
+		n.lastSystem = info
+	} else if n.lastSystem != nil {
+		// Control writes the usage and the runtime health from one
+		// NodeStatus: the last sample rather than zeros.
+		n.logger().WithError(err).Debug("Could not read the system usage; sending the last sample")
+		info, err = n.lastSystem, nil
+	}
+	n.reportMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -253,5 +263,54 @@ func (n *nodeDataPlane) nodeStatus(context.Context) (*agentv1pb.NodeStatus, erro
 	if len(status.RuntimeError) > 1024 {
 		status.RuntimeError = status.RuntimeError[:1024]
 	}
+	n.reportMu.Lock()
+	n.health = &runtimeHealth{healthy: status.RuntimeHealthy, message: status.RuntimeError}
+	n.reportMu.Unlock()
 	return status, nil
+}
+
+// runtimeHealth is the node's runtime health as a NodeStatus reports it.
+type runtimeHealth struct {
+	healthy bool
+	message string
+}
+
+// runtimeHealthChanged asks for a NodeStatus at once when the runtime
+// health of the node's controllers differs from the one last reported: a
+// NodeStatus carries the health and the current system usage together
+// (Control writes both from it), so a health change is never sent alone.
+func (n *nodeDataPlane) runtimeHealthChanged() {
+	if n == nil || n.client == nil || n.client.DataPlane() == nil {
+		return
+	}
+	healthy, messages := true, []string(nil)
+	for _, controller := range n.controllers {
+		if !controller.isStarted() {
+			continue
+		}
+		provider, ok := controller.server.(vCore.RuntimeHealthProvider)
+		if !ok {
+			continue
+		}
+		if ok, message := provider.RuntimeHealth(controller.tag); !ok {
+			healthy = false
+			if message == "" {
+				message = "runtime unhealthy"
+			}
+			messages = append(messages, message)
+		}
+	}
+	message := strings.Join(messages, "; ")
+	if len(message) > 1024 {
+		message = message[:1024]
+	}
+	n.reportMu.Lock()
+	last := n.health
+	n.reportMu.Unlock()
+	if last == nil || (last.healthy == healthy && last.message == message) {
+		// Nothing reported yet (the session's first status carries it),
+		// or no change.
+		return
+	}
+	n.client.DataPlane().StatusChanged()
 }
