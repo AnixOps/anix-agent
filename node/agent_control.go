@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -13,6 +14,7 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/api/agent/pki"
+	"github.com/AnixOps/anix-agent/v4/api/agent/state"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
@@ -26,7 +28,7 @@ import (
 // node-scoped Supervisor selected after registration.  The pointer is kept in
 // the controller's operation handler as well, so a duplicate configuration
 // for another node can never route plugin operations through a shared runtime.
-func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *Controller, core vCore.Core, supervisor *plugin.Supervisor) (*agentapi.Client, error) {
+func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *Controller, core vCore.Core, supervisor *plugin.Supervisor, dataPlane *nodeDataPlane) (*agentapi.Client, error) {
 	if controller == nil {
 		return nil, fmt.Errorf("agent control node configuration is missing")
 	}
@@ -51,9 +53,17 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		return nil, err
 	}
 
+	var dataPlaneConfig *agentapi.DataPlaneConfig
+	if dataPlane != nil {
+		dataPlaneConfig, err = agentControlDataPlane(apiConfig, nodeID, target, dataPlane)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	hostname, _ := os.Hostname()
 	keepaliveTime := time.Duration(apiConfig.GRPCKeepalive) * time.Second
-	return agentapi.NewClient(agentapi.Config{
+	client, err := agentapi.NewClient(agentapi.Config{
 		Target:       target,
 		NodeID:       nodeID,
 		APIKey:       apiKey,
@@ -69,6 +79,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 			"transport": apiConfig.Transport,
 		},
 		KeepaliveTime: keepaliveTime,
+		RootCAs:       agentControlRootCAs,
 		Handler:       agentapi.OperationHandlerFunc(controller.handleAgentOperation),
 		MetricsProvider: func(ctx context.Context) (map[string]float64, error) {
 			if supervisor == nil {
@@ -82,8 +93,45 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 			}
 			return supervisor.PluginObservations(ctx)
 		},
+		DataPlane: dataPlaneConfig,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if dataPlane != nil {
+		dataPlane.client = client
+	}
+	return client, nil
 }
+
+// agentControlDataPlane is the stream's data-plane configuration (AG-3):
+// the node's state directory and the appliers of dataPlane.
+func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string, dataPlane *nodeDataPlane) (*agentapi.DataPlaneConfig, error) {
+	settings := apiConfig.AgentStream
+	if err := settings.Validate(); err != nil {
+		return nil, err
+	}
+	store, err := state.Open(settings.Dir(), agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(nodeID)}) // #nosec G115 -- node IDs are uint32 on the wire.
+	if err != nil {
+		return nil, err
+	}
+	if apiConfig.ForceReRegister {
+		if err := store.DiscardConfig(); err != nil {
+			log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the stored configuration snapshot on re-registration")
+		}
+	}
+	return &agentapi.DataPlaneConfig{State: store, Control: target, Config: dataPlane}, nil
+}
+
+// dataPlaneEnabled tells whether the node's data rides the control stream
+// when Control serves it.
+func dataPlaneEnabled(apiConfig conf.ApiConfig) bool {
+	return apiConfig.AgentControlEnabled && apiConfig.AgentStream.DataPlaneMode() == conf.AgentStreamDataPlaneAuto
+}
+
+// agentControlRootCAs verifies Control's TLS certificate; nil uses the
+// system roots. Tests point it at their in-process Control's CA.
+var agentControlRootCAs *x509.CertPool
 
 // agentControlIdentity is the stream's mTLS identity configuration (AG-2),
 // nil when the stream is not on TLS: a client certificate needs TLS, and an
@@ -272,6 +320,12 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 			"time":    time.Now().UnixMilli(),
 		})
 	case "node.reload", "users.reload":
+		if !c.isStarted() {
+			return nil, fmt.Errorf("node %d is still starting", c.apiClient.GetNodeID())
+		}
+		// While the stream carries the configuration (config.v1), a
+		// reload re-pulls nothing over the legacy transport: Control
+		// pushes snapshots instead (nodeInfoMonitor skips the pull).
 		if err := c.nodeInfoMonitor(); err != nil {
 			return nil, err
 		}
@@ -279,6 +333,7 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 			"node_id":  c.apiClient.GetNodeID(),
 			"tag":      c.tag,
 			"revision": operation.Revision,
+			"config":   c.stream.mode(agentcontrol.CapabilityConfig).String(),
 		})
 	default:
 		return nil, fmt.Errorf("unsupported desired operation %q", operation.Kind)

@@ -50,8 +50,11 @@ var dataPlaneCapabilities = []string{
 
 // implementedDataPlane lists the data-plane capabilities this Agent
 // implements and may advertise. Each feature (AG-3 configuration, AG-4
-// users, AG-5 reports) adds its name with its payload handling.
-var implementedDataPlane = map[string]bool{}
+// users, AG-5 reports) adds its name with its payload handling. A Hello
+// lists one only when the client's DataPlane has a handler for it.
+var implementedDataPlane = map[string]bool{
+	agentcontrol.CapabilityConfig: true,
+}
 
 // ErrMTLSRequired reports that Control refused the node credential because
 // agent_control.mtls is required: only an enrolled Agent presenting its
@@ -115,11 +118,24 @@ func grpcStatus(err error) (*status.Status, bool) {
 }
 
 // validateAdvertisedCapabilities refuses a Hello that would advertise a
-// data-plane capability this Agent does not implement.
-func validateAdvertisedCapabilities(capabilities []*agentv1pb.Capability) error {
+// data-plane capability this Agent does not implement, or one its data
+// plane has no handler for: Control would send payloads nobody applies.
+func validateAdvertisedCapabilities(capabilities []*agentv1pb.Capability, plane *DataPlane) error {
+	handled := map[string]bool{}
+	if plane != nil {
+		for _, name := range plane.capabilities() {
+			handled[name] = true
+		}
+	}
 	for _, name := range dataPlaneCapabilities {
-		if agentcontrol.HasCapability(capabilities, name) && !implementedDataPlane[name] {
+		if !agentcontrol.HasCapability(capabilities, name) {
+			continue
+		}
+		if !implementedDataPlane[name] {
 			return fmt.Errorf("agent capability %s.%s is not implemented by this Agent and must not be advertised", name, agentcontrol.CapabilityVersionV1)
+		}
+		if !handled[name] {
+			return fmt.Errorf("agent capability %s.%s needs a DataPlane handler and must not be advertised without one", name, agentcontrol.CapabilityVersionV1)
 		}
 	}
 	return nil
@@ -156,9 +172,19 @@ func capabilityNames(capabilities []*agentv1pb.Capability) []string {
 // negotiatedNames lists the data-plane capabilities in use on a session.
 func negotiatedNames(agent, server []*agentv1pb.Capability) []string {
 	var names []string
+	for _, name := range negotiatedCapabilities(agent, server) {
+		names = append(names, name+"."+agentcontrol.CapabilityVersionV1)
+	}
+	return names
+}
+
+// negotiatedCapabilities lists the names (config, users, ...) of the
+// data-plane capabilities in use on a session.
+func negotiatedCapabilities(agent, server []*agentv1pb.Capability) []string {
+	var names []string
 	for _, name := range dataPlaneCapabilities {
 		if agentcontrol.Negotiated(agent, server, name) {
-			names = append(names, name+"."+agentcontrol.CapabilityVersionV1)
+			names = append(names, name)
 		}
 	}
 	return names
@@ -223,6 +249,8 @@ type TransportStatus struct {
 	LastError string `json:"last_error,omitempty"`
 	// Identity is the Agent's mTLS identity, nil when it is off.
 	Identity *IdentityStatus `json:"identity,omitempty"`
+	// DataPlane is the stream's data plane, nil when it is off.
+	DataPlane *DataPlaneStatus `json:"data_plane,omitempty"`
 }
 
 // logDeprecation logs Control's deprecation signal once per client.

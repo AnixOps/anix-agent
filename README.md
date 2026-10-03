@@ -238,6 +238,35 @@ Windows：
 `anix-agent identity [--json]` 显示每个节点的 SPIFFE ID、证书序列号、过期与续期时间，
 只读本地文件，不连接 Control。容器部署需把 `CertDir` 挂载为持久卷。
 
+### 控制流数据面：节点配置（AgentStream）
+
+开启 `AgentControlEnabled` 后，Agent 在 Hello 中声明 `config.v1`。Control 支持时
+（`HelloAck.server_capabilities` 含 `config.v1`），节点配置改由控制流的
+`ConfigSnapshot` 下发，不再拉取 UniProxy `config`、v2board `GetConfig`，也不再处理
+WebSocket `config_update` 或 `node.reload` 的重新拉取：
+
+- 只应用格式为 `anixops.nodeconfig/v1`、`config_hash` 与内容 SHA-256 一致的快照；
+  每个节点控制器取 `legacy_pull.types[<NodeType>]`（未配置 `NodeType` 时取
+  `default`），解析逻辑与 UniProxy 应答完全相同，内核按原有方式重启。
+- 每个快照都会以 `ConfigStatus` 回复（成功或失败原因）。
+- 成功应用的快照保存在 `AgentStream.StateDir/proxy-<NodeID>/config.pb`
+  （默认 `/var/lib/anix-agent/stream`，目录 0700、文件 0600）。重启时即使 Control
+  不可达也直接运行该配置，并在 Hello 中上报其 revision，Control 只在配置变化时下发。
+- 无本地快照时最多等待 20 秒建立控制流；协商到 `config.v1` 后最多等待 60 秒的快照，
+  超时则启动失败（由 systemd 重启），不会退回旧链路。控制流不可用或 Control
+  不支持 `config.v1` 时按原方式经旧链路启动。
+- 控制流断开 5 分钟内不使用旧链路拉取配置；超过后恢复旧链路拉取。
+- `AgentStream.DataPlane: "off"` 可回退到旧链路（控制流只承载操作）。
+
+```json
+"AgentStream": {
+  "DataPlane": "auto",
+  "StateDir": "/var/lib/anix-agent/stream"
+}
+```
+
+用户列表、流量、在线 IP、日志与状态上报在 AG-4、AG-5 之前仍走旧链路。
+
 面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 
 ## Docker

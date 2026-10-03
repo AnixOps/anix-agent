@@ -95,6 +95,10 @@ type Config struct {
 	// roots. Control's agent CA bundle is never used for this: it signs
 	// client certificates only.
 	RootCAs *x509.CertPool
+	// DataPlane carries the node's configuration on the stream (AG-3) when
+	// Control serves it. Its handlers decide which data-plane capabilities
+	// Hello advertises; nil keeps the stream to operations.
+	DataPlane *DataPlaneConfig
 }
 
 type Client struct {
@@ -109,6 +113,8 @@ type Client struct {
 	mu     sync.RWMutex
 
 	identity *identityManager
+	// dataPlane is nil without Config.DataPlane.
+	dataPlane *DataPlane
 	// recycle asks a session authenticated with the API key to end, so the
 	// next one presents the certificate an enrollment just installed.
 	recycle chan struct{}
@@ -125,6 +131,9 @@ type Client struct {
 	closed           atomic.Bool
 
 	// Session negotiation and transport state, guarded by mu.
+	// stream is the current session's stream, for data-plane sends from
+	// outside the session loop.
+	stream             agentv1pb.AgentControlService_ControlStreamClient
 	serverCapabilities []*agentv1pb.Capability
 	authentication     string
 	deprecation        *AuthDeprecation
@@ -167,9 +176,7 @@ func NewClient(config Config) (*Client, error) {
 	if config.InstanceID == "" {
 		config.InstanceID = newID("instance")
 	}
-	if err := validateAdvertisedCapabilities(config.Capabilities); err != nil {
-		return nil, err
-	}
+	config.Capabilities = cloneCapabilities(config.Capabilities)
 	if config.Handler == nil {
 		config.Handler = OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			return nil, fmt.Errorf("desired operation handler is not configured")
@@ -190,6 +197,23 @@ func NewClient(config Config) (*Client, error) {
 		readyCh:   make(chan struct{}),
 		completed: make(map[string]*agentv1pb.ObservedState),
 		recycle:   make(chan struct{}, 1),
+	}
+	if config.DataPlane != nil {
+		plane, err := newDataPlane(client, *config.DataPlane)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		client.dataPlane = plane
+		for _, name := range plane.capabilities() {
+			if !agentcontrol.HasCapabilityVersion(client.config.Capabilities, name, agentcontrol.CapabilityVersionV1) {
+				client.config.Capabilities = append(client.config.Capabilities, &agentv1pb.Capability{Name: name, Version: agentcontrol.CapabilityVersionV1})
+			}
+		}
+	}
+	if err := validateAdvertisedCapabilities(client.config.Capabilities, client.dataPlane); err != nil {
+		cancel()
+		return nil, err
 	}
 	if config.Identity != nil {
 		identity, err := newIdentityManager(client, *config.Identity)
@@ -222,6 +246,9 @@ func (c *Client) Start() error {
 			c.identity.maintain(c.ctx)
 		}()
 	}
+	if c.dataPlane != nil {
+		c.dataPlane.start()
+	}
 	c.wg.Add(1)
 	go c.run()
 	return nil
@@ -233,7 +260,16 @@ func (c *Client) Close() error {
 	}
 	c.cancel()
 	c.wg.Wait()
+	if c.dataPlane != nil {
+		c.dataPlane.close()
+	}
 	return nil
+}
+
+// DataPlane returns the client's data plane, nil without
+// Config.DataPlane.
+func (c *Client) DataPlane() *DataPlane {
+	return c.dataPlane
 }
 
 func (c *Client) Ready() <-chan struct{} {
@@ -296,6 +332,10 @@ func (c *Client) TransportStatus() TransportStatus {
 	if c.identity != nil {
 		identity := c.identity.status()
 		status.Identity = &identity
+	}
+	if c.dataPlane != nil {
+		dataPlane := c.dataPlane.status()
+		status.DataPlane = &dataPlane
 	}
 	return status
 }
@@ -616,13 +656,7 @@ func (c *Client) runSession() (bool, error) {
 		Revision:     c.observedRevision.Load(),
 		SentAtUnixMs: time.Now().UnixMilli(),
 		Payload: &agentv1pb.AgentToControl_Hello{
-			Hello: &agentv1pb.Hello{
-				Protocol:     ProtocolVersion,
-				AgentVersion: c.config.AgentVersion,
-				InstanceId:   c.config.InstanceID,
-				Capabilities: cloneCapabilities(c.config.Capabilities),
-				Labels:       cloneStringMap(c.config.Labels),
-			},
+			Hello: c.hello(),
 		},
 	}); err != nil && !errors.Is(err, io.EOF) {
 		// io.EOF means Control ended the stream; its status arrives on Recv.
@@ -657,7 +691,11 @@ func (c *Client) runSession() (bool, error) {
 		deprecation = authDeprecation(header)
 	}
 	c.desiredRevision.Store(helloAck.DesiredRevision)
-	c.setConnected(helloAck.SessionId, helloAck.ServerCapabilities, deprecation)
+	c.setConnected(helloAck.SessionId, stream, helloAck.ServerCapabilities, deprecation)
+	if c.dataPlane != nil {
+		c.dataPlane.sessionStarted(helloAck.SessionId, negotiatedCapabilities(c.config.Capabilities, helloAck.ServerCapabilities))
+		defer c.dataPlane.sessionEnded(helloAck.SessionId)
+	}
 	connectedAt = time.Now()
 	heartbeatInterval := c.config.Heartbeat
 	if helloAck.HeartbeatIntervalSeconds > 0 {
@@ -722,11 +760,15 @@ func (c *Client) runSession() (bool, error) {
 			case *agentv1pb.ControlToAgent_HelloAck:
 				return c.sessionWasStable(connectedAt), fmt.Errorf("unexpected duplicate hello ACK")
 			case *agentv1pb.ControlToAgent_Config, *agentv1pb.ControlToAgent_Users, *agentv1pb.ControlToAgent_ReportAck:
-				// No data-plane capability is implemented yet, so none is
-				// negotiated and Control must not send these (PROTOCOL.md,
-				// "Negotiation").
+				// Control sends these only when the session negotiated
+				// their capability (PROTOCOL.md, "Negotiation"); others
+				// are dropped and counted.
 				kind, capability, _ := payloadCapability(payload)
-				c.dropUnnegotiatedPayload(kind, capability)
+				if c.dataPlane == nil || !agentcontrol.Negotiated(c.config.Capabilities, helloAck.ServerCapabilities, capability) {
+					c.dropUnnegotiatedPayload(kind, capability)
+					continue
+				}
+				c.dataPlane.receive(helloAck.SessionId, payload)
 			default:
 				return c.sessionWasStable(connectedAt), fmt.Errorf("control message payload is required")
 			}
@@ -1174,6 +1216,41 @@ func (c *Client) send(stream agentv1pb.AgentControlService_ControlStreamClient, 
 	return stream.Send(message)
 }
 
+// hello is the session's Hello: the Agent's capabilities and, for the
+// negotiable data-plane features, where its state stands.
+func (c *Client) hello() *agentv1pb.Hello {
+	hello := &agentv1pb.Hello{
+		Protocol:     ProtocolVersion,
+		AgentVersion: c.config.AgentVersion,
+		InstanceId:   c.config.InstanceID,
+		Capabilities: cloneCapabilities(c.config.Capabilities),
+		Labels:       cloneStringMap(c.config.Labels),
+	}
+	if c.dataPlane != nil {
+		hello.ConfigRevision = c.dataPlane.helloConfigRevision()
+	}
+	return hello
+}
+
+// sendData sends a data-plane message on session sessionID, which must
+// still be the current session and have negotiated capability; else
+// ErrSessionGone. A payload of a capability the session did not negotiate
+// would end the stream with InvalidArgument.
+func (c *Client) sendData(sessionID, capability string, message *agentv1pb.AgentToControl) error {
+	c.mu.RLock()
+	stream := c.stream
+	current := c.ready && c.sessionID == sessionID && stream != nil &&
+		agentcontrol.Negotiated(c.config.Capabilities, c.serverCapabilities, capability)
+	c.mu.RUnlock()
+	if !current {
+		return ErrSessionGone
+	}
+	if err := c.send(stream, message); err != nil {
+		return fmt.Errorf("send %s data: %w", capability, err)
+	}
+	return nil
+}
+
 // errSessionRecycled ends an API key session after an enrollment, so the
 // next session presents the client certificate.
 var errSessionRecycled = errors.New("agent control session recycled for the client certificate")
@@ -1184,9 +1261,10 @@ const (
 	authenticationCertificate = "certificate"
 )
 
-func (c *Client) setConnected(sessionID string, serverCapabilities []*agentv1pb.Capability, deprecation *AuthDeprecation) {
+func (c *Client) setConnected(sessionID string, stream agentv1pb.AgentControlService_ControlStreamClient, serverCapabilities []*agentv1pb.Capability, deprecation *AuthDeprecation) {
 	c.mu.Lock()
 	c.sessionID = sessionID
+	c.stream = stream
 	c.ready = true
 	c.serverCapabilities = cloneCapabilities(serverCapabilities)
 	c.deprecation = deprecation
@@ -1215,6 +1293,7 @@ func (c *Client) setConnected(sessionID string, serverCapabilities []*agentv1pb.
 func (c *Client) setDisconnected(err error) {
 	c.mu.Lock()
 	c.sessionID = ""
+	c.stream = nil
 	c.ready = false
 	c.serverCapabilities = nil
 	if err != nil && c.ctx.Err() == nil {
@@ -1277,6 +1356,11 @@ func (c *Client) transportMetrics() map[string]float64 {
 	}
 	if c.identity != nil {
 		for key, value := range c.identity.metrics() {
+			metrics[key] = value
+		}
+	}
+	if c.dataPlane != nil {
+		for key, value := range c.dataPlane.metrics() {
 			metrics[key] = value
 		}
 	}

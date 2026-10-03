@@ -79,10 +79,13 @@ func (c AgentIdentityConfig) Validate() error {
 	return nil
 }
 
-// validateAgentIdentities checks every node's AgentIdentity.
+// validateAgentIdentities checks every node's AgentIdentity and AgentStream.
 func (p *Conf) validateAgentIdentities() error {
 	for i := range p.NodeConfig {
 		if err := p.NodeConfig[i].ApiConfig.AgentIdentity.Validate(); err != nil {
+			return fmt.Errorf("node %d: %w", i, err)
+		}
+		if err := p.NodeConfig[i].ApiConfig.AgentStream.Validate(); err != nil {
 			return fmt.Errorf("node %d: %w", i, err)
 		}
 	}

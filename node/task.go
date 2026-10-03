@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"time"
 
+	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/common/monitor"
 	"github.com/AnixOps/anix-agent/v4/common/task"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/AnixOps/anix-agent/v4/limiter"
+	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -62,18 +64,31 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	c.reconcileMu.Lock()
 	defer c.reconcileMu.Unlock()
 
-	// get node info
-	newN, err := c.apiClient.GetNodeInfo()
-	if err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Get node info failed")
-		return fmt.Errorf("get node info: %w", err)
+	// The configuration comes from the control stream's snapshots while
+	// it carries config.v1, and through the legacy pull otherwise.
+	var newN *panel.NodeInfo
+	configMode := c.stream.mode(agentcontrol.CapabilityConfig)
+	if configMode == agentapi.DataPlaneLegacy {
+		if c.lastConfigMode != agentapi.DataPlaneLegacy {
+			// Back on the legacy pull after the stream: the next answer
+			// is taken in full, not compared with the one before.
+			if resetter, ok := c.apiClient.(pullCacheResetter); ok {
+				resetter.ResetPullCache()
+			}
+		}
+		newN, err = c.apiClient.GetNodeInfo()
+		if err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Get node info failed")
+			return fmt.Errorf("get node info: %w", err)
+		}
+		if newN != nil && newN.Type != "" {
+			c.apiClient.SetNodeType(newN.Type)
+		}
 	}
-	if newN != nil && newN.Type != "" {
-		c.apiClient.SetNodeType(newN.Type)
-	}
+	c.lastConfigMode = configMode
 	// get user info
 	newU, err := c.apiClient.GetUserList()
 	if err != nil {
@@ -92,6 +107,20 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		}).Error("Get alive list failed")
 		return fmt.Errorf("get alive list: %w", err)
 	}
+	return c.reconcileLocked(newN, newU, newA)
+}
+
+// pullCacheResetter is a legacy transport that remembers its last answers
+// (ETag, body hash) to skip unchanged ones.
+type pullCacheResetter interface {
+	ResetPullCache()
+}
+
+// reconcileLocked brings the node to newN (a changed configuration: the
+// node restarts), newU (a changed user list: users are added and removed
+// in place) and newA (the alive list); nil leaves that part as it is.
+// reconcileMu is held.
+func (c *Controller) reconcileLocked(newN *panel.NodeInfo, newU []panel.UserInfo, newA map[int]int) (err error) {
 	if newN != nil {
 		c.info = newN
 		// nodeInfo changed
@@ -117,7 +146,11 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			// Remove the limiter under the old tag before replacing the tag.
 			limiter.DeleteLimiter(oldTag)
 			// Add new Limiter
-			l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, newA)
+			alive := newA
+			if alive == nil {
+				alive = c.aliveMap
+			}
+			l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, alive)
 			c.limiter = l
 		}
 		// update alive list
