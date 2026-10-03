@@ -5,7 +5,8 @@
 // snapshots and ConfigStatus; A2-4: user deltas from a change log, with
 // cursors and paged resyncs), modelled on anix-control's internal/grpc
 // agent_control_server.go, agent_control_config.go and
-// agent_control_users.go.
+// agent_control_users.go; A2-5: reports with batch ids recorded once and
+// ReportAck, package reports.
 package agenttest
 
 import (
@@ -99,6 +100,20 @@ type Control struct {
 	// dropAfterPages ends a session after that many pages of a full
 	// resync (0: never), once.
 	dropAfterPages int
+
+	// Reports (reports.v1, package-reports.v1).
+	batches        map[string]bool
+	appliedTraffic map[uint64][2]uint64
+	online         []*agentv1pb.OnlineUser
+	logEntries     []*agentv1pb.LogEntry
+	nodeStatuses   []*agentv1pb.NodeStatus
+	packageReports []*agentv1pb.PackageReport
+	reportAcks     []*agentv1pb.ReportAck
+	holdAcks       bool
+	refuseStreams  bool
+	loseAcks       int
+	refuse         func(batchID string) string
+	deliveries     int
 }
 
 // userChange is one row of the subscriber change log.
@@ -146,6 +161,7 @@ func New(t testing.TB, mode string, serves ...string) *Control {
 		t: t, NodeID: 12, APIKey: "node-api-key", Cluster: "test-cluster", ServerName: "control.test",
 		mode: mode, serves: map[string]bool{}, credentials: map[string]bool{}, sessions: map[string]*session{},
 		users: map[uint64]*agentv1pb.NodeUser{}, pageSize: 500,
+		batches: map[string]bool{}, appliedTraffic: map[uint64][2]uint64{},
 	}
 	for _, name := range serves {
 		control.serves[name] = true
@@ -561,6 +577,165 @@ func (c *Control) sendUsers(current *session, delta *agentv1pb.UserDelta) error 
 	})
 }
 
+// RefuseStreams makes Control unavailable to new streams (and ends the
+// open ones), as an outage would; false serves them again.
+func (c *Control) RefuseStreams(refuse bool) {
+	c.mu.Lock()
+	c.refuseStreams = refuse
+	c.mu.Unlock()
+	if refuse {
+		c.DropSessions()
+	}
+}
+
+// HoldReportAcks makes Control answer no ReportAck, as when its database
+// fails: the batches are not recorded and the Agent resends them.
+func (c *Control) HoldReportAcks(hold bool) {
+	c.mu.Lock()
+	c.holdAcks = hold
+	c.mu.Unlock()
+}
+
+// LoseNextAcks records the next count batches but loses their ReportAck,
+// as a stream that breaks right after the commit: the Agent resends them,
+// and Control answers that it recorded them before.
+func (c *Control) LoseNextAcks(count int) {
+	c.mu.Lock()
+	c.loseAcks = count
+	c.mu.Unlock()
+}
+
+// RefuseBatches makes Control refuse batches for good: refuse returns the
+// refusal for a batch id, "" to record it.
+func (c *Control) RefuseBatches(refuse func(batchID string) string) {
+	c.mu.Lock()
+	c.refuse = refuse
+	c.mu.Unlock()
+}
+
+// handleBatch records a TrafficReport or LogBatch once per batch id and
+// answers ReportAck, as AgentControlGRPCServer.handleReport.
+func (c *Control) handleBatch(current *session, message *agentv1pb.AgentToControl) error {
+	var batchID string
+	c.mu.Lock()
+	c.deliveries++
+	if c.holdAcks {
+		c.mu.Unlock()
+		return nil
+	}
+	switch payload := message.Payload.(type) {
+	case *agentv1pb.AgentToControl_Traffic:
+		batchID = payload.Traffic.GetBatchId()
+	case *agentv1pb.AgentToControl_Logs:
+		batchID = payload.Logs.GetBatchId()
+	}
+	ack := &agentv1pb.ReportAck{BatchId: batchID}
+	switch {
+	case batchID == "" || len(batchID) > 128:
+		ack.Error = "batch_id is required and at most 128 bytes"
+	case c.refuse != nil && c.refuse(batchID) != "":
+		ack.Error = c.refuse(batchID)
+	case c.batches[batchID]:
+		// Recorded before: nothing counts again.
+	default:
+		c.batches[batchID] = true
+		ack.Applied = true
+		switch payload := message.Payload.(type) {
+		case *agentv1pb.AgentToControl_Traffic:
+			for _, user := range payload.Traffic.GetUsers() {
+				total := c.appliedTraffic[user.GetUserId()]
+				c.appliedTraffic[user.GetUserId()] = [2]uint64{total[0] + user.GetUploadBytes(), total[1] + user.GetDownloadBytes()}
+			}
+			c.online = nil
+			for _, online := range payload.Traffic.GetOnline() {
+				c.online = append(c.online, proto.Clone(online).(*agentv1pb.OnlineUser))
+			}
+		case *agentv1pb.AgentToControl_Logs:
+			for _, entry := range payload.Logs.GetEntries() {
+				c.logEntries = append(c.logEntries, proto.Clone(entry).(*agentv1pb.LogEntry))
+			}
+		}
+	}
+	if ack.Applied && c.loseAcks > 0 {
+		c.loseAcks--
+		c.mu.Unlock()
+		return nil
+	}
+	c.reportAcks = append(c.reportAcks, proto.Clone(ack).(*agentv1pb.ReportAck))
+	c.mu.Unlock()
+	return current.send(&agentv1pb.ControlToAgent{
+		RequestId: message.RequestId, NodeId: c.NodeID,
+		Payload: &agentv1pb.ControlToAgent_ReportAck{ReportAck: ack},
+	})
+}
+
+// Traffic returns the bytes recorded per user (upload, download): each
+// batch counts once.
+func (c *Control) Traffic() map[uint64][2]uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	traffic := make(map[uint64][2]uint64, len(c.appliedTraffic))
+	for id, bytes := range c.appliedTraffic {
+		traffic[id] = bytes
+	}
+	return traffic
+}
+
+// Online returns the node's alive set, as the last recorded report left it.
+func (c *Control) Online() []*agentv1pb.OnlineUser {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1pb.OnlineUser(nil), c.online...)
+}
+
+// Batches returns the recorded batch ids.
+func (c *Control) Batches() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	batches := make([]string, 0, len(c.batches))
+	for id := range c.batches {
+		batches = append(batches, id)
+	}
+	sort.Strings(batches)
+	return batches
+}
+
+// Deliveries counts the TrafficReport and LogBatch messages received,
+// resends included.
+func (c *Control) Deliveries() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.deliveries
+}
+
+// ReportAcks returns every ReportAck sent.
+func (c *Control) ReportAcks() []*agentv1pb.ReportAck {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1pb.ReportAck(nil), c.reportAcks...)
+}
+
+// LogEntries returns the recorded log entries.
+func (c *Control) LogEntries() []*agentv1pb.LogEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1pb.LogEntry(nil), c.logEntries...)
+}
+
+// NodeStatuses returns every NodeStatus received.
+func (c *Control) NodeStatuses() []*agentv1pb.NodeStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1pb.NodeStatus(nil), c.nodeStatuses...)
+}
+
+// PackageReports returns every PackageReport received.
+func (c *Control) PackageReports() []*agentv1pb.PackageReport {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1pb.PackageReport(nil), c.packageReports...)
+}
+
 func metadataValue(ctx context.Context, key string) string {
 	md, _ := metadata.FromIncomingContext(ctx)
 	if values := md.Get(key); len(values) > 0 {
@@ -708,6 +883,10 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 	c.mu.Lock()
+	if c.refuseStreams {
+		c.mu.Unlock()
+		return status.Error(codes.Unavailable, "control is unavailable")
+	}
 	index := len(c.streams)
 	c.streams = append(c.streams, StreamAuth{APIKey: metadataValue(ctx, agentcontrol.MetadataAPIKey) != ""})
 	mode := c.mode
@@ -845,14 +1024,25 @@ func (c *Control) handle(current *session, message *agentv1pb.AgentToControl) er
 		c.mu.Lock()
 		c.statuses = append(c.statuses, proto.Clone(payload.ConfigStatus).(*agentv1pb.ConfigStatus))
 		c.mu.Unlock()
-	case *agentv1pb.AgentToControl_Traffic, *agentv1pb.AgentToControl_Logs, *agentv1pb.AgentToControl_Status:
+	case *agentv1pb.AgentToControl_Traffic, *agentv1pb.AgentToControl_Logs:
 		if !current.negotiated[agentcontrol.CapabilityReports] {
 			return status.Error(codes.InvalidArgument, "report needs capability reports.v1")
 		}
+		return c.handleBatch(current, message)
+	case *agentv1pb.AgentToControl_Status:
+		if !current.negotiated[agentcontrol.CapabilityReports] {
+			return status.Error(codes.InvalidArgument, "status needs capability reports.v1")
+		}
+		c.mu.Lock()
+		c.nodeStatuses = append(c.nodeStatuses, proto.Clone(payload.Status).(*agentv1pb.NodeStatus))
+		c.mu.Unlock()
 	case *agentv1pb.AgentToControl_PackageReport:
 		if !current.negotiated[agentcontrol.CapabilityPackageReports] {
 			return status.Error(codes.InvalidArgument, "package_report needs capability package-reports.v1")
 		}
+		c.mu.Lock()
+		c.packageReports = append(c.packageReports, proto.Clone(payload.PackageReport).(*agentv1pb.PackageReport))
+		c.mu.Unlock()
 	case *agentv1pb.AgentToControl_OperationAck, *agentv1pb.AgentToControl_ObservedState:
 	default:
 		return status.Error(codes.InvalidArgument, fmt.Sprintf("control message payload %T is not handled", payload))

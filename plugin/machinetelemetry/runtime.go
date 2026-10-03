@@ -46,7 +46,7 @@ const (
 	// NodeIDEnvironment carries the Agent's node id to the plugin process.
 	// The plugin reads only that node's systemd_services entry; without it
 	// the services collector stays off.
-	NodeIDEnvironment  = "ANIXOPS_NODE_ID"
+	NodeIDEnvironment  = "ANIXOPS_NODE_ID" // plugin.NodeIDEnvironment
 	MaxMetrics         = 32
 	MaxMetricKeyLength = 96
 )

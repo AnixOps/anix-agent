@@ -73,6 +73,11 @@ type Config struct {
 	Runner                    Runner
 	Health                    HealthChecker
 	Now                       func() time.Time
+	// NodeID is the Agent node the Supervisor serves. The default runner
+	// hands it to every plugin process as ANIXOPS_NODE_ID (the
+	// machine-telemetry services collector reads only that node's
+	// settings); 0 hands none.
+	NodeID int
 }
 
 type PluginState struct {
@@ -183,7 +188,7 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 		return nil, errors.New("invalid official plugin public key")
 	}
 	if config.Runner == nil {
-		config.Runner = CommandRunner{}
+		config.Runner = CommandRunner{NodeID: config.NodeID}
 	}
 	if config.Health == nil {
 		config.Health = GRPCHealthChecker{}

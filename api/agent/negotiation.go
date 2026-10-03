@@ -46,6 +46,7 @@ var dataPlaneCapabilities = []string{
 	agentcontrol.CapabilityReports,
 	agentcontrol.CapabilityPackageReports,
 	agentcontrol.CapabilityDiag,
+	agentcontrol.CapabilityForward,
 }
 
 // implementedDataPlane lists the data-plane capabilities this Agent
@@ -53,8 +54,10 @@ var dataPlaneCapabilities = []string{
 // users, AG-5 reports) adds its name with its payload handling. A Hello
 // lists one only when the client's DataPlane has a handler for it.
 var implementedDataPlane = map[string]bool{
-	agentcontrol.CapabilityConfig: true,
-	agentcontrol.CapabilityUsers:  true,
+	agentcontrol.CapabilityConfig:         true,
+	agentcontrol.CapabilityUsers:          true,
+	agentcontrol.CapabilityReports:        true,
+	agentcontrol.CapabilityPackageReports: true,
 }
 
 // ErrMTLSRequired reports that Control refused the node credential because

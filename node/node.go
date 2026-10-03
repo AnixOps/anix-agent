@@ -30,6 +30,7 @@ type Node struct {
 	lifecycle             sync.Mutex
 	controllers           []*Controller
 	agentClients          []*agentapi.Client
+	dataPlanes            []*nodeDataPlane
 	pluginSupervisors     map[int]*plugin.Supervisor
 	supervisorSpecs       map[int]pluginSupervisorSpec
 	supervisorFactory     func(plugin.Config) (*plugin.Supervisor, error)
@@ -186,6 +187,7 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 			continue
 		}
 		n.agentClients = append(n.agentClients, agentClient)
+		n.dataPlanes = append(n.dataPlanes, dataPlane)
 		if err := dataPlane.start(context.Background()); err != nil {
 			return n.failStart(err)
 		}
@@ -265,6 +267,11 @@ func (n *Node) failStart(startErr error) error {
 
 func (n *Node) closeResources() error {
 	var closeErr error
+	// Buffered logs go to the spool before the streams close.
+	for _, dataPlane := range n.dataPlanes {
+		dataPlane.close()
+	}
+	n.dataPlanes = nil
 	for _, client := range n.agentClients {
 		if client != nil {
 			closeErr = errors.Join(closeErr, client.Close())
@@ -358,6 +365,7 @@ func (n *Node) supervisorForNode(nodeID int, api conf.ApiConfig) (*plugin.Superv
 		RootDir:     spec.rootDir,
 		SocketDir:   spec.socketDir,
 		PublicKey:   spec.publicKey,
+		NodeID:      nodeID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create plugin supervisor for node %d: %w", nodeID, err)

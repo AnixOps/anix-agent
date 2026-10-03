@@ -18,6 +18,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/limiter"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +32,11 @@ type recordingCore struct {
 	delNodes []string
 	addUsers int
 	delUsers int
+	// traffic is the next window GetUserTrafficSlice returns; online the
+	// online devices.
+	traffic    []panel.UserTraffic
+	online     []panel.OnlineUser
+	rolledBack int
 }
 
 func newRecordingCore() *recordingCore {
@@ -68,7 +74,27 @@ func (c *recordingCore) AddUsers(params *vCore.AddUsersParams) (int, error) {
 	return len(params.Users), nil
 }
 func (c *recordingCore) GetUserTrafficSlice(string, bool) ([]panel.UserTraffic, error) {
-	return nil, nil
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	traffic := c.traffic
+	c.traffic = nil
+	return traffic, nil
+}
+func (c *recordingCore) GetOnlineDevice(string) ([]panel.OnlineUser, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]panel.OnlineUser(nil), c.online...), nil
+}
+func (c *recordingCore) RollbackUserTrafficSlice(string, []panel.UserTraffic) error {
+	c.mu.Lock()
+	c.rolledBack++
+	c.mu.Unlock()
+	return nil
+}
+func (c *recordingCore) setWindow(traffic []panel.UserTraffic, online []panel.OnlineUser) {
+	c.mu.Lock()
+	c.traffic, c.online = traffic, online
+	c.mu.Unlock()
 }
 func (c *recordingCore) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
 	c.mu.Lock()
@@ -506,4 +532,111 @@ func TestPanelUsersCarryTheWireGuardPeerFields(t *testing.T) {
 		Extra: map[string]string{"wireguard_peer_ip": "10.8.0.7", "wireguard_peer_public_key": "pub", "wireguard_preshared_key": "psk", "wireguard_protocol_id": "3"},
 	}, users[0])
 	assert.Equal(t, panel.UserInfo{Id: 8, Uuid: "plain"}, users[1])
+}
+
+func TestStreamReportsTrafficOnlineLogsAndStatusWithNoLegacyCall(t *testing.T) {
+	previousInterval := logBatchInterval
+	logBatchInterval = 100 * time.Millisecond
+	t.Cleanup(func() { logBatchInterval = previousInterval })
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired,
+		agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityPackageReports)
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
+	fixture.control.UpsertUsers(&agentv1pb.NodeUser{UserId: 1, Uuid: "user-1"}, &agentv1pb.NodeUser{UserId: 2, Uuid: "user-2"})
+	node := fixture.start(t)
+	controller := node.controllers[0]
+
+	// Status at the session start: the machine's usage and the runtime.
+	require.Eventually(t, func() bool { return len(fixture.control.NodeStatuses()) > 0 }, 5*time.Second, 10*time.Millisecond)
+	status := fixture.control.NodeStatuses()[0]
+	assert.True(t, status.RuntimeHealthy)
+	assert.Positive(t, status.ObservedAtUnixMs)
+
+	// A traffic window with online devices.
+	fixture.core.setWindow(
+		[]panel.UserTraffic{{UID: 1, Upload: 1500, Download: 9000}, {UID: 2, Upload: 0, Download: 0}},
+		[]panel.OnlineUser{{UID: 1, IP: "198.51.100.4"}, {UID: 1, IP: "198.51.100.5"}},
+	)
+	require.NoError(t, controller.reportUserTrafficTask())
+	require.Eventually(t, func() bool { return len(fixture.control.Batches()) >= 1 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, map[uint64][2]uint64{1: {1500, 9000}}, fixture.control.Traffic())
+	online := fixture.control.Online()
+	require.Len(t, online, 1)
+	assert.Equal(t, []string{"198.51.100.4", "198.51.100.5"}, online[0].Ips)
+
+	// The next window has nobody online: one report clears the alive set,
+	// and then nothing is sent for empty windows.
+	fixture.core.setWindow(nil, nil)
+	require.NoError(t, controller.reportUserTrafficTask())
+	require.Eventually(t, func() bool { return len(fixture.control.Batches()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	assert.Empty(t, fixture.control.Online())
+	require.NoError(t, controller.reportUserTrafficTask())
+	time.Sleep(200 * time.Millisecond)
+	assert.Len(t, fixture.control.Batches(), 2)
+
+	// The controller's logs go out as LogBatch.
+	log.WithField("tag", controller.tag).Info("stream log line")
+	require.Eventually(t, func() bool {
+		for _, entry := range fixture.control.LogEntries() {
+			if entry.Message == "stream log line" {
+				return entry.Level == "info"
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+
+	// Every report went on the mTLS stream: not one legacy request.
+	assert.Empty(t, fixture.legacy.requests())
+	streams := fixture.control.Streams()
+	for _, stream := range streams {
+		assert.False(t, stream.APIKey)
+	}
+}
+
+func TestStreamReportsWaitInTheSpoolDuringAnOutageAndCountOnce(t *testing.T) {
+	previousGrace := streamLegacyGrace
+	streamLegacyGrace = time.Minute
+	t.Cleanup(func() { streamLegacyGrace = previousGrace })
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired,
+		agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
+	node := fixture.start(t)
+	controller := node.controllers[0]
+
+	fixture.control.RefuseStreams(true)
+	require.Eventually(t, func() bool { return !controller.stream.client.IsConnected() }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "pending", controller.stream.mode(agentcontrol.CapabilityReports).String())
+	for window := int64(1); window <= 3; window++ {
+		fixture.core.setWindow([]panel.UserTraffic{{UID: 7, Upload: window, Download: 10 * window}}, nil)
+		require.NoError(t, controller.reportUserTrafficTask())
+	}
+	report := controller.stream.client.TransportStatus().DataPlane.Reports
+	require.NotNil(t, report)
+	assert.Equal(t, 3, report.Spooled)
+	assert.Empty(t, fixture.legacy.requests(), "within the grace period nothing goes to the legacy transport")
+
+	fixture.control.RefuseStreams(false)
+	require.Eventually(t, func() bool { return len(fixture.control.Batches()) == 3 }, 10*time.Second, 20*time.Millisecond)
+	assert.Equal(t, map[uint64][2]uint64{7: {6, 60}}, fixture.control.Traffic(), "each window counted once")
+	require.Eventually(t, func() bool { return controller.stream.client.TransportStatus().DataPlane.Reports.Spooled == 0 }, 5*time.Second, 10*time.Millisecond)
+	fixture.core.mu.Lock()
+	assert.Zero(t, fixture.core.rolledBack)
+	fixture.core.mu.Unlock()
+}
+
+func TestStreamReportsGoToTheLegacyTransportAfterTheGracePeriod(t *testing.T) {
+	previousGrace := streamLegacyGrace
+	streamLegacyGrace = 200 * time.Millisecond
+	t.Cleanup(func() { streamLegacyGrace = previousGrace })
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired,
+		agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
+	node := fixture.start(t)
+	controller := node.controllers[0]
+
+	fixture.control.RefuseStreams(true)
+	require.Eventually(t, func() bool { return controller.stream.mode(agentcontrol.CapabilityReports).String() == "legacy" }, 5*time.Second, 20*time.Millisecond)
+	fixture.core.setWindow([]panel.UserTraffic{{UID: 7, Upload: 1, Download: 2}}, nil)
+	require.NoError(t, controller.reportUserTrafficTask())
+	assert.Equal(t, 1, fixture.legacy.count("/api/v2/server/UniProxy/push"), "new data after the grace period goes to the legacy transport")
+	assert.Zero(t, controller.stream.client.TransportStatus().DataPlane.Reports.Spooled)
 }

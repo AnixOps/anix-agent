@@ -11,6 +11,7 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/plugin"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
@@ -33,6 +34,9 @@ var (
 	// HelloAck; without it the start fails (systemd restarts the Agent)
 	// rather than falling back to a transport Control has moved away from.
 	streamConfigWait = 60 * time.Second
+	// streamLegacyGrace is how long after the stream went down the legacy
+	// transports stay off (0: agentapi.DefaultLegacyGrace); tests lower it.
+	streamLegacyGrace time.Duration
 )
 
 // nodeDataPlane applies what the stream delivers to a node's controllers.
@@ -46,6 +50,16 @@ type nodeDataPlane struct {
 	startupMu       sync.Mutex
 	startupUsers    []panel.UserInfo
 	startupUsersSet bool
+
+	// Reports (AG-5), guarded by reportMu: each controller's latest online
+	// IPs, whether the last traffic report had any, the log buffer.
+	reportMu   sync.Mutex
+	online     map[*Controller]map[int][]string
+	onlineSent bool
+	logBuffer  []*agentv1pb.LogEntry
+	stop       chan struct{}
+	stopped    chan struct{}
+	stopOnce   sync.Once
 }
 
 func newNodeDataPlane(nodeID int, controllers []*Controller) *nodeDataPlane {
@@ -54,6 +68,16 @@ func newNodeDataPlane(nodeID int, controllers []*Controller) *nodeDataPlane {
 		controller.stream = plane
 	}
 	return plane
+}
+
+// supervisor is the node's plugin Supervisor, nil without one.
+func (n *nodeDataPlane) supervisor() *plugin.Supervisor {
+	for _, controller := range n.controllers {
+		if controller.pluginSupervisor != nil {
+			return controller.pluginSupervisor
+		}
+	}
+	return nil
 }
 
 // detach returns the controllers to the legacy transports, after the
@@ -146,6 +170,11 @@ func (n *nodeDataPlane) clearStartupUsers() {
 func (n *nodeDataPlane) start(ctx context.Context) error {
 	plane := n.client.DataPlane()
 	defer n.clearStartupUsers()
+	n.stop, n.stopped = make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(n.stopped)
+		n.runLogFlusher()
+	}()
 	persistedConfig := plane.PersistedConfig()
 	persistedUsers := plane.PersistedUsers()
 	if persistedConfig != nil && persistedUsers != nil {

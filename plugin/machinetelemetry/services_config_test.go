@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AnixOps/anix-control/sdk/telemetry/systemdreport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -120,10 +121,10 @@ func TestLoadConfigStillRefusesOtherUnknownKeys(t *testing.T) {
 
 func TestValidServicesGlob(t *testing.T) {
 	for _, glob := range []string{"*", "nginx.service", "nginx*.service", "ssh?.service", "[a-c]*.service", "[^x]*", `a@b\x2d1.service`} {
-		assert.True(t, validServicesGlob(glob), glob)
+		assert.True(t, systemdreport.ValidGlob(glob), glob)
 	}
 	for _, glob := range []string{"", "[", "a[", "x\\", "a b", "a/b", "ü.service"} {
-		assert.False(t, validServicesGlob(glob), glob)
+		assert.False(t, systemdreport.ValidGlob(glob), glob)
 	}
 }
 

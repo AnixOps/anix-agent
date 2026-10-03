@@ -282,7 +282,38 @@ UniProxy `user`、v2board `GetUsers`，也不处理 WebSocket `user_update` / `u
 - UniProxy `alivelist`（其他节点的在线 IP 计数）没有流上的对应消息：此时设备数限制
   只统计本节点的连接。
 
-流量、在线 IP、日志与状态上报在 AG-5 之前仍走旧链路。
+### 控制流数据面：上报与 spool（reports.v1、package-reports.v1）
+
+Control 支持 `reports.v1` 时，流量、在线 IP、日志与节点状态改由控制流上报，不再使用
+UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
+
+- 每个流量窗口（用户流量与本节点在线 IP）和日志批次带批次号
+  `node:proxy-<id>:<boot id>:<序号>`，先持久化到
+  `AgentStream.StateDir/proxy-<NodeID>/spool/{traffic,logs}/`（目录 0700、文件
+  0600），再按顺序发送；收到 `ReportAck` 后删除，未确认的批次 30 秒后在控制流上重发，
+  从不改走旧链路，因此流量只计一次。
+- 上限：`SpoolMaxMB`（流量，默认 64）、`LogSpoolMaxMB`（日志，默认 16）、
+  `SpoolMaxAgeHours`（默认 72，最大 144，低于 Control 7 天的批次记忆）；超出时先丢弃
+  最旧批次并计数。重启后 spool 仍会继续发送。
+- 控制流断开 5 分钟内的新数据进入 spool；超过后新数据走旧链路。
+- 节点状态（CPU、内存、磁盘、运行时间、内核健康）每分钟通过 `NodeStatus` 上报。
+- `package-reports.v1`：Supervisor 为插件进程设置 `ANIXOPS_NODE_ID`，
+  `machine-telemetry` 采集本节点的 systemd 服务表；Agent 每 5 分钟（以及每次连接时）
+  以 `PackageReport` 发送最新值，`version` 为节点被分配的插件版本。
+
+```json
+"AgentStream": {
+  "DataPlane": "auto",
+  "StateDir": "/var/lib/anix-agent/stream",
+  "SpoolMaxMB": 64,
+  "LogSpoolMaxMB": 16,
+  "SpoolMaxAgeHours": 72
+}
+```
+
+Control 4.2 默认 `agent_control.mtls: required`：配置、用户与上报都在 mTLS 控制流上时，
+Agent 不再访问旧的 REST、gRPC 与 WebSocket 通道（插件维护 outbox 与插件包下载除外，
+Control 尚无对应的流消息）。
 
 面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 

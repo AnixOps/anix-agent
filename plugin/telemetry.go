@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
+	"github.com/AnixOps/anix-control/sdk/telemetry/systemdreport"
 )
 
 const (
@@ -107,6 +109,73 @@ func (s *Supervisor) TelemetryMetrics(ctx context.Context) (map[string]float64, 
 		}
 	}
 	return metrics, result
+}
+
+// PackageReports returns the latest package report of each enabled
+// official plugin that makes one (package-reports.v1): today the
+// systemd.services table of machine-telemetry. A plugin reports only when
+// it runs its assigned release (the version Control's operation targeted,
+// which is the version the report names, as Control requires), healthy, and
+// that release's verified manifest declares the kind's capability. A plugin
+// with nothing to report (collection off for the node, nothing collected
+// yet, a release before the collector) is skipped. Partial results come
+// with the errors of the others.
+func (s *Supervisor) PackageReports(ctx context.Context) ([]*agentv1pb.PackageReport, error) {
+	if s == nil {
+		return nil, errors.New("plugin Supervisor is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
+	release, err := s.lifecycle.enter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	s.mu.Lock()
+	targets := make([]telemetryTarget, 0, len(s.state.Plugins))
+	for id, state := range s.state.Plugins {
+		if !state.Enabled || state.Health != "healthy" || state.DesiredVersion == "" ||
+			state.ObservedVersion != state.DesiredVersion || s.processes[id] == nil {
+			continue
+		}
+		targets = append(targets, telemetryTarget{id: id, version: state.DesiredVersion, socket: s.socketPath(id)})
+	}
+	s.mu.Unlock()
+	sort.Slice(targets, func(left, right int) bool { return targets[left].id < targets[right].id })
+
+	var reports []*agentv1pb.PackageReport
+	var result error
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return reports, errors.Join(result, err)
+		}
+		manifest, err := s.verifyTelemetryManifest(target.id, target.version)
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("verify plugin %s: %w", target.id, err))
+			continue
+		}
+		if !manifestSupportsCapability(manifest, systemdreport.Capability) {
+			continue
+		}
+		report, ok, err := machinetelemetry.FetchSystemdServices(ctx, target.socket, machinetelemetry.DefaultClientTimeout)
+		if err != nil {
+			result = errors.Join(result, fmt.Errorf("collect plugin %s package report: %w", target.id, err))
+			continue
+		}
+		if !ok {
+			continue
+		}
+		reports = append(reports, &agentv1pb.PackageReport{
+			PluginId: target.id, Kind: report.Kind, Version: target.version,
+			PayloadJson: append([]byte(nil), report.PayloadJSON...), ObservedAtUnixMs: report.ObservedAtUnixMs,
+		})
+	}
+	return reports, result
 }
 
 func (s *Supervisor) verifyTelemetryManifest(id, version string) (*Manifest, error) {

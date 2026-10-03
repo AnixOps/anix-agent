@@ -234,16 +234,20 @@ func (c *Controller) reconcileLocked(newN *panel.NodeInfo, newU []panel.UserInfo
 	if newA != nil {
 		c.limiter.AliveList = newA
 	}
-	if stats, statsErr := monitor.GetSystemInfo(); statsErr != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": statsErr,
-		}).Warn("Get system info failed")
-	} else if err = c.apiClient.ReportNodeStatus(stats, 0, 0, 0); err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Warn("Report node status failed")
+	// The status goes on the control stream (NodeStatus, sent by the data
+	// plane) while it carries reports.v1, else over the legacy transport.
+	if !c.stream.streamReports() {
+		if stats, statsErr := monitor.GetSystemInfo(); statsErr != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": statsErr,
+			}).Warn("Get system info failed")
+		} else if err = c.apiClient.ReportNodeStatus(stats, 0, 0, 0); err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Warn("Report node status failed")
+		}
 	}
 	c.reportRuntimeHealth()
 	// node no changed, check users
@@ -302,6 +306,10 @@ func (c *Controller) applyUserDiffLocked(newU []panel.UserInfo) (err error) {
 }
 
 func (c *Controller) reportRuntimeHealth() {
+	if c.stream.streamReports() {
+		// NodeStatus carries the runtime health on the stream.
+		return
+	}
 	provider, ok := c.server.(vCore.RuntimeHealthProvider)
 	if !ok {
 		return

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,10 +18,36 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
+// NodeIDEnvironment carries the Agent's node id to plugin processes
+// (machinetelemetry.NodeIDEnvironment). An environment variable rather
+// than a flag keeps older plugin binaries, which refuse unknown flags,
+// startable.
+const NodeIDEnvironment = "ANIXOPS_NODE_ID"
+
 // CommandRunner starts one signed plugin binary. Plugin binaries must expose
 // the standard gRPC health service on the supplied Unix socket.
 type CommandRunner struct {
 	ExtraArgs []string
+	// NodeID, when positive, is set as ANIXOPS_NODE_ID in the plugin's
+	// environment; an inherited value is never passed on.
+	NodeID int
+}
+
+// environment is the plugin process environment: the Agent's, without an
+// inherited ANIXOPS_NODE_ID, with the runner's node id.
+func (r CommandRunner) environment() []string {
+	inherited := os.Environ()
+	environment := make([]string, 0, len(inherited)+1)
+	for _, entry := range inherited {
+		if strings.HasPrefix(entry, NodeIDEnvironment+"=") {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	if r.NodeID > 0 {
+		environment = append(environment, NodeIDEnvironment+"="+strconv.Itoa(r.NodeID))
+	}
+	return environment
 }
 
 func (r CommandRunner) Start(ctx context.Context, binaryPath, socketPath, configPath string) (Process, error) {
@@ -50,6 +77,7 @@ func (r CommandRunner) start(ctx context.Context, binaryPath, socketPath, config
 	// plugin process must outlive the operation that enabled it and is stopped
 	// explicitly by disable, update, rollback, or Supervisor.Close.
 	command := exec.Command(binaryPath, args...)
+	command.Env = r.environment()
 	configurePluginCommand(command)
 	if err := command.Start(); err != nil {
 		return nil, fmt.Errorf("start plugin process: %w", err)

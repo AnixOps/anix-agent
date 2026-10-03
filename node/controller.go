@@ -192,6 +192,16 @@ func (c *Controller) retireLegacySync() {
 	}()
 }
 
+// reportNodeLogs sends the controller's log entries: to the node's LogBatch
+// on the control stream while it carries reports.v1 (or is briefly down),
+// else over the legacy transport.
+func (c *Controller) reportNodeLogs(entries []panel.NodeLogEntry) error {
+	if c.stream.streamReports() {
+		return c.stream.submitLogs(entries)
+	}
+	return c.apiClient.ReportNodeLogs(entries)
+}
+
 func (c *Controller) isStarted() bool {
 	return c.started.Load()
 }
@@ -224,7 +234,7 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 	} else {
 		c.tag = c.Options.Name
 	}
-	c.logHook = NewRemoteLogHook(c.apiClient, c.tag)
+	c.logHook = newRemoteLogHook(c.reportNodeLogs, c.tag)
 	log.StandardLogger().AddHook(c.logHook)
 
 	// add limiter

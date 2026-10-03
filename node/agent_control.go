@@ -125,7 +125,17 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 			log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the stored user set on re-registration")
 		}
 	}
-	return &agentapi.DataPlaneConfig{State: store, Control: target, Config: dataPlane, Users: dataPlane}, nil
+	config := &agentapi.DataPlaneConfig{
+		State: store, Control: target, Config: dataPlane, Users: dataPlane, LegacyGrace: streamLegacyGrace,
+		Reports: &agentapi.ReportsConfig{
+			TrafficMaxBytes: settings.SpoolBytes(), LogsMaxBytes: settings.LogSpoolBytes(), MaxAge: settings.SpoolMaxAge(),
+			Status: dataPlane.nodeStatus,
+		},
+	}
+	if supervisor := dataPlane.supervisor(); supervisor != nil {
+		config.PackageReports = &agentapi.PackageReportsConfig{Collect: supervisor.PackageReports}
+	}
+	return config, nil
 }
 
 // dataPlaneEnabled tells whether the node's data rides the control stream
