@@ -257,17 +257,44 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 		}
 	}
 
+	// 调试：打印原始响应内容
+	log.WithField("response", string(r.Body())).Debug("Raw node config response")
+
+	node, nodeCategory, err := ParseNodeInfo(r.Body(), c.NodeId)
+	if err != nil {
+		return nil, err
+	}
+
+	// 更新客户端状态
+	c.NodeType = nodeCategory
+	c.ProtocolType = node.Type
+
+	// 更新全局查询参数，确保后续请求带上 node_type
+	c.client.SetQueryParam("node_type", c.NodeType)
+
+	// 调试: 保存解析后的节点信息
+	if c.Debugger != nil && c.Debugger.IsEnabled() {
+		if err := c.Debugger.DumpParsedNodeInfo(node, c.NodeId); err != nil {
+			log.WithError(err).Warn("Failed to dump parsed node info")
+		}
+	}
+
+	return node, nil
+}
+
+// ParseNodeInfo parses a UniProxy node configuration answer: the body of
+// GET /api/v2/server/UniProxy/config, or one entry of a configuration
+// snapshot's legacy_pull (the same document, delivered on the Agent
+// control stream). nodeCategory is the node_type the answer names.
+func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string, err error) {
 	// 先解析基础信息获取节点类型
 	var baseInfo struct {
 		Type     string `json:"type"`
 		NodeType string `json:"node_type"` // 支持 node_type 字段
 	}
 
-	// 调试：打印原始响应内容
-	log.WithField("response", string(r.Body())).Debug("Raw node config response")
-
-	if err = json.Unmarshal(r.Body(), &baseInfo); err != nil {
-		return nil, fmt.Errorf("decode node type error: %s", err)
+	if err = json.Unmarshal(body, &baseInfo); err != nil {
+		return nil, "", fmt.Errorf("decode node type error: %s", err)
 	}
 
 	log.WithFields(log.Fields{
@@ -278,7 +305,7 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	// 彻底分离 node_type 和 type
 	// node_type 是节点分类 (node, vmess, vless 等)
 	// type 是具体协议 (vmess, vless, trojan 等)
-	nodeCategory := strings.ToLower(baseInfo.NodeType)
+	nodeCategory = strings.ToLower(baseInfo.NodeType)
 	protocolType := strings.ToLower(baseInfo.Type)
 
 	// 兼容逻辑：如果其中一个为空，尝试互相补充
@@ -289,7 +316,8 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	}
 
 	if nodeCategory == "" {
-		return nil, fmt.Errorf("node type not found in response, raw: %s", string(r.Body()))
+		// The answer holds the node's secrets: never echo it.
+		return nil, "", fmt.Errorf("node type not found in the node configuration (%d bytes)", len(body))
 	}
 
 	// 规范化
@@ -300,15 +328,8 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 		nodeCategory = "vmess"
 	}
 
-	// 更新客户端状态
-	c.NodeType = nodeCategory
-	c.ProtocolType = protocolType
-
-	// 更新全局查询参数，确保后续请求带上 node_type
-	c.client.SetQueryParam("node_type", c.NodeType)
-
 	node = &NodeInfo{
-		Id:   c.NodeId,
+		Id:   nodeID,
 		Type: protocolType,
 		RawDNS: RawDNS{
 			DNSMap:  make(map[string]map[string]interface{}),
@@ -320,9 +341,9 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	switch protocolType {
 	case "vmess", "vless":
 		rsp := &VAllssNode{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode v2ray params error: %s", err)
+			return nil, "", fmt.Errorf("decode v2ray params error: %s", err)
 		}
 		if len(rsp.NetworkSettingsBack) > 0 {
 			rsp.NetworkSettings = rsp.NetworkSettingsBack
@@ -337,85 +358,94 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 		node.Security = node.VAllss.Tls
 	case "shadowsocks":
 		rsp := &ShadowsocksNode{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode shadowsocks params error: %s", err)
+			return nil, "", fmt.Errorf("decode shadowsocks params error: %s", err)
 		}
 		cm = &rsp.CommonNode
 		node.Shadowsocks = rsp
 		node.Security = None
 	case "trojan":
 		rsp := &TrojanNode{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode trojan params error: %s", err)
+			return nil, "", fmt.Errorf("decode trojan params error: %s", err)
 		}
 		cm = &rsp.CommonNode
 		node.Trojan = rsp
 		node.Security = Tls
 	case "tuic":
 		rsp := &TuicNode{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode tuic params error: %s", err)
+			return nil, "", fmt.Errorf("decode tuic params error: %s", err)
 		}
 		cm = &rsp.CommonNode
 		node.Tuic = rsp
 		node.Security = Tls
 	case "anytls":
 		rsp := &AnyTlsNode{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode anytls params error: %s", err)
+			return nil, "", fmt.Errorf("decode anytls params error: %s", err)
 		}
 		cm = &rsp.CommonNode
 		node.AnyTls = rsp
 		node.Security = Tls
 	case "hysteria":
 		rsp := &HysteriaNode{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode hysteria params error: %s", err)
+			return nil, "", fmt.Errorf("decode hysteria params error: %s", err)
 		}
 		cm = &rsp.CommonNode
 		node.Hysteria = rsp
 		node.Security = Tls
 	case "hysteria2":
 		rsp := &Hysteria2Node{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode hysteria2 params error: %s", err)
+			return nil, "", fmt.Errorf("decode hysteria2 params error: %s", err)
 		}
 		cm = &rsp.CommonNode
 		node.Hysteria2 = rsp
 		node.Security = Tls
 	case "wireguard":
 		rsp := &WireGuardNode{}
-		err = json.Unmarshal(r.Body(), rsp)
+		err = json.Unmarshal(body, rsp)
 		if err != nil {
-			return nil, fmt.Errorf("decode wireguard params error: %s", err)
+			return nil, "", fmt.Errorf("decode wireguard params error: %s", err)
 		}
 		cm = &rsp.CommonNode
 		node.WireGuard = rsp
 		node.Security = None
 	}
 	if cm == nil {
-		return nil, fmt.Errorf("unsupported node type: %s", protocolType)
+		return nil, "", fmt.Errorf("unsupported node type: %s", protocolType)
 	}
 
 	// parse rules and dns
 	for i := range cm.Routes {
 		var matchs []string
-		if _, ok := cm.Routes[i].Match.(string); ok {
-			matchs = strings.Split(cm.Routes[i].Match.(string), ",")
-		} else if _, ok = cm.Routes[i].Match.([]string); ok {
-			matchs = cm.Routes[i].Match.([]string)
-		} else {
-			temp := cm.Routes[i].Match.([]interface{})
-			matchs = make([]string, len(temp))
-			for i := range temp {
-				matchs[i] = temp[i].(string)
+		switch match := cm.Routes[i].Match.(type) {
+		case string:
+			matchs = strings.Split(match, ",")
+		case []string:
+			matchs = match
+		case []interface{}:
+			matchs = make([]string, 0, len(match))
+			for _, value := range match {
+				text, ok := value.(string)
+				if !ok {
+					return nil, "", fmt.Errorf("route %d: match entries must be strings", cm.Routes[i].Id)
+				}
+				matchs = append(matchs, text)
 			}
+		default:
+			return nil, "", fmt.Errorf("route %d: match must be a string or a list of strings", cm.Routes[i].Id)
+		}
+		if len(matchs) == 0 {
+			continue
 		}
 		switch cm.Routes[i].Action {
 		case "block":
@@ -444,22 +474,17 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	}
 
 	// set interval
-	node.PushInterval = intervalToTime(cm.BaseConfig.PushInterval)
-	node.PullInterval = intervalToTime(cm.BaseConfig.PullInterval)
+	if cm.BaseConfig != nil {
+		node.PushInterval = intervalToTime(cm.BaseConfig.PushInterval)
+		node.PullInterval = intervalToTime(cm.BaseConfig.PullInterval)
+	}
 
 	node.Common = cm
 	// clear
 	cm.Routes = nil
 	cm.BaseConfig = nil
 
-	// 调试: 保存解析后的节点信息
-	if c.Debugger != nil && c.Debugger.IsEnabled() {
-		if err := c.Debugger.DumpParsedNodeInfo(node, c.NodeId); err != nil {
-			log.WithError(err).Warn("Failed to dump parsed node info")
-		}
-	}
-
-	return node, nil
+	return node, nodeCategory, nil
 }
 
 func intervalToTime(i interface{}) time.Duration {

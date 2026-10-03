@@ -14,11 +14,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/common/maintenance"
 	"github.com/AnixOps/anix-agent/v4/common/sign"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
+	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 )
@@ -542,6 +544,13 @@ func (sm *SyncManager) handleConfigUpdate(msg *panel.SyncMessage) error {
 		"changeType": payload.ChangeType,
 	}).Info("Received config update")
 
+	if sm.streamCarriesConfig() {
+		// The control stream carries the configuration (config.v1):
+		// Control's snapshots are authoritative, not the WebSocket.
+		log.WithField("changeType", payload.ChangeType).Debug("Ignoring WebSocket config update: the Agent control stream carries the configuration")
+		return nil
+	}
+
 	if payload.ChangeType == "full" && payload.NodeInfo != nil {
 		// 瀹屾暣閰嶇疆鏇存柊 - 瑙﹀彂鑺傜偣閲嶈浇
 		return sm.controller.reloadNode(payload.NodeInfo)
@@ -551,6 +560,12 @@ func (sm *SyncManager) handleConfigUpdate(msg *panel.SyncMessage) error {
 	// 鐩墠鍏堜娇鐢ㄥ畬鏁撮噸杞?
 	log.Debug("Partial config update, fetching full config")
 	return sm.controller.nodeInfoMonitor()
+}
+
+// streamCarriesConfig tells whether the Agent control stream carries the
+// node's configuration now (or within its grace period).
+func (sm *SyncManager) streamCarriesConfig() bool {
+	return sm.controller != nil && sm.controller.stream.mode(agentcontrol.CapabilityConfig) != agentapi.DataPlaneLegacy
 }
 
 // handleUserUpdate 澶勭悊鐢ㄦ埛鏇存柊
@@ -643,6 +658,10 @@ func (sm *SyncManager) handleRuleUpdate(msg *panel.SyncMessage) error {
 	}
 
 	log.WithField("action", payload.Action).Info("Received rule update")
+	if sm.streamCarriesConfig() {
+		// The rules are part of the configuration the stream carries.
+		return nil
+	}
 
 	return sm.controller.limiter.UpdateRule(&payload.Rules)
 }

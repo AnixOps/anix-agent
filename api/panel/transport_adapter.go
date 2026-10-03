@@ -45,3 +45,13 @@ func (c *Client) ReportNodeLogs(_ []NodeLogEntry) error { return nil }
 func (c *Client) ReportNodeRuntimeHealth(healthy bool, message string) error {
 	return c.reportRuntimeHealth(&RuntimeHealthRequest{Healthy: healthy, Error: message})
 }
+
+// ResetPullCache forgets the last configuration and user answers (ETag,
+// body hash), so the next pulls are taken in full. The node calls it when
+// the legacy pull takes over again after the Agent control stream carried
+// the data.
+func (c *Client) ResetPullCache() {
+	c.nodeEtag = ""
+	c.userEtag = ""
+	c.responseBodyHash = ""
+}

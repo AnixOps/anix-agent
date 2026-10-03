@@ -4,6 +4,60 @@
 
 ### Added
 
+- Agent control stream, configuration from the stream (AG-3). With
+  `AgentControlEnabled`, the Agent advertises `config.v1` and, when Control
+  serves it (A2-3), runs the node's configuration from Control's
+  `ConfigSnapshot` instead of UniProxy `config`, v2board `GetConfig`, the
+  WebSocket `config_update` and the `node.reload` re-pull.
+  - **What runs.** A snapshot is applied only when its format is
+    `anixops.nodeconfig/v1` and `config_hash` is the SHA-256 of its exact
+    bytes. Each controller of the node runs its entry of `legacy_pull`
+    (`types[<NodeType>]`, or `default` without a `NodeType`), parsed by the
+    same code as the UniProxy answer, so a snapshot runs exactly what the
+    legacy pull would. A new revision goes through the existing restart
+    path of each core (xray, sing-box, hysteria2); the same revision and
+    hash is answered without a restart. Snapshots that arrive while one
+    applies are skipped for the newest.
+  - **`ConfigStatus`.** Every snapshot is answered: applied, or not with the
+    error (an unknown format, a hash mismatch, a node type the node does not
+    serve, a core that refuses the inbound). A status that cannot be sent
+    when it is ready goes out after the next `HelloAck`.
+  - **Hello reconcile and restarts.** The applied snapshot is stored in
+    `AgentStream.StateDir/proxy-<NodeID>/config.pb` (default
+    `/var/lib/anix-agent/stream`; directories 0700, files 0600, owned by the
+    Agent's user; a file with wider permissions, another owner or a hash
+    that does not verify is discarded). A restarted Agent runs it at once,
+    without waiting for Control, and reports its revision in
+    `Hello.config_revision`, so Control sends a snapshot only when the
+    desired configuration moved. A stored snapshot the node can no longer
+    run is discarded and Hello reports 0. State of another Control (a
+    different gRPC target) is discarded.
+  - **Startup without a stored snapshot.** The Agent waits up to 20 s for
+    the stream. When the session negotiates `config.v1` it waits up to 60 s
+    for the snapshot and fails the start without one (systemd restarts it);
+    it does not fall back to the legacy pull. When the stream is down or
+    Control does not serve `config.v1`, the node starts on the legacy pull
+    as before.
+  - **Legacy fallback.** The periodic pull, `node.reload`, `users.reload`
+    and the WebSocket's `config_update` take the configuration from the
+    legacy transport only while the stream does not carry it: never while a
+    session negotiated `config.v1`, nor for 5 minutes after such a session
+    ended (or after a restart whose last session negotiated it). After
+    that, the next legacy pull is taken in full.
+  - **Rollback.** `AgentStream.DataPlane: "off"` keeps every node on the
+    legacy transports (the stream carries operations only).
+  - Users, traffic, online IPs, logs and status stay on the legacy
+    transports until AG-4 and AG-5.
+  - `TransportStatus` gains `data_plane` (state directory, transport per
+    capability, running revision and the last apply error); the heartbeat
+    reports `agent_dataplane_config_revision` and
+    `agent_dataplane_config_apply_failures_total`.
+  - `agent-control-fixture` gains `-data-plane-dir` and `-config-record` for
+    Control's cross-repository E2E (A2-7).
+  - The UniProxy configuration parser no longer panics on a missing
+    `base_config` or a malformed route `match`, and no longer echoes the
+    configuration (which holds the node's secrets) in its error.
+
 - Agent control stream, mTLS identity (AG-2). With `AgentControlEnabled`
   and TLS, the Agent enrolls with Control's `AgentEnrollment`, stores its
   identity, renews it, and presents its client certificate instead of the

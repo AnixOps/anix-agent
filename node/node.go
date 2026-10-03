@@ -89,11 +89,16 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 		n.supervisorFactory = plugin.NewSupervisor
 	}
 
-	// A node may appear more than once in the configuration (for example with
-	// different protocol/core settings).  Start only one control stream per
-	// final node ID, after all controllers have had a chance to attach their
-	// node-scoped Supervisor.
+	// Phase 1: the API clients (auto-registration may replace a
+	// placeholder node ID), the controllers and the node-scoped
+	// Supervisors. Nothing is pulled from Control yet.
+	//
+	// A node may appear more than once in the configuration (for example
+	// with different protocol/core settings). Only one control stream is
+	// started per final node ID, after all controllers have had a chance
+	// to attach their node-scoped Supervisor.
 	agentNodes := make(map[int]agentNodeStart)
+	agentNodeOrder := make([]int, 0, len(nodes))
 	controllerIdentities := make(map[*Controller]string)
 	for i := range nodes {
 		nodes[i].ApiConfig.NodeType = initialNodeType(nodes[i].ApiConfig.NodeType, nodes[i].Options.Core)
@@ -101,18 +106,8 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 		if err != nil {
 			return n.failStart(err)
 		}
-		// Register controller service
 		n.controllers[i] = NewController(core, client, &nodes[i].Options)
-		err = n.controllers[i].Start()
-		if err != nil {
-			startErr := fmt.Errorf("start node controller [%s-%d] error: %s",
-				nodes[i].ApiConfig.APIHost,
-				nodes[i].ApiConfig.NodeID,
-				err)
-			closeErr := n.controllers[i].Close()
-			n.controllers[i] = nil
-			return n.failStart(errors.Join(startErr, closeErr))
-		}
+		n.controllers[i].nodeType = nodes[i].ApiConfig.NodeType
 		nodeID := client.GetNodeID()
 		// Auto-registration may replace the configured zero/placeholder ID.
 		// Keep the in-memory configuration aligned with the credential that the
@@ -128,9 +123,6 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 				return n.failStart(err)
 			}
 			n.controllers[i].SetPluginSupervisor(supervisor)
-			if err := n.controllers[i].attachMaintenanceTransport(supervisor); err != nil {
-				return n.failStart(err)
-			}
 		}
 		if nodes[i].ApiConfig.AgentControlEnabled {
 			candidate := agentNodeStart{
@@ -151,11 +143,22 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 				}
 			} else {
 				agentNodes[nodeID] = candidate
+				agentNodeOrder = append(agentNodeOrder, nodeID)
 			}
 		}
 	}
 
-	for nodeID, candidate := range agentNodes {
+	// Phase 2: the control streams whose data plane is on start first and
+	// bring their controllers up from the stream (or from the stored
+	// snapshot), so a node whose configuration Control serves on the
+	// stream never pulls it over a legacy transport.
+	type pendingClient struct {
+		nodeID int
+		client *agentapi.Client
+	}
+	var operationsOnly []pendingClient
+	for _, nodeID := range agentNodeOrder {
+		candidate := agentNodes[nodeID]
 		if candidate.supervisor == nil {
 			// A duplicate entry may opt into AgentControl while another entry for
 			// the same physical node opts into the Supervisor.  Bind the stream to
@@ -166,19 +169,73 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 				candidate.supervisor = controller.pluginSupervisor
 			}
 		}
-		agentClient, agentErr := newAgentControlClientForSupervisor(&candidate.apiConfig, candidate.controller, core, candidate.supervisor)
+		var dataPlane *nodeDataPlane
+		if dataPlaneEnabled(candidate.apiConfig) {
+			dataPlane = newNodeDataPlane(nodeID, nodeControllers(n.controllers, controllerIdentities, nodeID, candidate.identity))
+		}
+		agentClient, agentErr := newAgentControlClientForSupervisor(&candidate.apiConfig, candidate.controller, core, candidate.supervisor, dataPlane)
 		if agentErr != nil {
+			if dataPlane != nil {
+				dataPlane.detach()
+			}
 			logAgentControlUnavailable(nodeID, agentErr)
 			continue
 		}
-		if agentErr := agentClient.Start(); agentErr != nil {
-			_ = agentClient.Close()
-			logAgentControlUnavailable(nodeID, agentErr)
+		if dataPlane == nil {
+			operationsOnly = append(operationsOnly, pendingClient{nodeID: nodeID, client: agentClient})
 			continue
 		}
 		n.agentClients = append(n.agentClients, agentClient)
+		if err := dataPlane.start(context.Background()); err != nil {
+			return n.failStart(err)
+		}
+	}
+
+	// Phase 3: every other controller on the legacy transports.
+	for i, controller := range n.controllers {
+		if controller.isStarted() {
+			continue
+		}
+		if err := controller.Start(); err != nil {
+			startErr := fmt.Errorf("start node controller [%s-%d] error: %s",
+				nodes[i].ApiConfig.APIHost,
+				nodes[i].ApiConfig.NodeID,
+				err)
+			return n.failStart(startErr)
+		}
+	}
+	for _, controller := range n.controllers {
+		if controller.pluginSupervisor == nil {
+			continue
+		}
+		if err := controller.attachMaintenanceTransport(controller.pluginSupervisor); err != nil {
+			return n.failStart(err)
+		}
+	}
+
+	// The operations-only streams start after their controllers, as
+	// before the data plane: their operations act on running nodes.
+	for _, pending := range operationsOnly {
+		if agentErr := pending.client.Start(); agentErr != nil {
+			_ = pending.client.Close()
+			logAgentControlUnavailable(pending.nodeID, agentErr)
+			continue
+		}
+		n.agentClients = append(n.agentClients, pending.client)
 	}
 	return nil
+}
+
+// nodeControllers lists the controllers of a node that share its control
+// endpoint: the stream's data plane serves all of them.
+func nodeControllers(controllers []*Controller, identities map[*Controller]string, nodeID int, identity string) []*Controller {
+	var result []*Controller
+	for _, controller := range controllers {
+		if controller != nil && controller.apiClient.GetNodeID() == nodeID && identities[controller] == identity {
+			result = append(result, controller)
+		}
+	}
+	return result
 }
 
 func findNodeSupervisorController(controllers []*Controller, identities map[*Controller]string, nodeID int, identity string) *Controller {

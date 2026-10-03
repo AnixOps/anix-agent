@@ -40,6 +40,9 @@ type ApiConfig struct {
 	// AgentIdentity is the stream's mTLS identity: enrollment, the key and
 	// certificate directory, an optional one-time enrollment credential.
 	AgentIdentity AgentIdentityConfig `json:"AgentIdentity"`
+	// AgentStream is the stream's data plane: the node's configuration
+	// from Control's snapshots, and where the delivered state is kept.
+	AgentStream AgentStreamConfig `json:"AgentStream"`
 	// PluginSupervisorEnabled activates the local official-plugin Supervisor for
 	// this Agent process. It is off by default for legacy compatibility.
 	MaintenanceEnvironment  string `json:"MaintenanceEnvironment"`

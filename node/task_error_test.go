@@ -189,6 +189,7 @@ func TestAgentReloadOperationReportsReconcileFailure(t *testing.T) {
 		server:    &errorTestCore{},
 		Options:   &conf.Options{},
 	}
+	controller.started.Store(true)
 
 	_, err := controller.handleAgentOperation(context.Background(), &agentv1pb.DesiredOperation{
 		Kind: "node.reload",

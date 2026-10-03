@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/common/task"
@@ -13,6 +15,7 @@ import (
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/AnixOps/anix-agent/v4/limiter"
 	"github.com/AnixOps/anix-agent/v4/plugin"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -36,6 +39,18 @@ type Controller struct {
 	pluginSupervisor          *plugin.Supervisor
 	limiterAdded              bool
 	nodeAdded                 bool
+	// stream is the node's control-stream data plane, nil when it is off:
+	// the legacy transports then carry everything.
+	stream *nodeDataPlane
+	// nodeType is the configured NodeType; it picks the controller's entry
+	// of a configuration snapshot (legacy_pull.types), empty for the node's
+	// default answer.
+	nodeType string
+	// started is set once the node runs in the core.
+	started atomic.Bool
+	// lastConfigMode is the transport the last reconciliation took the
+	// configuration from, guarded by reconcileMu.
+	lastConfigMode agentapi.DataPlaneMode
 	*conf.Options
 }
 
@@ -53,28 +68,90 @@ func NewController(server vCore.Core, api apiclient.NodeAPI, config *conf.Option
 	return controller
 }
 
-// Start implement the Start() function of the service interface
+// Start fetches the node's configuration and users over the legacy
+// transports (UniProxy, v2board gRPC) and starts the node.
 func (c *Controller) Start() error {
-	// First fetch Node Info
-	var err error
 	node, err := c.apiClient.GetNodeInfo()
 	if err != nil {
 		return fmt.Errorf("get node info error: %s", err)
 	}
-	if node != nil && node.Type != "" {
+	if node == nil {
+		return errors.New("get node info error: the panel answered no configuration")
+	}
+	if node.Type != "" {
 		c.apiClient.SetNodeType(node.Type)
 	}
-	// Update user
-	c.userList, err = c.apiClient.GetUserList()
+	users, alive, err := c.fetchLegacyUsers()
 	if err != nil {
-		return fmt.Errorf("get user list error: %s", err)
+		return err
 	}
+	return c.startWith(node, users, alive)
+}
+
+// fetchLegacyUsers pulls the user list and the alive list over the legacy
+// transports.
+func (c *Controller) fetchLegacyUsers() ([]panel.UserInfo, map[int]int, error) {
+	users, err := c.apiClient.GetUserList()
+	if err != nil {
+		return nil, nil, fmt.Errorf("get user list error: %s", err)
+	}
+	alive, err := c.apiClient.GetUserAlive()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get user alive list: %s", err)
+	}
+	return users, alive, nil
+}
+
+// applySnapshot runs the controller's entry of a configuration snapshot
+// from the control stream: it starts the node, or reloads it through the
+// same restart path as a legacy configuration change.
+func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
+	node, err := nodeInfoFromSnapshot(snapshot, c.nodeType, c.apiClient.GetNodeID())
+	if err != nil {
+		return err
+	}
+	if node.Type != "" {
+		c.apiClient.SetNodeType(node.Type)
+	}
+	if !c.isStarted() {
+		users, alive, err := c.fetchLegacyUsers()
+		if err != nil {
+			return err
+		}
+		return c.startWith(node, users, alive)
+	}
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+	c.lastConfigMode = agentapi.DataPlaneStream
+	return c.reconcileLocked(node, nil, nil)
+}
+
+func (c *Controller) isStarted() bool {
+	return c.started.Load()
+}
+
+// label names the controller in errors and logs.
+func (c *Controller) label() string {
+	if c.tag != "" {
+		return c.tag
+	}
+	nodeType := c.nodeType
+	if nodeType == "" {
+		nodeType = "default"
+	}
+	return fmt.Sprintf("node %d (%s)", c.apiClient.GetNodeID(), nodeType)
+}
+
+// startWith starts the node with its configuration, users and alive list.
+func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, alive map[int]int) error {
+	var err error
+	c.userList = users
 	if len(c.userList) == 0 {
 		log.Warn("No users found for this node, will continue running and check for users periodically")
 	}
-	c.aliveMap, err = c.apiClient.GetUserAlive()
-	if err != nil {
-		return fmt.Errorf("failed to get user alive list: %s", err)
+	c.aliveMap = alive
+	if c.aliveMap == nil {
+		c.aliveMap = make(map[int]int)
 	}
 	if len(c.Options.Name) == 0 {
 		c.tag = c.buildNodeTag(node)
@@ -123,6 +200,7 @@ func (c *Controller) Start() error {
 			return fmt.Errorf("start sync manager error: %w", err)
 		}
 	}
+	c.started.Store(true)
 
 	return nil
 }

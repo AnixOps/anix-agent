@@ -19,7 +19,10 @@ import (
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
+	"github.com/AnixOps/anix-agent/v4/api/agent/state"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/plugin"
+	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 
@@ -53,6 +56,8 @@ func main() {
 		enroll          = flag.Bool("enroll", true, "with -pki-dir: enroll when the node has no identity")
 		enrollCredFile  = flag.String("enroll-credential-file", "", "with -pki-dir: one-time anixagt_ enrollment credential file")
 		cluster         = flag.String("cluster", "", "with -pki-dir: pin the SPIFFE cluster")
+		dataPlaneDir    = flag.String("data-plane-dir", "", "turn on the stream data plane (config.v1) with this state root")
+		configRecord    = flag.String("config-record", "", "with -data-plane-dir: file written after each applied configuration snapshot")
 	)
 	flag.Parse()
 	if *target == "" || *nodeID <= 0 || *apiKey == "" || *readyFile == "" || *resultFile == "" {
@@ -91,6 +96,10 @@ func main() {
 	if *pkiDir != "" {
 		identity = &agentapi.IdentityConfig{Dir: *pkiDir, Enroll: *enroll, EnrollCredentialFile: *enrollCredFile, Cluster: *cluster}
 	}
+	dataPlane, err := newFixtureDataPlane(*dataPlaneDir, *configRecord, *nodeID)
+	if err != nil {
+		fatal(err)
+	}
 	client, err := agentapi.NewClient(agentapi.Config{
 		Target: *target, NodeID: *nodeID, APIKey: *apiKey,
 		UseTLS: *useTLS, ServerName: *serverName, RootCAs: roots, Identity: identity,
@@ -99,9 +108,22 @@ func main() {
 		ReconnectMin: 20 * time.Millisecond, ReconnectMax: 100 * time.Millisecond,
 		Heartbeat: 5 * time.Second, DialTimeout: 3 * time.Second, HandshakeTimeout: 3 * time.Second,
 		Handler: operationHandler, MetricsProvider: metricsProvider,
+		DataPlane: dataPlane,
 	})
 	if err != nil {
 		fatal(err)
+	}
+	if plane := client.DataPlane(); plane != nil {
+		// As a restarted Agent: run the stored snapshot, then take every
+		// later one as it arrives.
+		if persisted := plane.PersistedConfig(); persisted != nil {
+			if err := dataPlane.Config.ApplyConfig(context.Background(), persisted); err != nil {
+				plane.DiscardPersistedConfig()
+			} else {
+				plane.RestoreConfig(persisted)
+			}
+		}
+		plane.Activate()
 	}
 	if err := client.Start(); err != nil {
 		fatal(err)
@@ -221,6 +243,61 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 		return supervisor.Handle(ctx, operation.Kind, envelope)
 	})
 	return handler, capabilities, supervisor.TelemetryMetrics, supervisor.Close, nil
+}
+
+// fixtureConfigApplier records each applied snapshot: the revision, the
+// hash and the node configuration the Agent's UniProxy parser reads from
+// legacy_pull.default, as the node controller runs it.
+type fixtureConfigApplier struct {
+	record string
+	nodeID int
+}
+
+func (a fixtureConfigApplier) ApplyConfig(_ context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
+	var document struct {
+		Kind       string `json:"kind"`
+		LegacyPull struct {
+			Default json.RawMessage            `json:"default"`
+			Types   map[string]json.RawMessage `json:"types"`
+		} `json:"legacy_pull"`
+	}
+	if err := json.Unmarshal(snapshot.GetConfigJson(), &document); err != nil {
+		return fmt.Errorf("decode the configuration document: %w", err)
+	}
+	result := map[string]any{
+		"config_revision": snapshot.GetConfigRevision(), "config_hash": snapshot.GetConfigHash(),
+		"format": snapshot.GetFormat(), "kind": document.Kind,
+	}
+	if document.Kind == "proxy" {
+		info, nodeType, err := panel.ParseNodeInfo(document.LegacyPull.Default, a.nodeID)
+		if err != nil {
+			return fmt.Errorf("parse legacy_pull.default: %w", err)
+		}
+		types := make([]string, 0, len(document.LegacyPull.Types))
+		for name := range document.LegacyPull.Types {
+			types = append(types, name)
+		}
+		result["node_type"], result["protocol"], result["types"] = nodeType, info.Type, types
+		if info.Common != nil {
+			result["server_port"] = info.Common.ServerPort
+		}
+	}
+	if a.record == "" {
+		return nil
+	}
+	return writeJSONAtomically(a.record, result)
+}
+
+// newFixtureDataPlane is the data plane of -data-plane-dir, nil without it.
+func newFixtureDataPlane(dir, record string, nodeID int) (*agentapi.DataPlaneConfig, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	store, err := state.Open(dir, agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(nodeID)}) // #nosec G115 -- node IDs are uint32 on the wire.
+	if err != nil {
+		return nil, err
+	}
+	return &agentapi.DataPlaneConfig{State: store, Config: fixtureConfigApplier{record: record, nodeID: nodeID}}, nil
 }
 
 func writeJSONAtomically(path string, value any) error {
