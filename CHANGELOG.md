@@ -55,6 +55,11 @@
     request to the legacy REST, gRPC or WebSocket channels, except the
     plugin maintenance outbox (no stream payload yet) and plugin artifact
     downloads.
+  - The spool is kept when the state of another Control (a different gRPC
+    target) is discarded: batch ids are per node and Control dedupes them,
+    so a batch made for the old target is delivered to the new one.
+    `ANIXOPS_NODE_ID` is given to every plugin process (only
+    `machine-telemetry` reads it today).
   - `TransportStatus.data_plane.reports` reports the spool (batches, bytes,
     drops), acknowledgements and refusals.
   - `agent-control-fixture` gains `-reports`, `-traffic` and

@@ -534,6 +534,12 @@ func TestPanelUsersCarryTheWireGuardPeerFields(t *testing.T) {
 	assert.Equal(t, panel.UserInfo{Id: 8, Uuid: "plain"}, users[1])
 }
 
+// healthReportingCore is a recordingCore with a supervised runtime that
+// reports itself unhealthy (as WireGuard's relay can).
+type healthReportingCore struct{ *recordingCore }
+
+func (healthReportingCore) RuntimeHealth(string) (bool, string) { return false, "relay process exited" }
+
 func TestStreamReportsTrafficOnlineLogsAndStatusWithNoLegacyCall(t *testing.T) {
 	previousInterval := logBatchInterval
 	logBatchInterval = 100 * time.Millisecond
@@ -542,14 +548,24 @@ func TestStreamReportsTrafficOnlineLogsAndStatusWithNoLegacyCall(t *testing.T) {
 		agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityPackageReports)
 	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
 	fixture.control.UpsertUsers(&agentv1pb.NodeUser{UserId: 1, Uuid: "user-1"}, &agentv1pb.NodeUser{UserId: 2, Uuid: "user-2"})
-	node := fixture.start(t)
+	// The core supervises a runtime: on the legacy transports its health
+	// would go to /api/v2/node/runtime-health.
+	node := New()
+	require.NoError(t, node.Start([]conf.NodeConfig{fixture.nodeConfig(t)}, healthReportingCore{fixture.core}))
+	t.Cleanup(node.Close)
 	controller := node.controllers[0]
 
-	// Status at the session start: the machine's usage and the runtime.
+	// Status at the session start: the machine's usage and the runtime
+	// health, on the stream.
 	require.Eventually(t, func() bool { return len(fixture.control.NodeStatuses()) > 0 }, 5*time.Second, 10*time.Millisecond)
 	status := fixture.control.NodeStatuses()[0]
-	assert.True(t, status.RuntimeHealthy)
+	assert.False(t, status.RuntimeHealthy)
+	assert.Equal(t, "relay process exited", status.RuntimeError)
 	assert.Positive(t, status.ObservedAtUnixMs)
+	// The legacy runtime-health route needs the registered key (as after
+	// auto-registration); with it, the periodic status would call it.
+	controller.apiClient.(*panel.Client).APIKey = fixture.control.APIKey
+	require.NoError(t, controller.nodeInfoMonitor(), "the periodic status reports nothing over the legacy transports")
 
 	// A traffic window with online devices.
 	fixture.core.setWindow(
