@@ -8,6 +8,7 @@
 //
 //	<root>/proxy-12/state.json   the Control it belongs to, the last session's negotiated capabilities
 //	<root>/proxy-12/config.pb    the last applied ConfigSnapshot (config.v1)
+//	<root>/proxy-12/users.pb     the node's user set and its change-log cursor (users.v1)
 //
 // The directories are mode 0700 and the files 0600, owned by the Agent's
 // user: a configuration snapshot holds the node's protocol secrets (private
@@ -40,6 +41,7 @@ const DefaultRoot = "/var/lib/anix-agent/stream"
 const (
 	stateFile  = "state.json"
 	configFile = "config.pb"
+	usersFile  = "users.pb"
 
 	dirMode  fs.FileMode = 0o700
 	fileMode fs.FileMode = 0o600
@@ -47,6 +49,9 @@ const (
 	// maxConfigFileBytes bounds config.pb: Control's messages are at most
 	// 8 MiB (the client's receive limit).
 	maxConfigFileBytes = 8 << 20
+	// maxUsersFileBytes bounds users.pb (a million users of about 100
+	// bytes each).
+	maxUsersFileBytes = 128 << 20
 )
 
 // ErrInsecureFile reports a state file others could read or replace.
@@ -161,9 +166,55 @@ func (s *Store) BindControl(control string) (bool, error) {
 // not what the Agent still has to report. It reports whether there was
 // anything to remove.
 func (s *Store) discardDelivered() (bool, error) {
-	_, statErr := os.Lstat(filepath.Join(s.dir, configFile))
-	existed := statErr == nil
-	return existed, s.DiscardConfig()
+	existed := false
+	for _, name := range []string{configFile, usersFile} {
+		if _, err := os.Lstat(filepath.Join(s.dir, name)); err == nil {
+			existed = true
+		}
+	}
+	return existed, errors.Join(s.DiscardConfig(), s.DiscardUsers())
+}
+
+// LoadUsers reads the stored user set: a UserDelta with full and
+// last_page whose upserts are every user the node serves, at the cursor of
+// the last change applied. nil without one.
+func (s *Store) LoadUsers() (*agentv1pb.UserDelta, error) {
+	data, err := readPrivateFile(filepath.Join(s.dir, usersFile), maxUsersFileBytes)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	users := &agentv1pb.UserDelta{}
+	if err := proto.Unmarshal(data, users); err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrCorrupt, usersFile, err)
+	}
+	if !users.GetFull() || !users.GetLastPage() || len(users.GetRemovedUserIds()) != 0 {
+		return nil, fmt.Errorf("%w: %s is not a whole user set", ErrCorrupt, usersFile)
+	}
+	return users, nil
+}
+
+// SaveUsers stores the node's user set at cursor. The cursor is 0 when
+// Control's change log was empty at the resync; such a set still lets a
+// restarted Agent serve its users before Control answers.
+func (s *Store) SaveUsers(cursor uint64, users []*agentv1pb.NodeUser) error {
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(&agentv1pb.UserDelta{
+		Cursor: cursor, Full: true, LastPage: true, Upserts: users,
+	})
+	if err != nil {
+		return err
+	}
+	return writePrivateFile(filepath.Join(s.dir, usersFile), data)
+}
+
+// DiscardUsers removes the stored user set.
+func (s *Store) DiscardUsers() error {
+	if err := os.Remove(filepath.Join(s.dir, usersFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // LoadConfig reads the last applied configuration snapshot: nil without

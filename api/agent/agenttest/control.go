@@ -2,8 +2,10 @@
 // stream: the AgentControlService and AgentEnrollment of anix-control's
 // agent listener over TLS, with the agent PKI (A2-1), the
 // agent_control.mtls modes (A2-6) and the data plane (A2-3: configuration
-// snapshots and ConfigStatus), modelled on anix-control's internal/grpc
-// agent_control_server.go and agent_control_config.go.
+// snapshots and ConfigStatus; A2-4: user deltas from a change log, with
+// cursors and paged resyncs), modelled on anix-control's internal/grpc
+// agent_control_server.go, agent_control_config.go and
+// agent_control_users.go.
 package agenttest
 
 import (
@@ -21,6 +23,7 @@ import (
 	"math/big"
 	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"sync"
 	"testing"
@@ -84,6 +87,24 @@ type Control struct {
 	desired  *agentv1pb.ConfigSnapshot
 	statuses []*agentv1pb.ConfigStatus
 	sent     []*agentv1pb.ConfigSnapshot
+
+	// Users (users.v1): the node's users and the change log.
+	users      map[uint64]*agentv1pb.NodeUser
+	changes    []userChange
+	cursor     uint64
+	prunedTo   uint64
+	pageSize   int
+	userDeltas []*agentv1pb.UserDelta
+	resyncs    int
+	// dropAfterPages ends a session after that many pages of a full
+	// resync (0: never), once.
+	dropAfterPages int
+}
+
+// userChange is one row of the subscriber change log.
+type userChange struct {
+	id     uint64
+	userID uint64
 }
 
 // StreamAuth records how a stream authenticated.
@@ -104,6 +125,11 @@ type session struct {
 	configSentMax uint64
 	configRev     uint64
 	negotiated    map[string]bool
+	// usersCursor is the change-log position the session was sent up to;
+	// usersMu serializes the session's user sends.
+	usersCursor  uint64
+	usersStarted bool
+	usersMu      sync.Mutex
 }
 
 func (s *session) send(message *agentv1pb.ControlToAgent) error {
@@ -119,6 +145,7 @@ func New(t testing.TB, mode string, serves ...string) *Control {
 	control := &Control{
 		t: t, NodeID: 12, APIKey: "node-api-key", Cluster: "test-cluster", ServerName: "control.test",
 		mode: mode, serves: map[string]bool{}, credentials: map[string]bool{}, sessions: map[string]*session{},
+		users: map[uint64]*agentv1pb.NodeUser{}, pageSize: 500,
 	}
 	for _, name := range serves {
 		control.serves[name] = true
@@ -336,6 +363,201 @@ func (c *Control) sendConfig(session *session, snapshot *agentv1pb.ConfigSnapsho
 	return session.send(&agentv1pb.ControlToAgent{
 		RequestId: "config-" + strconv.FormatUint(revision, 10), NodeId: c.NodeID, SentAtUnixMs: time.Now().UnixMilli(),
 		Payload: &agentv1pb.ControlToAgent_Config{Config: snapshot},
+	})
+}
+
+// SetUserPageSize sets the users per page of a full resync.
+func (c *Control) SetUserPageSize(size int) {
+	c.mu.Lock()
+	c.pageSize = size
+	c.mu.Unlock()
+}
+
+// DropNextResyncAfter makes the next full resync end its session after
+// pages pages, before its last page.
+func (c *Control) DropNextResyncAfter(pages int) {
+	c.mu.Lock()
+	c.dropAfterPages = pages
+	c.mu.Unlock()
+}
+
+// UpsertUsers adds or changes users, records each in the change log and
+// sends the delta to the sessions that negotiated users.v1.
+func (c *Control) UpsertUsers(users ...*agentv1pb.NodeUser) {
+	c.mu.Lock()
+	for _, user := range users {
+		c.users[user.GetUserId()] = proto.Clone(user).(*agentv1pb.NodeUser)
+		c.cursor++
+		c.changes = append(c.changes, userChange{id: c.cursor, userID: user.GetUserId()})
+	}
+	sessions := c.openSessions()
+	c.mu.Unlock()
+	c.pushUserChanges(sessions)
+}
+
+// RemoveUsers removes users (expired, banned, moved to another group),
+// records each in the change log and sends the delta.
+func (c *Control) RemoveUsers(ids ...uint64) {
+	c.mu.Lock()
+	for _, id := range ids {
+		delete(c.users, id)
+		c.cursor++
+		c.changes = append(c.changes, userChange{id: c.cursor, userID: id})
+	}
+	sessions := c.openSessions()
+	c.mu.Unlock()
+	c.pushUserChanges(sessions)
+}
+
+// PruneUserLog drops the change log up to the latest change, as Control's
+// retention does; a cursor before it then needs a full resync.
+func (c *Control) PruneUserLog() {
+	c.mu.Lock()
+	c.changes = nil
+	c.prunedTo = c.cursor
+	c.mu.Unlock()
+}
+
+// ResetUserLog makes the change log start over from 0 (a restored
+// database): every Agent cursor is then ahead of it.
+func (c *Control) ResetUserLog() {
+	c.mu.Lock()
+	c.changes, c.cursor, c.prunedTo = nil, 0, 0
+	c.mu.Unlock()
+}
+
+// UserCursor is the change log's latest position.
+func (c *Control) UserCursor() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cursor
+}
+
+// UserDeltas returns every UserDelta page sent.
+func (c *Control) UserDeltas() []*agentv1pb.UserDelta {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	deltas := make([]*agentv1pb.UserDelta, 0, len(c.userDeltas))
+	for _, delta := range c.userDeltas {
+		deltas = append(deltas, proto.Clone(delta).(*agentv1pb.UserDelta))
+	}
+	return deltas
+}
+
+// Resyncs counts the full resyncs sent.
+func (c *Control) Resyncs() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.resyncs
+}
+
+// startUsers starts a session's users from the Agent's cursor, as
+// decideUsersStart: a full resync for no cursor, a cursor ahead of the log
+// or one the log no longer covers; else the changes after it.
+func (c *Control) startUsers(current *session, cursor uint64) error {
+	c.mu.Lock()
+	resync := cursor == 0 || cursor > c.cursor || cursor < c.prunedTo
+	c.mu.Unlock()
+	current.usersMu.Lock()
+	defer current.usersMu.Unlock()
+	current.usersStarted = true
+	if resync {
+		return c.resyncUsersLocked(current)
+	}
+	current.usersCursor = cursor
+	return c.sendUserChangesLocked(current)
+}
+
+// resyncUsersLocked sends the whole set in pages, each with the cursor
+// read before the listing. current.usersMu is held.
+func (c *Control) resyncUsersLocked(current *session) error {
+	c.mu.Lock()
+	cursor, pageSize := c.cursor, c.pageSize
+	ids := make([]uint64, 0, len(c.users))
+	for id := range c.users {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	users := make([]*agentv1pb.NodeUser, 0, len(ids))
+	for _, id := range ids {
+		users = append(users, proto.Clone(c.users[id]).(*agentv1pb.NodeUser))
+	}
+	c.resyncs++
+	dropAfter := c.dropAfterPages
+	c.dropAfterPages = 0
+	c.mu.Unlock()
+	for start, pages := 0, 0; ; start += pageSize {
+		end := min(start+pageSize, len(users))
+		last := end >= len(users)
+		if dropAfter > 0 && pages == dropAfter {
+			current.cancel()
+			return status.Error(codes.Unavailable, "session dropped during a resync")
+		}
+		if err := c.sendUsers(current, &agentv1pb.UserDelta{Cursor: cursor, Full: true, LastPage: last, Upserts: users[start:end]}); err != nil {
+			return err
+		}
+		pages++
+		if last {
+			break
+		}
+	}
+	current.usersCursor = cursor
+	return nil
+}
+
+// sendUserChangesLocked sends the changes after the session's cursor as
+// one delta of each changed user's current state. current.usersMu is held.
+func (c *Control) sendUserChangesLocked(current *session) error {
+	c.mu.Lock()
+	if current.usersCursor < c.prunedTo {
+		c.mu.Unlock()
+		return c.resyncUsersLocked(current)
+	}
+	seen := map[uint64]bool{}
+	delta := &agentv1pb.UserDelta{LastPage: true}
+	for _, change := range c.changes {
+		if change.id <= current.usersCursor || seen[change.userID] {
+			continue
+		}
+		seen[change.userID] = true
+		if user, ok := c.users[change.userID]; ok {
+			delta.Upserts = append(delta.Upserts, proto.Clone(user).(*agentv1pb.NodeUser))
+		} else {
+			delta.RemovedUserIds = append(delta.RemovedUserIds, change.userID)
+		}
+	}
+	delta.Cursor = c.cursor
+	c.mu.Unlock()
+	if len(seen) == 0 {
+		return nil
+	}
+	if err := c.sendUsers(current, delta); err != nil {
+		return err
+	}
+	current.usersCursor = delta.Cursor
+	return nil
+}
+
+func (c *Control) pushUserChanges(sessions []*session) {
+	for _, session := range sessions {
+		if !session.negotiated[agentcontrol.CapabilityUsers] {
+			continue
+		}
+		session.usersMu.Lock()
+		if session.usersStarted {
+			_ = c.sendUserChangesLocked(session)
+		}
+		session.usersMu.Unlock()
+	}
+}
+
+func (c *Control) sendUsers(current *session, delta *agentv1pb.UserDelta) error {
+	c.mu.Lock()
+	c.userDeltas = append(c.userDeltas, proto.Clone(delta).(*agentv1pb.UserDelta))
+	c.mu.Unlock()
+	return current.send(&agentv1pb.ControlToAgent{
+		RequestId: "users-" + strconv.FormatUint(delta.GetCursor(), 10), NodeId: c.NodeID, SentAtUnixMs: time.Now().UnixMilli(),
+		Payload: &agentv1pb.ControlToAgent_Users{Users: delta},
 	})
 }
 
@@ -558,6 +780,11 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 		// Hello reconcile: the desired configuration unless the agent
 		// reported its revision.
 		if err := c.sendConfig(current, desired, false); err != nil {
+			return err
+		}
+	}
+	if current.negotiated[agentcontrol.CapabilityUsers] {
+		if err := c.startUsers(current, hello.GetUsersCursor()); err != nil {
 			return err
 		}
 	}

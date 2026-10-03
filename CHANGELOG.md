@@ -4,6 +4,45 @@
 
 ### Added
 
+- Agent control stream, users from the stream (AG-4). The Agent advertises
+  `users.v1` and, when Control serves it (A2-4), takes the node's users from
+  Control's `UserDelta` instead of UniProxy `user`, v2board `GetUsers` and
+  the WebSocket `user_update` / `user_ban`.
+  - **Deltas and resyncs.** The pages of a delta are applied together when
+    its `last_page` arrives; a session that ends before it leaves the set
+    and the cursor as they were. A `full` delta replaces the set; other
+    deltas apply each changed user's current state (`upserts`) and
+    removals in order. Deltas that arrive together are applied as one set.
+  - **No restart.** The node adds and removes only the users that changed
+    (`DelUsers` / `AddUsers` and the limiter), as for a legacy user change;
+    the core is not restarted. A set the node cannot apply is retried every
+    30 s with the newest set.
+  - **Cursor.** The set and its cursor are stored in
+    `AgentStream.StateDir/proxy-<NodeID>/users.pb` (0600; written at most
+    every 2 s and on shutdown) and the cursor is sent as
+    `Hello.users_cursor`, so a reconnect or a restart resumes from it.
+    Control resynchronizes (a `full` set in pages) when the Agent has no
+    cursor, when its change log no longer covers the cursor, or when the
+    cursor is ahead of it (another database). A user set of another Control
+    is discarded.
+  - **Startup.** With a stored configuration and user set the node starts
+    from them at once. Otherwise, when the session negotiates `users.v1`,
+    the node waits up to 60 s for the whole set and starts with it (no
+    legacy user or alive-list pull).
+  - **Legacy fallback.** The periodic pull, `users.reload` and the
+    WebSocket take users from the legacy transport only while the stream
+    does not carry them (as for the configuration, with the same 5-minute
+    grace). While the stream carries both the configuration and the users,
+    the legacy WebSocket is not started, and one already running is
+    stopped; a plugin maintenance outbox keeps its maintenance-only
+    WebSocket (Control has no stream payload for it).
+  - The UniProxy alive list (`alivelist`, other nodes' online IPs per user)
+    has no stream counterpart: while the stream carries users, device limits
+    count this node's own connections only.
+  - `TransportStatus.data_plane` reports the users cursor, the set size and
+    the last apply error; the heartbeat reports `agent_dataplane_users` and
+    `agent_dataplane_users_apply_failures_total`.
+
 - Agent control stream, configuration from the stream (AG-3). With
   `AgentControlEnabled`, the Agent advertises `config.v1` and, when Control
   serves it (A2-3), runs the node's configuration from Control's

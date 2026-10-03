@@ -265,7 +265,24 @@ WebSocket `config_update` 或 `node.reload` 的重新拉取：
 }
 ```
 
-用户列表、流量、在线 IP、日志与状态上报在 AG-4、AG-5 之前仍走旧链路。
+### 控制流数据面：用户（users.v1）
+
+Control 支持 `users.v1` 时，用户列表改由控制流的 `UserDelta` 下发，不再拉取
+UniProxy `user`、v2board `GetUsers`，也不处理 WebSocket `user_update` / `user_ban`：
+
+- 分页的变更在收到 `last_page` 后一次应用；连接在最后一页之前断开时不做任何改动，
+  游标保持不变。`full` 为整体替换，其余为按顺序应用的增量。
+- 只增删有变化的用户（`DelUsers` / `AddUsers` 与限速器），不重启内核；应用失败时
+  每 30 秒用最新集合重试。
+- 用户集合与游标保存在 `AgentStream.StateDir/proxy-<NodeID>/users.pb`（0600，
+  最多每 2 秒写一次，退出时写入），并作为 `Hello.users_cursor` 上报；重连或重启后从
+  游标继续。游标为 0、早于 Control 变更日志的保留范围或超前时，Control 分页全量重发。
+- 控制流同时承载配置与用户时不再启动旧的 WebSocket（插件维护 outbox 仍使用仅维护
+  模式的 WebSocket，Control 尚无对应的流消息）。
+- UniProxy `alivelist`（其他节点的在线 IP 计数）没有流上的对应消息：此时设备数限制
+  只统计本节点的连接。
+
+流量、在线 IP、日志与状态上报在 AG-5 之前仍走旧链路。
 
 面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 

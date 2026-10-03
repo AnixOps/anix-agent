@@ -89,23 +89,37 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		}
 	}
 	c.lastConfigMode = configMode
-	// get user info
-	newU, err := c.apiClient.GetUserList()
-	if err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Get user list failed")
-		return fmt.Errorf("get user list: %w", err)
+	// The users come from the stream's deltas while it carries users.v1;
+	// the alive list has no stream counterpart and is not pulled then.
+	var newU []panel.UserInfo
+	var newA map[int]int
+	usersMode := c.stream.mode(agentcontrol.CapabilityUsers)
+	if usersMode == agentapi.DataPlaneLegacy {
+		if c.lastUsersMode != agentapi.DataPlaneLegacy {
+			if resetter, ok := c.apiClient.(pullCacheResetter); ok {
+				resetter.ResetPullCache()
+			}
+		}
+		newU, err = c.apiClient.GetUserList()
+		if err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Get user list failed")
+			return fmt.Errorf("get user list: %w", err)
+		}
+		newA, err = c.apiClient.GetUserAlive()
+		if err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Get alive list failed")
+			return fmt.Errorf("get alive list: %w", err)
+		}
 	}
-	// get user alive
-	newA, err := c.apiClient.GetUserAlive()
-	if err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Get alive list failed")
-		return fmt.Errorf("get alive list: %w", err)
+	c.lastUsersMode = usersMode
+	if c.streamCarriesNodeData() {
+		c.retireLegacySync()
 	}
 	return c.reconcileLocked(newN, newU, newA)
 }
@@ -236,6 +250,12 @@ func (c *Controller) reconcileLocked(newN *panel.NodeInfo, newU []panel.UserInfo
 	if newU == nil {
 		return nil
 	}
+	return c.applyUserDiffLocked(newU)
+}
+
+// applyUserDiffLocked adds and removes the users that differ between the
+// running node and newU, in place. reconcileMu is held.
+func (c *Controller) applyUserDiffLocked(newU []panel.UserInfo) (err error) {
 	deleted, added := compareUserList(c.userList, newU)
 	if len(deleted) > 0 {
 		// have deleted users

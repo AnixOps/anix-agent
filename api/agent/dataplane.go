@@ -87,6 +87,8 @@ type DataPlaneConfig struct {
 	// Config applies configuration snapshots; set, the client advertises
 	// config.v1.
 	Config ConfigApplier
+	// Users applies user sets; set, the client advertises users.v1.
+	Users UsersApplier
 	// LegacyGrace defaults to DefaultLegacyGrace.
 	LegacyGrace time.Duration
 	// Now defaults to time.Now (tests).
@@ -116,6 +118,9 @@ type DataPlaneStatus struct {
 	ConfigRevision uint64            `json:"config_revision,omitempty"`
 	ConfigHash     string            `json:"config_hash,omitempty"`
 	ConfigError    string            `json:"config_error,omitempty"`
+	UsersCursor    uint64            `json:"users_cursor,omitempty"`
+	Users          int               `json:"users,omitempty"`
+	UsersError     string            `json:"users_error,omitempty"`
 }
 
 // DataPlane is the client's data plane (Client.DataPlane).
@@ -150,6 +155,9 @@ type DataPlane struct {
 	statusMu        sync.Mutex
 	lastConfigError string
 
+	// Users (users.v1).
+	users usersState
+
 	counters dataPlaneCounters
 }
 
@@ -157,6 +165,8 @@ type dataPlaneCounters struct {
 	configApplied  atomic.Uint64
 	configFailed   atomic.Uint64
 	configRejected atomic.Uint64
+	usersApplied   atomic.Uint64
+	usersFailed    atomic.Uint64
 }
 
 // Heartbeat metric keys of the data plane.
@@ -166,13 +176,18 @@ const (
 	// MetricConfigApplyFailures counts snapshots the node could not apply
 	// or refused (unknown format, hash mismatch) since the Agent started.
 	MetricConfigApplyFailures = "agent_dataplane_config_apply_failures_total"
+	// MetricUsers is the number of users in the node's set from Control.
+	MetricUsers = "agent_dataplane_users"
+	// MetricUsersApplyFailures counts user sets the node could not apply
+	// since the Agent started (each is retried).
+	MetricUsersApplyFailures = "agent_dataplane_users_apply_failures_total"
 )
 
 func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 	if config.State == nil {
 		return nil, errors.New("agent data plane: a state store is required")
 	}
-	if config.Config == nil {
+	if config.Config == nil && config.Users == nil {
 		return nil, errors.New("agent data plane: no data-plane handler is configured")
 	}
 	if config.LegacyGrace <= 0 {
@@ -192,6 +207,7 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 		sessionReady:  make(chan struct{}),
 		configArrived: make(chan struct{}),
 		streamUntil:   make(map[string]time.Time),
+		users:         usersState{arrived: make(chan struct{})},
 	}
 	plane.ctx, plane.cancel = context.WithCancel(client.ctx)
 	plane.load()
@@ -230,6 +246,9 @@ func (d *DataPlane) load() {
 			d.persistedConfig = snapshot
 		}
 	}
+	if d.config.Users != nil {
+		d.loadUsers()
+	}
 }
 
 // capabilities lists the data-plane capabilities this configuration
@@ -238,6 +257,9 @@ func (d *DataPlane) capabilities() []string {
 	var names []string
 	if d.config.Config != nil {
 		names = append(names, agentcontrol.CapabilityConfig)
+	}
+	if d.config.Users != nil {
+		names = append(names, agentcontrol.CapabilityUsers)
 	}
 	return names
 }
@@ -296,6 +318,7 @@ func (d *DataPlane) sessionEnded(sessionID string) {
 	for _, capability := range d.session.Negotiated {
 		d.streamUntil[capability] = ended
 	}
+	d.dropUserPagesLocked(sessionID)
 	d.session = DataPlaneSession{}
 	d.sessionReady = make(chan struct{})
 }
@@ -414,6 +437,8 @@ func (d *DataPlane) receive(sessionID string, payload any) {
 	switch payload := payload.(type) {
 	case *agentv1pb.ControlToAgent_Config:
 		d.receiveConfig(sessionID, payload.Config)
+	case *agentv1pb.ControlToAgent_Users:
+		d.receiveUsers(sessionID, payload.Users)
 	}
 }
 
@@ -457,16 +482,36 @@ func verifySnapshot(snapshot *agentv1pb.ConfigSnapshot) string {
 	return ""
 }
 
-// run applies snapshots after Activate and delivers statuses.
+// run applies snapshots and user sets after Activate, delivers statuses
+// and stores the user set.
 func (d *DataPlane) run() {
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
 	for {
 		select {
 		case <-d.ctx.Done():
+			d.saveUsers(true)
 			return
 		case <-d.wake:
+		case <-timer.C:
 		}
 		d.flushStatus()
 		d.applyPendingConfig()
+		d.applyPendingUsers()
+		d.saveUsers(false)
+		d.mu.Lock()
+		next := d.usersWakeLocked()
+		d.mu.Unlock()
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		if !next.IsZero() {
+			timer.Reset(max(time.Until(next), 10*time.Millisecond))
+		}
 	}
 }
 
@@ -567,6 +612,13 @@ func (d *DataPlane) metrics() map[string]float64 {
 		metrics[MetricConfigRevision] = float64(revision)
 		metrics[MetricConfigApplyFailures] = float64(d.counters.configFailed.Load() + d.counters.configRejected.Load())
 	}
+	if d.config.Users != nil {
+		d.mu.Lock()
+		users := len(d.users.set)
+		d.mu.Unlock()
+		metrics[MetricUsers] = float64(users)
+		metrics[MetricUsersApplyFailures] = float64(d.counters.usersFailed.Load())
+	}
 	return metrics
 }
 
@@ -582,5 +634,9 @@ func (d *DataPlane) status() DataPlaneStatus {
 		status.ConfigRevision, status.ConfigHash = d.appliedConfig.GetConfigRevision(), d.appliedConfig.GetConfigHash()
 	}
 	status.ConfigError = d.lastConfigError
+	if d.users.has {
+		status.UsersCursor, status.Users = d.users.cursor, len(d.users.set)
+	}
+	status.UsersError = d.users.lastErr
 	return status
 }

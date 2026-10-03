@@ -11,6 +11,11 @@ import (
 // authenticated WebSocket protocol as HTTP nodes, with credentials from the
 // final registered NodeAPI identity and a separate HTTP(S) ApiHost.
 func (c *Controller) attachMaintenanceTransport(supervisor *plugin.Supervisor) error {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
+	if c.closed {
+		return nil
+	}
 	if c.syncManager != nil {
 		if !c.syncManager.config.EnableWebSocket {
 			return fmt.Errorf("plugin maintenance requires WebSocket enabled for node %d", c.apiClient.GetNodeID())

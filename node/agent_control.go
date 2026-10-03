@@ -120,7 +120,12 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 			log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the stored configuration snapshot on re-registration")
 		}
 	}
-	return &agentapi.DataPlaneConfig{State: store, Control: target, Config: dataPlane}, nil
+	if apiConfig.ForceReRegister {
+		if err := store.DiscardUsers(); err != nil {
+			log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the stored user set on re-registration")
+		}
+	}
+	return &agentapi.DataPlaneConfig{State: store, Control: target, Config: dataPlane, Users: dataPlane}, nil
 }
 
 // dataPlaneEnabled tells whether the node's data rides the control stream

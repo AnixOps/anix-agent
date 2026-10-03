@@ -58,6 +58,7 @@ func main() {
 		cluster         = flag.String("cluster", "", "with -pki-dir: pin the SPIFFE cluster")
 		dataPlaneDir    = flag.String("data-plane-dir", "", "turn on the stream data plane (config.v1) with this state root")
 		configRecord    = flag.String("config-record", "", "with -data-plane-dir: file written after each applied configuration snapshot")
+		usersRecord     = flag.String("users-record", "", "with -data-plane-dir: take users from the stream (users.v1); file written after each applied user set")
 	)
 	flag.Parse()
 	if *target == "" || *nodeID <= 0 || *apiKey == "" || *readyFile == "" || *resultFile == "" {
@@ -96,7 +97,7 @@ func main() {
 	if *pkiDir != "" {
 		identity = &agentapi.IdentityConfig{Dir: *pkiDir, Enroll: *enroll, EnrollCredentialFile: *enrollCredFile, Cluster: *cluster}
 	}
-	dataPlane, err := newFixtureDataPlane(*dataPlaneDir, *configRecord, *nodeID)
+	dataPlane, err := newFixtureDataPlane(*dataPlaneDir, *configRecord, *usersRecord, *nodeID)
 	if err != nil {
 		fatal(err)
 	}
@@ -121,6 +122,13 @@ func main() {
 				plane.DiscardPersistedConfig()
 			} else {
 				plane.RestoreConfig(persisted)
+			}
+		}
+		if persisted := plane.PersistedUsers(); persisted != nil && dataPlane.Users != nil {
+			if err := dataPlane.Users.ApplyUsers(context.Background(), *persisted); err != nil {
+				plane.DiscardPersistedUsers()
+			} else {
+				plane.RestoreUsers(*persisted)
 			}
 		}
 		plane.Activate()
@@ -288,8 +296,35 @@ func (a fixtureConfigApplier) ApplyConfig(_ context.Context, snapshot *agentv1pb
 	return writeJSONAtomically(a.record, result)
 }
 
+// fixtureUsersApplier records each applied user set: the cursor and the
+// users as the node receives them (ids, uuids, limits; extra_json keys).
+type fixtureUsersApplier struct{ record string }
+
+func (a fixtureUsersApplier) ApplyUsers(_ context.Context, set agentapi.UserSet) error {
+	users := make([]map[string]any, 0, len(set.Users))
+	for _, user := range set.Users {
+		entry := map[string]any{
+			"id": user.GetUserId(), "uuid": user.GetUuid(),
+			"speed_limit": user.GetSpeedLimitMbps(), "device_limit": user.GetDeviceLimit(),
+		}
+		if len(user.GetExtraJson()) > 0 {
+			var extra map[string]string
+			if err := json.Unmarshal(user.GetExtraJson(), &extra); err != nil {
+				return fmt.Errorf("user %d: extra_json: %w", user.GetUserId(), err)
+			}
+			keys := make([]string, 0, len(extra))
+			for key := range extra {
+				keys = append(keys, key)
+			}
+			entry["extra_keys"] = keys
+		}
+		users = append(users, entry)
+	}
+	return writeJSONAtomically(a.record, map[string]any{"cursor": set.Cursor, "users": users})
+}
+
 // newFixtureDataPlane is the data plane of -data-plane-dir, nil without it.
-func newFixtureDataPlane(dir, record string, nodeID int) (*agentapi.DataPlaneConfig, error) {
+func newFixtureDataPlane(dir, configRecord, usersRecord string, nodeID int) (*agentapi.DataPlaneConfig, error) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -297,7 +332,11 @@ func newFixtureDataPlane(dir, record string, nodeID int) (*agentapi.DataPlaneCon
 	if err != nil {
 		return nil, err
 	}
-	return &agentapi.DataPlaneConfig{State: store, Config: fixtureConfigApplier{record: record, nodeID: nodeID}}, nil
+	plane := &agentapi.DataPlaneConfig{State: store, Config: fixtureConfigApplier{record: configRecord, nodeID: nodeID}}
+	if usersRecord != "" {
+		plane.Users = fixtureUsersApplier{record: usersRecord}
+	}
+	return plane, nil
 }
 
 func writeJSONAtomically(path string, value any) error {

@@ -54,6 +54,7 @@ var dataPlaneCapabilities = []string{
 // lists one only when the client's DataPlane has a handler for it.
 var implementedDataPlane = map[string]bool{
 	agentcontrol.CapabilityConfig: true,
+	agentcontrol.CapabilityUsers:  true,
 }
 
 // ErrMTLSRequired reports that Control refused the node credential because
