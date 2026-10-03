@@ -4,6 +4,67 @@
 
 ### Added
 
+- Agent control stream, reports and package reports on the stream, with
+  the spool (AG-5). The Agent advertises `reports.v1` and
+  `package-reports.v1`; when Control serves them (A2-5, systemd panel 1/7)
+  traffic, online IPs, logs and status go on the stream instead of UniProxy
+  `push` / `alive`, v2board `ReportTraffic` / `ReportOnline` /
+  `NodeLogService` / `ReportStatus` and the node `runtime-health` route.
+  - **Batches.** A traffic window (per-user bytes and the node's online IPs,
+    merged across the node's controllers since Control replaces the whole
+    alive set) and the node's logs (one `LogBatch` per node at most every
+    30 s) carry a batch id `node:proxy-<id>:<boot id>:<sequence>`. A window
+    with no traffic and nobody online is not sent, except once to clear the
+    online set. Large windows are split at 5000 users per batch, each with
+    the full online set.
+  - **Spool.** Each batch is written durably to
+    `AgentStream.StateDir/proxy-<NodeID>/spool/{traffic,logs}/` (one file per
+    batch, written through a synced temporary file and a rename; directories
+    0700, files 0600) before it counts as reported, then sent in order with
+    at most 16 awaiting their `ReportAck`. Every `ReportAck` drops the batch
+    (applied, recorded before, or refused for good, which is logged and
+    counted); a batch without one is resent after 30 s on the stream, never
+    over a legacy transport, so a byte is counted once. Bounds:
+    `SpoolMaxMB` (traffic, default 64), `LogSpoolMaxMB` (default 16; logs
+    never push traffic out), `SpoolMaxAgeHours` (default 72, at most 144,
+    below Control's 7-day batch memory); the oldest batches are dropped first
+    and every drop is counted. Spooled batches survive restarts.
+  - **Outages.** While the stream is down for less than 5 minutes new
+    windows and logs go to the spool; after that, new data goes to the
+    legacy transports as before (spooled batches stay for the stream).
+  - **Status.** `NodeStatus` (CPU, memory and disk usage, the Agent's
+    uptime, and the runtime health of every core of the node) is sent at
+    each session start and every minute; the legacy status and
+    runtime-health reports stop while the stream carries `reports.v1`.
+  - **Package reports, systemd panel 4/7.** The Supervisor hands every
+    plugin process `ANIXOPS_NODE_ID` (an inherited value is never passed
+    on), so `machine-telemetry` collects the systemd services table of its
+    node when enabled. While `package-reports.v1` is negotiated the Agent
+    polls `Telemetry/SystemdServices` of each enabled, healthy plugin running
+    its assigned release whose verified manifest declares
+    `telemetry.systemd.read`, and sends `PackageReport{plugin_id,
+    kind: systemd.services, version, payload_json, observed_at_unix_ms}`
+    every 5 minutes and at each session start, latest value only (never
+    spooled or resent; an unchanged observation is sent once per session).
+    `version` is the release the node is assigned (the plugin operation's
+    target version), not the plugin's own version constant. Nothing is sent
+    when collection is off (`FailedPrecondition`), nothing was collected yet
+    or the plugin predates the collector.
+  - With configuration, users and reports on the stream, an Agent whose
+    Control requires mTLS (4.2, `agent_control.mtls: required`) makes no
+    request to the legacy REST, gRPC or WebSocket channels, except the
+    plugin maintenance outbox (no stream payload yet) and plugin artifact
+    downloads.
+  - The spool is kept when the state of another Control (a different gRPC
+    target) is discarded: batch ids are per node and Control dedupes them,
+    so a batch made for the old target is delivered to the new one.
+    `ANIXOPS_NODE_ID` is given to every plugin process (only
+    `machine-telemetry` reads it today).
+  - `TransportStatus.data_plane.reports` reports the spool (batches, bytes,
+    drops), acknowledgements and refusals.
+  - `agent-control-fixture` gains `-reports`, `-traffic` and
+    `-package-report-file`.
+
 - Agent control stream, users from the stream (AG-4). The Agent advertises
   `users.v1` and, when Control serves it (A2-4), takes the node's users from
   Control's `UserDelta` instead of UniProxy `user`, v2board `GetUsers` and
@@ -178,6 +239,14 @@
   at the version already in the module graph.
 
 ### Changed
+
+- The Control SDK requirement moves to go_dev `e6ced8bb79ee`
+  (`v0.0.0-20261003210818-e6ced8bb79ee`). `agentcontrol` gains
+  `CapabilityForward` (`forward.v1`), which this Agent neither implements
+  nor advertises; `anix.agent.v1` is unchanged.
+- `machine-telemetry` parses `systemd_services` with the SDK's
+  `systemdreport.ParseConfig` (anix-control #163), the parser Control
+  validates the configuration with, instead of a local copy.
 
 - The Control SDK requirement moves to go_dev `46718e54fe35`
   (`v0.0.0-20261003185058-46718e54fe35`). `anix.agent.v1` and

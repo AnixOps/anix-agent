@@ -89,6 +89,11 @@ type DataPlaneConfig struct {
 	Config ConfigApplier
 	// Users applies user sets; set, the client advertises users.v1.
 	Users UsersApplier
+	// Reports turns on reports.v1: the spooled traffic and log batches and
+	// the node status.
+	Reports *ReportsConfig
+	// PackageReports turns on package-reports.v1.
+	PackageReports *PackageReportsConfig
 	// LegacyGrace defaults to DefaultLegacyGrace.
 	LegacyGrace time.Duration
 	// Now defaults to time.Now (tests).
@@ -121,6 +126,7 @@ type DataPlaneStatus struct {
 	UsersCursor    uint64            `json:"users_cursor,omitempty"`
 	Users          int               `json:"users,omitempty"`
 	UsersError     string            `json:"users_error,omitempty"`
+	Reports        *ReportsStatus    `json:"reports,omitempty"`
 }
 
 // DataPlane is the client's data plane (Client.DataPlane).
@@ -158,6 +164,9 @@ type DataPlane struct {
 	// Users (users.v1).
 	users usersState
 
+	// Reports (reports.v1, package-reports.v1).
+	reports reportsState
+
 	counters dataPlaneCounters
 }
 
@@ -187,7 +196,7 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 	if config.State == nil {
 		return nil, errors.New("agent data plane: a state store is required")
 	}
-	if config.Config == nil && config.Users == nil {
+	if config.Config == nil && config.Users == nil && config.Reports == nil && config.PackageReports == nil {
 		return nil, errors.New("agent data plane: no data-plane handler is configured")
 	}
 	if config.LegacyGrace <= 0 {
@@ -211,6 +220,10 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 	}
 	plane.ctx, plane.cancel = context.WithCancel(client.ctx)
 	plane.load()
+	if err := plane.openReports(); err != nil {
+		plane.cancel()
+		return nil, err
+	}
 	return plane, nil
 }
 
@@ -261,6 +274,12 @@ func (d *DataPlane) capabilities() []string {
 	if d.config.Users != nil {
 		names = append(names, agentcontrol.CapabilityUsers)
 	}
+	if d.config.Reports != nil {
+		names = append(names, agentcontrol.CapabilityReports)
+	}
+	if d.config.PackageReports != nil {
+		names = append(names, agentcontrol.CapabilityPackageReports)
+	}
 	return names
 }
 
@@ -270,6 +289,13 @@ func (d *DataPlane) start() {
 		defer d.wg.Done()
 		d.run()
 	}()
+	if d.config.Reports != nil || d.config.PackageReports != nil {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.runReports()
+		}()
+	}
 }
 
 func (d *DataPlane) close() {
@@ -301,6 +327,7 @@ func (d *DataPlane) sessionStarted(sessionID string, negotiated []string) {
 	}
 	close(d.sessionReady)
 	d.mu.Unlock()
+	d.signalReports()
 	if err := d.config.State.SaveSession(state.Session{Control: d.config.Control, Negotiated: negotiated, At: d.now().UTC()}); err != nil {
 		d.logger().WithError(err).Warn("Could not record the negotiated data-plane capabilities")
 	}
@@ -439,6 +466,8 @@ func (d *DataPlane) receive(sessionID string, payload any) {
 		d.receiveConfig(sessionID, payload.Config)
 	case *agentv1pb.ControlToAgent_Users:
 		d.receiveUsers(sessionID, payload.Users)
+	case *agentv1pb.ControlToAgent_ReportAck:
+		d.receiveReportAck(sessionID, payload.ReportAck)
 	}
 }
 
@@ -619,14 +648,16 @@ func (d *DataPlane) metrics() map[string]float64 {
 		metrics[MetricUsers] = float64(users)
 		metrics[MetricUsersApplyFailures] = float64(d.counters.usersFailed.Load())
 	}
+	d.reportsMetrics(metrics)
 	return metrics
 }
 
 // status describes the data plane for status output.
 func (d *DataPlane) status() DataPlaneStatus {
+	reports := d.reportsStatus()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	status := DataPlaneStatus{StateDir: d.config.State.Dir(), Modes: map[string]string{}}
+	status := DataPlaneStatus{StateDir: d.config.State.Dir(), Modes: map[string]string{}, Reports: reports}
 	for _, capability := range d.capabilities() {
 		status.Modes[capability+"."+agentcontrol.CapabilityVersionV1] = d.modeLocked(capability).String()
 	}

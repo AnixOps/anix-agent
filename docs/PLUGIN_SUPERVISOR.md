@@ -268,8 +268,19 @@ only the latest is kept. The plugin serves it on its Unix socket as
 `payload_json` is exactly the `systemd.services` PackageReport payload.
 `FailedPrecondition` means collection is off for the node, `NotFound`
 that nothing was collected yet, and older plugins answer `Unimplemented`.
-The Supervisor does not yet set `ANIXOPS_NODE_ID`, poll this method or send
-the `PackageReport`; that is the next step (systemd panel 4/7).
+
+**Report (systemd panel 4/7).** The Supervisor starts every plugin process
+with `ANIXOPS_NODE_ID` set to its node id (an inherited value is never passed
+on). While the Agent control stream negotiates `package-reports.v1`, the
+Agent polls `Telemetry/SystemdServices` of each enabled, healthy plugin that
+runs its assigned release and whose verified manifest declares
+`telemetry.systemd.read`, every 5 minutes and at each session start, and
+sends `PackageReport{plugin_id, kind: "systemd.services", version,
+payload_json, observed_at_unix_ms}`: the latest value only, never spooled or
+resent. `version` is the release the node is assigned (the plugin
+operation's `target_version`), which Control checks against the node's
+assignment, not the plugin's internal version constant. The configuration
+parser is the SDK's `systemdreport.ParseConfig`.
 
 ## Maintenance reporting
 

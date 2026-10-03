@@ -15,7 +15,9 @@ import (
 )
 
 type RemoteLogHook struct {
-	client apiclient.NodeAPI
+	// report sends a batch: the control stream's LogBatch while it carries
+	// reports.v1, else the legacy transport (Controller.reportNodeLogs).
+	report func([]panel.NodeLogEntry) error
 	tag    string
 
 	active atomic.Bool
@@ -26,8 +28,16 @@ type RemoteLogHook struct {
 }
 
 func NewRemoteLogHook(client apiclient.NodeAPI, tag string) *RemoteLogHook {
+	var report func([]panel.NodeLogEntry) error
+	if client != nil {
+		report = client.ReportNodeLogs
+	}
+	return newRemoteLogHook(report, tag)
+}
+
+func newRemoteLogHook(report func([]panel.NodeLogEntry) error, tag string) *RemoteLogHook {
 	hook := &RemoteLogHook{
-		client: client,
+		report: report,
 		tag:    tag,
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
@@ -43,7 +53,7 @@ func (h *RemoteLogHook) Levels() []log.Level {
 }
 
 func (h *RemoteLogHook) Fire(entry *log.Entry) error {
-	if h == nil || !h.active.Load() || h.client == nil || entry == nil {
+	if h == nil || !h.active.Load() || h.report == nil || entry == nil {
 		return nil
 	}
 
@@ -108,11 +118,11 @@ func (h *RemoteLogHook) run() {
 
 	batch := make([]panel.NodeLogEntry, 0, 20)
 	flush := func() {
-		if len(batch) == 0 || !h.active.Load() || h.client == nil {
+		if len(batch) == 0 || !h.active.Load() || h.report == nil {
 			batch = batch[:0]
 			return
 		}
-		if err := h.client.ReportNodeLogs(batch); err != nil {
+		if err := h.report(append([]panel.NodeLogEntry(nil), batch...)); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "remote node log report failed for %s: %v\n", h.tag, err)
 		}
 		batch = batch[:0]

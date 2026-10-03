@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,6 +60,9 @@ func main() {
 		dataPlaneDir    = flag.String("data-plane-dir", "", "turn on the stream data plane (config.v1) with this state root")
 		configRecord    = flag.String("config-record", "", "with -data-plane-dir: file written after each applied configuration snapshot")
 		usersRecord     = flag.String("users-record", "", "with -data-plane-dir: take users from the stream (users.v1); file written after each applied user set")
+		reports         = flag.Bool("reports", false, "with -data-plane-dir: report on the stream (reports.v1) with the spool and a fixed node status")
+		traffic         = flag.String("traffic", "", "with -reports: uid:upload:download,... submitted once as a TrafficReport after the stream is ready")
+		packageReport   = flag.String("package-report-file", "", "with -data-plane-dir: JSON PackageReport (plugin_id, kind, version, payload_json, observed_at_unix_ms) sent with package-reports.v1")
 	)
 	flag.Parse()
 	if *target == "" || *nodeID <= 0 || *apiKey == "" || *readyFile == "" || *resultFile == "" {
@@ -100,6 +104,20 @@ func main() {
 	dataPlane, err := newFixtureDataPlane(*dataPlaneDir, *configRecord, *usersRecord, *nodeID)
 	if err != nil {
 		fatal(err)
+	}
+	if dataPlane != nil && *reports {
+		dataPlane.Reports = &agentapi.ReportsConfig{Status: func(context.Context) (*agentv1pb.NodeStatus, error) {
+			return &agentv1pb.NodeStatus{CpuUsagePercent: 1.5, MemoryUsagePercent: 2.5, DiskUsagePercent: 3.5, UptimeSeconds: 60, RuntimeHealthy: true, ObservedAtUnixMs: time.Now().UnixMilli()}, nil
+		}}
+	}
+	if dataPlane != nil && *packageReport != "" {
+		report, err := readPackageReport(*packageReport)
+		if err != nil {
+			fatal(err)
+		}
+		dataPlane.PackageReports = &agentapi.PackageReportsConfig{Collect: func(context.Context) ([]*agentv1pb.PackageReport, error) {
+			return []*agentv1pb.PackageReport{report}, nil
+		}}
 	}
 	client, err := agentapi.NewClient(agentapi.Config{
 		Target: *target, NodeID: *nodeID, APIKey: *apiKey,
@@ -156,6 +174,11 @@ func main() {
 		}
 		if err := writeJSONAtomically(*readyFile, ready); err != nil {
 			fatal(err)
+		}
+		if *traffic != "" {
+			if err := submitFixtureTraffic(client.DataPlane(), *traffic); err != nil {
+				fatal(err)
+			}
 		}
 	case <-startup.C:
 		fatal(errors.New("Agent fixture did not connect before timeout"))
@@ -321,6 +344,50 @@ func (a fixtureUsersApplier) ApplyUsers(_ context.Context, set agentapi.UserSet)
 		users = append(users, entry)
 	}
 	return writeJSONAtomically(a.record, map[string]any{"cursor": set.Cursor, "users": users})
+}
+
+// submitFixtureTraffic spools one TrafficReport of uid:upload:download
+// entries.
+func submitFixtureTraffic(plane *agentapi.DataPlane, entries string) error {
+	if plane == nil {
+		return errors.New("-traffic needs -data-plane-dir and -reports")
+	}
+	report := &agentv1pb.TrafficReport{WindowEndUnixMs: time.Now().UnixMilli()}
+	for _, entry := range strings.Split(entries, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 {
+			return fmt.Errorf("-traffic entry %q is not uid:upload:download", entry)
+		}
+		var numbers [3]uint64
+		for index, part := range parts {
+			value, err := strconv.ParseUint(part, 10, 64)
+			if err != nil {
+				return fmt.Errorf("-traffic entry %q: %w", entry, err)
+			}
+			numbers[index] = value
+		}
+		report.Users = append(report.Users, &agentv1pb.UserTraffic{UserId: numbers[0], UploadBytes: numbers[1], DownloadBytes: numbers[2]})
+	}
+	return plane.SubmitTraffic(report)
+}
+
+// readPackageReport reads -package-report-file.
+func readPackageReport(path string) (*agentv1pb.PackageReport, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var file struct {
+		PluginID   string          `json:"plugin_id"`
+		Kind       string          `json:"kind"`
+		Version    string          `json:"version"`
+		Payload    json.RawMessage `json:"payload_json"`
+		ObservedAt int64           `json:"observed_at_unix_ms"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, err
+	}
+	return &agentv1pb.PackageReport{PluginId: file.PluginID, Kind: file.Kind, Version: file.Version, PayloadJson: file.Payload, ObservedAtUnixMs: file.ObservedAt}, nil
 }
 
 // newFixtureDataPlane is the data plane of -data-plane-dir, nil without it.
