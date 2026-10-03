@@ -1086,7 +1086,6 @@ func (c *Client) setConnected(sessionID string, serverCapabilities []*agentv1pb.
 	c.lastError = ""
 	authentication := c.authentication
 	c.mu.Unlock()
-	c.readyOnce.Do(func() { close(c.readyCh) })
 
 	log.WithFields(log.Fields{
 		"component":           "agent-control",
@@ -1097,6 +1096,7 @@ func (c *Client) setConnected(sessionID string, serverCapabilities []*agentv1pb.
 		"negotiated":          strings.Join(negotiatedNames(c.config.Capabilities, serverCapabilities), ","),
 	}).Info("Agent control stream connected")
 	c.logDeprecation(deprecation)
+	c.readyOnce.Do(func() { close(c.readyCh) })
 }
 
 func (c *Client) setDisconnected(err error) {

@@ -235,7 +235,7 @@ func (c *Client) logDeprecation(deprecation *AuthDeprecation) {
 	if deprecation.Sunset != "" {
 		fields["sunset"] = deprecation.Sunset
 	}
-	log.WithFields(fields).Warn("Control deprecates node API key authentication on the Agent control stream (agent_control.mtls: preferred); Control 4.2 requires an enrolled Agent with a client certificate")
+	log.WithFields(fields).Warn("Control deprecates node API key authentication on the Agent control stream; Control 4.2 requires an enrolled Agent that presents its client certificate")
 }
 
 // logMTLSRequired logs a refusal with agent_mtls_required at most once per
