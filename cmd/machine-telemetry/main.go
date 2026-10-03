@@ -36,11 +36,23 @@ func run(args []string) int {
 		return 0
 	}
 
+	// The Agent names the node this instance serves; the systemd services
+	// collector reads only that node's settings and stays off without it.
+	nodeID, err := machinetelemetry.ParseNodeID(os.Getenv(machinetelemetry.NodeIDEnvironment))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "machine-telemetry: ignoring %s: %v; systemd services collection stays off\n", machinetelemetry.NodeIDEnvironment, err)
+		nodeID = 0
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := machinetelemetry.Run(ctx, machinetelemetry.Options{
 		SocketPath: socketPath,
 		ConfigPath: configPath,
+		NodeID:     nodeID,
+		Logf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "machine-telemetry: "+format+"\n", args...)
+		},
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "machine-telemetry:", err)
 		return 1

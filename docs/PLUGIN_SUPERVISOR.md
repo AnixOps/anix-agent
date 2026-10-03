@@ -192,6 +192,85 @@ role, transport, endpoint, CIDR, and health values are rejected.
 Only entry tunnels declare source-policy `routing.table` and `priority`; exit
 tunnels must omit them or set both to zero.
 
+## machine-telemetry: systemd services collector
+
+The `machine-telemetry` plugin can collect the per-node systemd services
+table of Control's `machine-telemetry` package (report kind
+`systemd.services`, schema `github.com/AnixOps/anix-control/sdk/telemetry/systemdreport`;
+see anix-control `docs/architecture/package-reports.md`). It is read-only
+and off on every node by default.
+
+**Configuration.** The plugin accepts the key `systemd_services` next to
+`interval_seconds`; every other unknown key is still refused:
+
+```json
+{
+  "interval_seconds": 30,
+  "systemd_services": {
+    "nodes": {
+      "12": { "enabled": true, "include": ["nginx*.service"], "exclude": ["*-debug.service"] }
+    }
+  }
+}
+```
+
+`nodes` maps a decimal node id (1 to 4294967295, no leading zeros, at most
+4096 nodes) to `enabled` and optional `include` / `exclude` lists (at most 32
+globs each, at most 256 bytes, `path.Match` syntax over the unit-name
+alphabet). A malformed document makes the plugin refuse to start, like any
+other invalid configuration. The plugin configuration file limit is 1 MiB, so
+the largest document Control may push fits.
+
+**Which node.** Control pushes the whole document to every node of the
+package; the plugin reads only the entry of the node named by the
+`ANIXOPS_NODE_ID` environment variable (decimal). Without it, with an invalid
+value, without an entry or with `enabled: false`, the collector never starts:
+nothing is listed and no cgroup is read. An environment variable rather than a
+flag keeps older plugin binaries, which refuse unknown flags, startable by a
+newer Agent.
+
+**What is collected.** Every 30 s, independent of `interval_seconds`:
+
+- systemd `ListUnits` over D-Bus (the system bus, or `/run/systemd/private`
+  as root when there is no bus daemon). Only the unit name, `LoadState`,
+  `ActiveState` and `SubState` are kept; `Description` is dropped as it is
+  read and no other property (such as `ExecStart`) is requested, except the
+  unit's `ControlGroup` path.
+- Units: `.service` only, not `not-found`, no `user@*` or `run-*`
+  (`systemdreport.Collectable`), then the node's include / exclude
+  (`systemdreport.Selected`); sorted by name and capped at 512.
+- cgroup v2 files below `/sys/fs/cgroup<ControlGroup>`: `cpu.stat`
+  `usage_usec`, `memory.current` and, on Linux 5.19+, `memory.peak`.
+
+**Figures.** A 10-minute ring of samples per unit (at most 21):
+
+- `cpu_avg_percent`: CPU-time growth over the samples in the window divided
+  by the wall time they cover; `cpu_peak_percent`: the busiest 30-second
+  interval. Both are in percent of one CPU (100 = one CPU fully busy, 400 =
+  four), rounded to 0.01 and capped at `systemdreport.MaxCPUPercent`. The
+  first sample of a unit has no interval yet and reports 0. A counter that
+  goes backwards (a restart into a new cgroup) starts the series again.
+- `memory_bytes`: `memory.current`; `memory_peak_bytes`: the highest
+  `memory.current` sampled in the window, or `memory.peak` when it is higher
+  (on 5.19+ that is the cgroup's high-water mark since the unit started).
+- A unit without a cgroup (inactive, failed) reports zeros.
+
+**Unsupported nodes.** The report says `supported: false` with a reason when
+the plugin is not on Linux, systemd is not PID 1 (no `/run/systemd/system`,
+for example Alpine/OpenRC), the cgroup v2 unified hierarchy is not mounted
+(cgroup v1 or hybrid, for example CentOS 7), or the systemd D-Bus API cannot
+be reached or listed.
+
+**Hand-off.** Each report passes `systemdreport.Sanitize` before it is kept;
+only the latest is kept. The plugin serves it on its Unix socket as
+`anixops.plugin.v1.Telemetry/SystemdServices` (`google.protobuf.Empty` in, a
+`google.protobuf.Struct` `{kind, payload_json, observed_at_unix_ms}` out);
+`payload_json` is exactly the `systemd.services` PackageReport payload.
+`FailedPrecondition` means collection is off for the node, `Unavailable`
+that nothing was collected yet, and older plugins answer `Unimplemented`.
+The Supervisor does not yet set `ANIXOPS_NODE_ID`, poll this method or send
+the `PackageReport`; that is the next step (systemd panel 4/7).
+
 ## Maintenance reporting
 
 Enabling the Supervisor starts node-scoped maintenance monitoring and a durable outbox. The first delivery uses the authenticated HTTP/WebSocket sync connection; HTTP/REST nodes reuse sync and gRPC nodes start a maintenance-only WebSocket bridge using the HTTP(S) ApiHost and existing registered node credentials alongside GRPCHost. WebSocket must remain enabled. Health failures and process exits follow the 3 failures / 2 minutes gate. Only machine-telemetry may restart automatically, at most twice per instance per rolling 30 minutes, persisted across Agent restarts. Credentials, permissions, signatures and invalid configuration always require manual handling. See [the maintenance runbook](MAINTENANCE_P0.md) for configuration, storage, acknowledgment, recovery and acceptance boundaries.

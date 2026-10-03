@@ -2,7 +2,31 @@
 
 ## Unreleased
 
+### Added
+
+- `machine-telemetry` accepts the `systemd_services` configuration key that
+  Control's `machine-telemetry` 4.1 package pushes (per-node `enabled`,
+  `include`, `exclude`). Before, the plugin refused the key as unknown and
+  failed to configure. Every other unknown key is still refused, and the
+  configuration file limit rises from 64 KiB to 1 MiB to fit 4096 nodes.
+- `machine-telemetry` collects the systemd services table for its node when
+  that node is enabled: every 30 s it lists `.service` units over D-Bus and
+  reads their cgroup v2 CPU and memory, keeps a 10-minute window, and serves
+  the latest `systemd.services` report (unit name, ActiveState, SubState,
+  average and peak CPU in percent of one CPU, current and peak memory) on the
+  new `Telemetry/SystemdServices` RPC. Nodes without systemd or cgroup v2
+  report `supported: false` with a reason. The node comes from the
+  `ANIXOPS_NODE_ID` environment variable. The Supervisor does not poll the
+  RPC or send the report yet. See `docs/PLUGIN_SUPERVISOR.md`.
+- `github.com/godbus/dbus/v5` (BSD-2-Clause) is now a direct dependency,
+  at the version already in the module graph.
+
 ### Changed
+
+- The Control SDK requirement moves to go_dev `3f23349fceda`, which has
+  `sdk/telemetry/systemdreport` (the report schema and sanitizer). The
+  configuration parser is a local copy of the SDK's
+  `systemdreport.ParseConfig` until anix-control #163 is merged.
 
 - The Agent contract now comes from Control's SDK module,
   `github.com/AnixOps/anix-control/sdk` (`api/agent/v1`, `agentcontrol`,
