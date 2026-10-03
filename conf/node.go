@@ -37,6 +37,9 @@ type ApiConfig struct {
 	// AgentControlAllowInsecure must be explicitly enabled before the control
 	// stream will send node credentials over plaintext to a non-loopback target.
 	AgentControlAllowInsecure bool `json:"AgentControlAllowInsecure"`
+	// AgentIdentity is the stream's mTLS identity: enrollment, the key and
+	// certificate directory, an optional one-time enrollment credential.
+	AgentIdentity AgentIdentityConfig `json:"AgentIdentity"`
 	// PluginSupervisorEnabled activates the local official-plugin Supervisor for
 	// this Agent process. It is off by default for legacy compatibility.
 	MaintenanceEnvironment  string `json:"MaintenanceEnvironment"`

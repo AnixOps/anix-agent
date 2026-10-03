@@ -4,6 +4,48 @@
 
 ### Added
 
+- Agent control stream, mTLS identity (AG-2). With `AgentControlEnabled`
+  and TLS, the Agent enrolls with Control's `AgentEnrollment`, stores its
+  identity, renews it, and presents its client certificate instead of the
+  node API key.
+  - **Enrollment** (`AgentIdentity.Enroll`, default `auto`). The bootstrap
+    is a one-time `anixagt_` credential from
+    `AgentIdentity.EnrollCredentialFile` (mode 0600, removed after use) when
+    present, else the node API key, once. Control 4.2
+    (`agent_control.mtls: required`) accepts only the credential. The key is
+    generated on the node (ECDSA P-256); the issued certificate is checked
+    against the key, the node (`proxy-<NodeID>`), the cluster when
+    `AgentIdentity.Cluster` pins it, client-auth usage and the CA bundle.
+  - **Storage.** `AgentIdentity.CertDir` (default `/var/lib/anix-agent/pki`)
+    holds `proxy-<id>/identity.pem` (key and certificate, replaced in one
+    rename), `ca.pem` and `identity.json`; directories 0700, files 0600,
+    owned by the Agent's user. Files with wider permissions or another owner
+    are refused, and the Agent enrolls again. The key is not "encrypted"
+    with a derived key.
+  - **Renewal** at Control's `renew_after` (two thirds of the 7-day
+    lifetime) plus a small jitter, with a new key; failures retry with
+    backoff while the current certificate stays in use.
+  - **Refusals.** A certificate Control refuses (revoked, expired, not of
+    this cluster), on the stream or at renewal, is discarded, and the Agent
+    enrolls again. Against a Control without `AgentEnrollment` (v4.0:
+    `Unimplemented`) or without its CA (`FailedPrecondition`), the Agent
+    keeps the API key and retries every 30 minutes.
+  - **No API key once enrolled.** The stream sends `x-node-id` and the
+    certificate only. It falls back to the API key only when Control does
+    not request a client certificate (`agent_control.mtls: off`, or no agent
+    PKI). Enrollment is tried before the first connection and then in the
+    background; a session opened with the API key reconnects with the
+    certificate as soon as one is installed. A session that Control serves
+    with the API key clears an earlier `agent_mtls_required` refusal, so an
+    Agent re-enrolls with the key after Control is moved back from
+    `required` to `preferred`.
+  - `anix-agent identity [--json] [--pki-dir DIR]` shows each node's SPIFFE
+    ID, serial, expiry and renewal time from the local files. The heartbeat
+    reports `agent_identity_enrolled` and `agent_identity_expires_in_seconds`,
+    and `-r/--re-register` also removes the stored identity.
+  - The identity needs TLS: a plaintext stream keeps the API key, with a
+    warning.
+
 - Agent control stream, A2 negotiation (AG-1). The client reads
   `HelloAck.server_capabilities`, logs them with the negotiated set at each
   connection, and exposes them (`Client.ServerCapabilities`,

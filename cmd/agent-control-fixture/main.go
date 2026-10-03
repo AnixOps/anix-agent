@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,13 @@ func main() {
 		pluginSockets   = flag.String("plugin-socket-dir", "", "private Unix socket directory for plugin processes")
 		pluginPublicKey = flag.String("plugin-public-key", "", "base64 Ed25519 official plugin public key")
 		pluginBaseURL   = flag.String("plugin-base-url", "", "Control HTTP origin used for signed plugin downloads")
+		useTLS          = flag.Bool("tls", false, "dial Control over TLS")
+		tlsCAFile       = flag.String("tls-ca-file", "", "PEM roots for Control's TLS certificate (default: system roots)")
+		serverName      = flag.String("server-name", "", "TLS server name of Control")
+		pkiDir          = flag.String("pki-dir", "", "enable the mTLS identity (AG-2) with this identity root; needs -tls")
+		enroll          = flag.Bool("enroll", true, "with -pki-dir: enroll when the node has no identity")
+		enrollCredFile  = flag.String("enroll-credential-file", "", "with -pki-dir: one-time anixagt_ enrollment credential file")
+		cluster         = flag.String("cluster", "", "with -pki-dir: pin the SPIFFE cluster")
 	)
 	flag.Parse()
 	if *target == "" || *nodeID <= 0 || *apiKey == "" || *readyFile == "" || *resultFile == "" {
@@ -68,8 +76,24 @@ func main() {
 		}()
 	}
 
+	var roots *x509.CertPool
+	if *tlsCAFile != "" {
+		pemBytes, err := os.ReadFile(*tlsCAFile)
+		if err != nil {
+			fatal(err)
+		}
+		roots = x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(pemBytes) {
+			fatal(fmt.Errorf("%s holds no PEM certificate", *tlsCAFile))
+		}
+	}
+	var identity *agentapi.IdentityConfig
+	if *pkiDir != "" {
+		identity = &agentapi.IdentityConfig{Dir: *pkiDir, Enroll: *enroll, EnrollCredentialFile: *enrollCredFile, Cluster: *cluster}
+	}
 	client, err := agentapi.NewClient(agentapi.Config{
 		Target: *target, NodeID: *nodeID, APIKey: *apiKey,
+		UseTLS: *useTLS, ServerName: *serverName, RootCAs: roots, Identity: identity,
 		AgentVersion: "agent-control-fixture", InstanceID: "agent-control-fixture-" + strconv.Itoa(os.Getpid()),
 		Capabilities: capabilities,
 		ReconnectMin: 20 * time.Millisecond, ReconnectMax: 100 * time.Millisecond,
@@ -92,9 +116,15 @@ func main() {
 	defer startup.Stop()
 	select {
 	case <-client.Ready():
-		if err := writeJSONAtomically(*readyFile, map[string]any{
+		status := client.TransportStatus()
+		ready := map[string]any{
 			"node_id": *nodeID, "session_id": client.SessionID(), "pid": os.Getpid(),
-		}); err != nil {
+			"authentication": status.Authentication,
+		}
+		if status.Identity != nil {
+			ready["spiffe_id"], ready["serial"] = status.Identity.SPIFFEID, status.Identity.Serial
+		}
+		if err := writeJSONAtomically(*readyFile, ready); err != nil {
 			fatal(err)
 		}
 	case <-startup.C:
