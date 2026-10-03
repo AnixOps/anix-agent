@@ -110,13 +110,13 @@ type reportsState struct {
 	traffic *spool.Spool
 	logs    *spool.Spool
 
-	mu          sync.Mutex
-	session     string
-	inflight    map[string]time.Time
+	mu       sync.Mutex
+	session  string
+	inflight map[string]time.Time
 	// notBefore holds batches Control answered with report_unavailable:
 	// they are sent again not before then.
-	notBefore   map[string]time.Time
-	statusAt    time.Time
+	notBefore map[string]time.Time
+	statusAt  time.Time
 	// statusNow asks for a status at once (a runtime health change).
 	statusNow   bool
 	packageAt   time.Time

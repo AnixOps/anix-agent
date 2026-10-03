@@ -277,6 +277,7 @@ func (s *Store) Acknowledge(ack Acknowledgment) error {
 		return nil
 	})
 }
+
 // Remove deletes events Control refused for good or stored, by event_id
 // (the control stream's maintenance.v1 answers them one by one). Unknown ids
 // are ignored.
