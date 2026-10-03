@@ -91,6 +91,22 @@ func (c *recordingCore) node() (string, *panel.NodeInfo) {
 	return "", nil
 }
 
+func (c *recordingCore) userUUIDs(tag string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	uuids := make([]string, 0, len(c.users[tag]))
+	for uuid := range c.users[tag] {
+		uuids = append(uuids, uuid)
+	}
+	return uuids
+}
+
+func (c *recordingCore) userCalls() (adds, dels int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.addUsers, c.delUsers
+}
+
 func (c *recordingCore) counts() (addNodes, delNodes int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -235,6 +251,8 @@ func TestStreamConfigurationStartsTheNodeWithoutTheLegacyConfigPull(t *testing.T
 	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
 	node := fixture.start(t)
+	// Control does not serve users.v1 here: they come from the legacy pull.
+	assert.Equal(t, 1, fixture.legacy.count("/api/v2/server/UniProxy/user"))
 
 	tag, info := fixture.core.node()
 	require.NotNil(t, info, "the node runs the snapshot")
@@ -304,8 +322,9 @@ func TestStreamConfigurationReloadsTheNodeOnANewSnapshot(t *testing.T) {
 }
 
 func TestStreamConfigurationRestartRunsTheStoredSnapshotWhileControlIsDown(t *testing.T) {
-	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
 	fixture.control.SetDesiredConfig(agenttest.Snapshot(7, proxyDocument(443)), false)
+	fixture.control.UpsertUsers(&agentv1pb.NodeUser{UserId: 1, Uuid: "stream-user-1"}, &agentv1pb.NodeUser{UserId: 2, Uuid: "stream-user-2"})
 	first := New()
 	require.NoError(t, first.Start([]conf.NodeConfig{fixture.nodeConfig(t)}, fixture.core))
 	require.Eventually(t, func() bool { return lastStatus(fixture.control) != nil }, 5*time.Second, 10*time.Millisecond)
@@ -318,17 +337,19 @@ func TestStreamConfigurationRestartRunsTheStoredSnapshotWhileControlIsDown(t *te
 	began := time.Now()
 	node := fixture.start(t)
 	assert.Less(t, time.Since(began), streamStartupWait, "a stored snapshot needs no wait for Control")
-	_, info := restarted.node()
+	tag, info := restarted.node()
 	require.NotNil(t, info)
 	assert.Equal(t, 443, info.VAllss.ServerPort)
-	assert.Zero(t, fixture.legacy.count("/api/v2/server/UniProxy/config"))
+	assert.ElementsMatch(t, []string{"stream-user-1", "stream-user-2"}, restarted.userUUIDs(tag))
+	assert.Empty(t, fixture.legacy.requests(), "nothing goes to the legacy transports")
 
-	// The stream carried config.v1 before the restart: the legacy pull
-	// stays off for the grace period.
+	// The stream carried config.v1 and users.v1 before the restart: the
+	// legacy pulls stay off for the grace period.
 	controller := node.controllers[0]
 	assert.Equal(t, "pending", controller.stream.mode(agentcontrol.CapabilityConfig).String())
+	assert.Equal(t, "pending", controller.stream.mode(agentcontrol.CapabilityUsers).String())
 	require.NoError(t, controller.nodeInfoMonitor())
-	assert.Zero(t, fixture.legacy.count("/api/v2/server/UniProxy/config"))
+	assert.Empty(t, fixture.legacy.requests())
 }
 
 func TestStreamConfigurationFallsBackToTheLegacyPullWhenControlDoesNotServeIt(t *testing.T) {
@@ -391,4 +412,98 @@ func TestNodeInfoFromSnapshotPicksTheControllersNodeType(t *testing.T) {
 	_, err = nodeInfoFromSnapshot(agenttest.Snapshot(2, secret), "", 12)
 	require.Error(t, err)
 	assert.False(t, strings.Contains(err.Error(), "do-not-log"))
+}
+
+func TestStreamUsersStartTheNodeAndApplyDeltasWithoutARestart(t *testing.T) {
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
+	fixture.control.SetUserPageSize(1)
+	fixture.control.UpsertUsers(
+		&agentv1pb.NodeUser{UserId: 1, Uuid: "user-1"},
+		&agentv1pb.NodeUser{UserId: 2, Uuid: "user-2", SpeedLimitMbps: 100, DeviceLimit: 3},
+	)
+	node := fixture.start(t)
+	tag, info := fixture.core.node()
+	require.NotNil(t, info)
+	assert.ElementsMatch(t, []string{"user-1", "user-2"}, fixture.core.userUUIDs(tag))
+	controller := node.controllers[0]
+	assert.Len(t, controller.userList, 2)
+	assert.Equal(t, 100, controller.userList[1].SpeedLimit)
+	assert.Equal(t, 3, controller.userList[1].DeviceLimit)
+	assert.Zero(t, fixture.control.Hellos()[0].GetUsersCursor(), "the first Hello has no cursor")
+
+	// A ban, a new user and a changed limit apply in place.
+	fixture.control.RemoveUsers(1)
+	fixture.control.UpsertUsers(&agentv1pb.NodeUser{UserId: 3, Uuid: "user-3"}, &agentv1pb.NodeUser{UserId: 2, Uuid: "user-2", SpeedLimitMbps: 10})
+	require.Eventually(t, func() bool {
+		uuids := fixture.core.userUUIDs(tag)
+		return len(uuids) == 2 && controller.stream.client.TransportStatus().DataPlane.UsersCursor == 5
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.ElementsMatch(t, []string{"user-2", "user-3"}, fixture.core.userUUIDs(tag))
+	addNodes, delNodes := fixture.core.counts()
+	assert.Equal(t, 1, addNodes, "users change without restarting the node")
+	assert.Zero(t, delNodes)
+	require.Eventually(t, func() bool {
+		controller.reconcileMu.Lock()
+		defer controller.reconcileMu.Unlock()
+		return len(controller.userList) == 2 && controller.userList[0].SpeedLimit == 10
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// users.reload pulls nothing over the legacy transport, and nothing at
+	// all reached it: no configuration, users, alive list or WebSocket.
+	_, err := controller.handleAgentOperation(t.Context(), &agentv1pb.DesiredOperation{Kind: "users.reload", Revision: 1, OperationId: "reload-users"})
+	require.NoError(t, err)
+	assert.Empty(t, fixture.legacy.requests())
+	controller.syncMu.Lock()
+	assert.Nil(t, controller.syncManager, "no legacy WebSocket while the stream carries configuration and users")
+	controller.syncMu.Unlock()
+}
+
+func TestStreamRetiresTheLegacyWebSocketOnceTheStreamCarriesConfigurationAndUsers(t *testing.T) {
+	fixture := newStreamNodeFixture(t, agenttest.ModeOptional)
+	node := fixture.start(t)
+	controller := node.controllers[0]
+	controller.syncMu.Lock()
+	running := controller.syncManager
+	controller.syncMu.Unlock()
+	require.NotNil(t, running, "on the legacy transports the WebSocket runs")
+
+	// Control starts serving the data plane; the next session carries it.
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(9, proxyDocument(443)), false)
+	fixture.control.UpsertUsers(&agentv1pb.NodeUser{UserId: 4, Uuid: "user-4"})
+	fixture.control.Serve(agentcontrol.CapabilityConfig, true)
+	fixture.control.Serve(agentcontrol.CapabilityUsers, true)
+	fixture.control.DropSessions()
+	require.Eventually(t, func() bool {
+		status := lastStatus(fixture.control)
+		return status != nil && status.Applied && status.ConfigRevision == 9
+	}, 10*time.Second, 20*time.Millisecond)
+	tag, _ := fixture.core.node()
+	require.Eventually(t, func() bool {
+		uuids := fixture.core.userUUIDs(tag)
+		return len(uuids) == 1 && uuids[0] == "user-4"
+	}, 5*time.Second, 10*time.Millisecond)
+
+	requestsBefore := len(fixture.legacy.requests())
+	require.NoError(t, controller.nodeInfoMonitor())
+	require.Eventually(t, func() bool {
+		controller.syncMu.Lock()
+		defer controller.syncMu.Unlock()
+		return controller.syncManager == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, requestsBefore, len(fixture.legacy.requests()), "the monitor pulled nothing")
+}
+
+func TestPanelUsersCarryTheWireGuardPeerFields(t *testing.T) {
+	users := panelUsers([]*agentv1pb.NodeUser{
+		{UserId: 7, Uuid: "wg-user", SpeedLimitMbps: 20, DeviceLimit: 2, ExtraJson: []byte(`{"wireguard_peer_ip":"10.8.0.7","wireguard_peer_public_key":"pub","wireguard_preshared_key":"psk","wireguard_protocol_id":"3"}`)},
+		{UserId: 8, Uuid: "plain"},
+	})
+	require.Len(t, users, 2)
+	assert.Equal(t, panel.UserInfo{
+		Id: 7, Uuid: "wg-user", SpeedLimit: 20, DeviceLimit: 2,
+		WireGuardPeerIP: "10.8.0.7", WireGuardPublicKey: "pub", WireGuardPresharedKey: "psk",
+		Extra: map[string]string{"wireguard_peer_ip": "10.8.0.7", "wireguard_peer_public_key": "pub", "wireguard_preshared_key": "psk", "wireguard_protocol_id": "3"},
+	}, users[0])
+	assert.Equal(t, panel.UserInfo{Id: 8, Uuid: "plain"}, users[1])
 }

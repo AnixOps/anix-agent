@@ -116,3 +116,38 @@ func TestBindControlKeepsStateOfTheSameControlAndDropsAnothers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, loaded)
 }
+
+func TestUsersRoundTrip(t *testing.T) {
+	store, err := Open(t.TempDir(), testNode)
+	require.NoError(t, err)
+	loaded, err := store.LoadUsers()
+	require.NoError(t, err)
+	assert.Nil(t, loaded)
+
+	users := []*agentv1pb.NodeUser{{UserId: 1, Uuid: "a"}, {UserId: 2, Uuid: "b", SpeedLimitMbps: 10, ExtraJson: []byte(`{"wireguard_peer_ip":"10.0.0.2"}`)}}
+	require.NoError(t, store.SaveUsers(42, users))
+	info, err := os.Stat(filepath.Join(store.Dir(), usersFile))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	loaded, err = store.LoadUsers()
+	require.NoError(t, err)
+	assert.Equal(t, uint64(42), loaded.Cursor)
+	require.Len(t, loaded.Upserts, 2)
+	assert.True(t, proto.Equal(users[1], loaded.Upserts[1]))
+
+	require.NoError(t, store.SaveUsers(0, nil))
+	loaded, err = store.LoadUsers()
+	require.NoError(t, err)
+	require.NotNil(t, loaded, "an empty set of an empty change log is a set")
+	assert.Zero(t, loaded.Cursor)
+	assert.Empty(t, loaded.Upserts)
+
+	// Another Control's state goes, users included.
+	require.NoError(t, store.SaveSession(Session{Control: "a"}))
+	discarded, err := store.BindControl("b")
+	require.NoError(t, err)
+	assert.True(t, discarded)
+	loaded, err = store.LoadUsers()
+	require.NoError(t, err)
+	assert.Nil(t, loaded)
+}

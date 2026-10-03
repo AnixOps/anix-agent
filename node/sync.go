@@ -568,6 +568,12 @@ func (sm *SyncManager) streamCarriesConfig() bool {
 	return sm.controller != nil && sm.controller.stream.mode(agentcontrol.CapabilityConfig) != agentapi.DataPlaneLegacy
 }
 
+// streamCarriesUsers tells whether the Agent control stream carries the
+// node's users now (or within its grace period).
+func (sm *SyncManager) streamCarriesUsers() bool {
+	return sm.controller != nil && sm.controller.stream.mode(agentcontrol.CapabilityUsers) != agentapi.DataPlaneLegacy
+}
+
 // handleUserUpdate 澶勭悊鐢ㄦ埛鏇存柊
 func (sm *SyncManager) handleUserUpdate(msg *panel.SyncMessage) error {
 	var payload panel.UserUpdatePayload
@@ -579,6 +585,10 @@ func (sm *SyncManager) handleUserUpdate(msg *panel.SyncMessage) error {
 		"action": payload.Action,
 		"count":  len(payload.Users),
 	}).Info("Received user update")
+	if sm.streamCarriesUsers() {
+		// Control's user deltas on the stream are authoritative.
+		return nil
+	}
 
 	switch payload.Action {
 	case "add":
@@ -626,6 +636,10 @@ func (sm *SyncManager) handleUserBan(msg *panel.SyncMessage) error {
 		"count":  len(payload.UUIDs),
 		"reason": payload.Reason,
 	}).Warn("Received user ban (URGENT)")
+	if sm.streamCarriesUsers() {
+		// The stream's user deltas carry bans within a second.
+		return nil
+	}
 
 	// 鏋勫缓 UserInfo 鐢ㄤ簬鍒犻櫎
 	users := make([]panel.UserInfo, 0, len(payload.UUIDs))

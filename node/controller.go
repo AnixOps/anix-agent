@@ -15,6 +15,7 @@ import (
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/AnixOps/anix-agent/v4/limiter"
 	"github.com/AnixOps/anix-agent/v4/plugin"
+	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
 )
@@ -34,11 +35,15 @@ type Controller struct {
 	dynamicSpeedLimitPeriodic *task.Task
 	onlineIpReportPeriodic    *task.Task
 	syncManager               *SyncManager
-	logHook                   *RemoteLogHook
-	reconcileMu               sync.Mutex
-	pluginSupervisor          *plugin.Supervisor
-	limiterAdded              bool
-	nodeAdded                 bool
+	// syncMu guards syncManager and closed: a retired WebSocket is
+	// replaced from another goroutine.
+	syncMu           sync.Mutex
+	closed           bool
+	logHook          *RemoteLogHook
+	reconcileMu      sync.Mutex
+	pluginSupervisor *plugin.Supervisor
+	limiterAdded     bool
+	nodeAdded        bool
 	// stream is the node's control-stream data plane, nil when it is off:
 	// the legacy transports then carry everything.
 	stream *nodeDataPlane
@@ -48,9 +53,11 @@ type Controller struct {
 	nodeType string
 	// started is set once the node runs in the core.
 	started atomic.Bool
-	// lastConfigMode is the transport the last reconciliation took the
-	// configuration from, guarded by reconcileMu.
+	// lastConfigMode and lastUsersMode are the transports the last
+	// reconciliation took the configuration and the users from, guarded by
+	// reconcileMu.
 	lastConfigMode agentapi.DataPlaneMode
+	lastUsersMode  agentapi.DataPlaneMode
 	*conf.Options
 }
 
@@ -81,11 +88,22 @@ func (c *Controller) Start() error {
 	if node.Type != "" {
 		c.apiClient.SetNodeType(node.Type)
 	}
-	users, alive, err := c.fetchLegacyUsers()
+	users, alive, err := c.startUsers()
 	if err != nil {
 		return err
 	}
 	return c.startWith(node, users, alive)
+}
+
+// startUsers are the users the node starts with: the stream's set during a
+// stream start (users.v1), else the legacy pull.
+func (c *Controller) startUsers() ([]panel.UserInfo, map[int]int, error) {
+	if users, ok := c.stream.startupUserList(); ok {
+		// The stream carries no alive list (UniProxy alivelist): device
+		// limits count this node's own connections.
+		return users, make(map[int]int), nil
+	}
+	return c.fetchLegacyUsers()
 }
 
 // fetchLegacyUsers pulls the user list and the alive list over the legacy
@@ -114,7 +132,7 @@ func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 		c.apiClient.SetNodeType(node.Type)
 	}
 	if !c.isStarted() {
-		users, alive, err := c.fetchLegacyUsers()
+		users, alive, err := c.startUsers()
 		if err != nil {
 			return err
 		}
@@ -124,6 +142,54 @@ func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 	defer c.reconcileMu.Unlock()
 	c.lastConfigMode = agentapi.DataPlaneStream
 	return c.reconcileLocked(node, nil, nil)
+}
+
+// applyStreamUsers brings the running node to users, the node's set from
+// the control stream (users.v1): changed users are removed and added in
+// place, without restarting the core. A controller that is not started yet
+// takes its users at startup.
+func (c *Controller) applyStreamUsers(users []panel.UserInfo) error {
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+	if !c.isStarted() {
+		return nil
+	}
+	c.lastUsersMode = agentapi.DataPlaneStream
+	return c.applyUserDiffLocked(users)
+}
+
+// streamCarriesNodeData tells whether the control stream carries both the
+// configuration and the users now (or within its grace period): the
+// WebSocket then has nothing to push.
+func (c *Controller) streamCarriesNodeData() bool {
+	return c.stream.mode(agentcontrol.CapabilityConfig) != agentapi.DataPlaneLegacy &&
+		c.stream.mode(agentcontrol.CapabilityUsers) != agentapi.DataPlaneLegacy
+}
+
+// retireLegacySync stops the WebSocket once the control stream carries the
+// node's configuration and users. A plugin maintenance outbox keeps its
+// own maintenance-only WebSocket (Control has no stream payload for it).
+// The WebSocket's own goroutines may call here, so the work is done in the
+// background.
+func (c *Controller) retireLegacySync() {
+	c.syncMu.Lock()
+	syncManager := c.syncManager
+	if syncManager == nil || syncManager.config.MaintenanceOnly || c.closed {
+		c.syncMu.Unlock()
+		return
+	}
+	c.syncManager = nil
+	c.syncMu.Unlock()
+	go func() {
+		_ = syncManager.Close()
+		log.WithField("tag", c.tag).Info("The Agent control stream carries the node's configuration and users; stopped the legacy WebSocket")
+		if c.pluginSupervisor == nil {
+			return
+		}
+		if err := c.attachMaintenanceTransport(c.pluginSupervisor); err != nil {
+			log.WithError(err).WithField("tag", c.tag).Error("Could not restart the plugin maintenance WebSocket")
+		}
+	}()
 }
 
 func (c *Controller) isStarted() bool {
@@ -193,12 +259,16 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 	c.info = node
 	c.startTasks(node)
 
-	if c.apiClient.SupportsSync() {
-		c.syncManager = NewSyncManager(c.apiClient, c, c.buildSyncConfig())
-		if err := c.syncManager.Start(); err != nil {
-			c.syncManager = nil
+	// The WebSocket pushes configuration and user changes; it is not
+	// started while the control stream carries both.
+	if c.apiClient.SupportsSync() && !c.streamCarriesNodeData() {
+		syncManager := NewSyncManager(c.apiClient, c, c.buildSyncConfig())
+		if err := syncManager.Start(); err != nil {
 			return fmt.Errorf("start sync manager error: %w", err)
 		}
+		c.syncMu.Lock()
+		c.syncManager = syncManager
+		c.syncMu.Unlock()
 	}
 	c.started.Store(true)
 
@@ -208,11 +278,14 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 // Close implement the Close() function of the service interface
 func (c *Controller) Close() error {
 	var closeErr error
-	if c.syncManager != nil {
-		if err := c.syncManager.Close(); err != nil {
+	c.syncMu.Lock()
+	syncManager := c.syncManager
+	c.syncManager, c.closed = nil, true
+	c.syncMu.Unlock()
+	if syncManager != nil {
+		if err := syncManager.Close(); err != nil {
 			closeErr = errors.Join(closeErr, fmt.Errorf("close sync manager error: %w", err))
 		}
-		c.syncManager = nil
 	}
 
 	if c.limiterAdded {

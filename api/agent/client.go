@@ -118,6 +118,8 @@ type Client struct {
 	// recycle asks a session authenticated with the API key to end, so the
 	// next one presents the certificate an enrollment just installed.
 	recycle chan struct{}
+	// restart asks the current session to end (the data plane).
+	restart chan struct{}
 
 	sessionID        string
 	ready            bool
@@ -197,6 +199,7 @@ func NewClient(config Config) (*Client, error) {
 		readyCh:   make(chan struct{}),
 		completed: make(map[string]*agentv1pb.ObservedState),
 		recycle:   make(chan struct{}, 1),
+		restart:   make(chan struct{}, 1),
 	}
 	if config.DataPlane != nil {
 		plane, err := newDataPlane(client, *config.DataPlane)
@@ -730,6 +733,8 @@ func (c *Client) runSession() (bool, error) {
 			if c.identity.certificate() != nil {
 				return true, errSessionRecycled
 			}
+		case <-c.restart:
+			return true, errSessionRestarted
 		case received := <-receiveCh:
 			if received.err != nil {
 				return c.sessionWasStable(connectedAt), failure(stream, received.err)
@@ -1228,6 +1233,7 @@ func (c *Client) hello() *agentv1pb.Hello {
 	}
 	if c.dataPlane != nil {
 		hello.ConfigRevision = c.dataPlane.helloConfigRevision()
+		hello.UsersCursor = c.dataPlane.helloUsersCursor()
 	}
 	return hello
 }
@@ -1254,6 +1260,18 @@ func (c *Client) sendData(sessionID, capability string, message *agentv1pb.Agent
 // errSessionRecycled ends an API key session after an enrollment, so the
 // next session presents the client certificate.
 var errSessionRecycled = errors.New("agent control session recycled for the client certificate")
+
+// errSessionRestarted ends a session the data plane must start over (a
+// user delta it cannot hold), so Control resumes from the stored cursor.
+var errSessionRestarted = errors.New("agent control session restarted by the data plane")
+
+// recycleSession ends the current session; the client reconnects.
+func (c *Client) recycleSession() {
+	select {
+	case c.restart <- struct{}{}:
+	default:
+	}
+}
 
 // Authentication methods of a session (TransportStatus.Authentication).
 const (
