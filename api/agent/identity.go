@@ -404,7 +404,9 @@ func (m *identityManager) bootstrap() (method, credential string, err error) {
 // enrollOnce runs one enrollment and schedules the next on failure.
 func (m *identityManager) enrollOnce(ctx context.Context) {
 	m.mu.Lock()
-	if m.current != nil || m.enrolling || !m.enroll {
+	// Rechecked under the lock: prepare and maintain may both find an
+	// attempt due, and the first one reschedules the next.
+	if m.current != nil || m.enrolling || !m.enroll || m.now().Before(m.nextEnrollAt) {
 		m.mu.Unlock()
 		return
 	}
