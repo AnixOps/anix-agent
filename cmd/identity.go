@@ -26,7 +26,7 @@ var identityCommand = cobra.Command{
 	Long: `Show the mTLS identity of each node's Agent control stream: the SPIFFE ID
 Control issued, the certificate serial, its expiry and renewal time, and
 whether the stored key and certificate are usable. It reads the identity
-directories (AgentIdentity.CertDir, default /var/lib/anix-agent/pki) and
+directories (AgentIdentity.CertDir, default /var/lib/anixops-agent/pki) and
 never contacts Control.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {

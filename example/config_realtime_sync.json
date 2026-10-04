@@ -29,8 +29,8 @@
       "AgentControlEnabled": true,
       "AgentControlAllowInsecure": false,
       "PluginSupervisorEnabled": true,
-      "PluginRoot": "/var/lib/anixops/plugins",
-      "PluginSocketDir": "/run/anixops/plugins",
+      "PluginRoot": "/var/lib/anixops-agent/plugins",
+      "PluginSocketDir": "/run/anixops-agent/plugins",
       "PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
       
       // 鑷姩娉ㄥ唽閰嶇疆

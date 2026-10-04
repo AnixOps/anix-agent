@@ -236,8 +236,13 @@ func TestNodePluginSupervisorConfigValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := base64.StdEncoding.EncodeToString(publicKey)
-	if _, err := pluginSupervisorSpecForNode(1, conf.ApiConfig{PluginOfficialPublicKey: key}); err == nil || !strings.Contains(err.Error(), "PluginRoot") {
-		t.Fatalf("missing root error = %v", err)
+	// Without PluginRoot and PluginSocketDir the O1 layout applies.
+	spec, err := pluginSupervisorSpecForNode(1, conf.ApiConfig{PluginOfficialPublicKey: key})
+	if err != nil {
+		t.Fatalf("default plugin layout: %v", err)
+	}
+	if spec.rootDir != conf.DefaultPluginRoot+"/nodes/1" || spec.socketDir != conf.DefaultPluginSocketDir+"/nodes/1" {
+		t.Fatalf("default plugin layout = %q, %q", spec.rootDir, spec.socketDir)
 	}
 	if _, err := pluginSupervisorSpecForNode(1, conf.ApiConfig{PluginRoot: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "PluginOfficialPublicKey") {
 		t.Fatalf("missing official key error = %v", err)

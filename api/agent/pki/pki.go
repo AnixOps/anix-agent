@@ -38,7 +38,7 @@ import (
 
 // DefaultRoot is where identities live unless AgentIdentity.CertDir says
 // otherwise.
-const DefaultRoot = "/var/lib/anix-agent/pki"
+const DefaultRoot = "/var/lib/anixops-agent/pki"
 
 // Bootstrap methods recorded with an identity.
 const (

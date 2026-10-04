@@ -40,7 +40,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	}
 	nodeID := controller.apiClient.GetNodeID()
 	apiKey := controller.apiClient.GetAPIKey()
-	if nodeID <= 0 || strings.TrimSpace(apiKey) == "" {
+	if nodeID <= 0 {
 		return nil, fmt.Errorf("agent control requires registered node credentials")
 	}
 	target, useTLS, serverName, err := resolveAgentControlTarget(apiConfig)
@@ -51,6 +51,12 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	identity, err := agentControlIdentity(apiConfig, nodeID, useTLS)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(apiKey) == "" && identity == nil {
+		// Without an API key the client certificate is the only
+		// credential (the O1 installer's configuration: an enrollment
+		// credential, then the enrolled identity), and it needs TLS.
+		return nil, fmt.Errorf("agent control requires registered node credentials: an ApiKey, or an agent identity over TLS")
 	}
 
 	var dataPlaneConfig *agentapi.DataPlaneConfig

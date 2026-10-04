@@ -174,6 +174,7 @@ func NewFromAPIConfig(cfg *conf.ApiConfig) (*GRPCClient, error) {
 		ServerName:    serverName,
 		EnableSign:    enableSign,
 		SupportsSync:  false,
+		Lazy:          cfg.KeyLess(),
 	})
 	if err != nil {
 		return nil, err

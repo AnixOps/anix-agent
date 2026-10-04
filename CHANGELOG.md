@@ -4,6 +4,55 @@
 
 ### Added
 
+- O1 installer layout (anix-control #177; owner decisions H13, H20, H25).
+  The Agent runs from the configuration Control's `/install.sh` writes, as
+  the user `anixops-agent` in a systemd sandbox.
+  - **Credential-only nodes.** A proxy node (`AgentNode` `proxy-<id>`)
+    without `ApiKey` and with `"Cores": []` loads, passes `validate-config`
+    and `ValidateForProduction`, enrolls with
+    `AgentIdentity.EnrollCredentialFile` (or uses its enrolled identity) and
+    runs Control's configuration and users from the stream's data plane. It
+    never falls back to the legacy transports: while the stream is not up
+    (enrollment pending, Control unreachable) the node waits for it in the
+    background instead of failing the start, and the legacy gRPC client
+    connects lazily. A node without `ApiKey` that speaks to Control must
+    have the stream data plane, TLS, and an enrollment credential or an
+    enrolled identity. Configurations with an `ApiKey` are unchanged.
+    Production validation of a forward node no longer requires
+    `GRPCServerName` (GRPCHost's host is the TLS name).
+  - **Cores from the stream.** Without configured cores, every compiled-in
+    core runs behind the selector (xray, sing, hysteria2, wireguard), and a
+    node that names no core runs on the first core that serves its
+    protocol. The selector now picks in configuration order (it picked at
+    random among several matching cores).
+  - **Paths.** Defaults move to `/var/lib/anixops-agent` (`pki`, `stream`,
+    `forward`, `plugins`) and `/run/anixops-agent/plugins` (the unit's
+    `RuntimeDirectory`); `PluginRoot`/`PluginSocketDir` default to them when
+    both are left out. The earlier defaults (`/var/lib/anix-agent/pki`,
+    `/var/lib/anix-agent/stream`, `/var/lib/anixops/plugins`) are copied
+    once, at start, when the new directory does not exist; the old one is
+    kept, and a failed copy leaves the Agent on it. Configured paths are
+    used as they are. `anix-agent migrate-paths [--chown USER]` does the
+    same for installers running as root.
+  - **Commands.** `anix-agent forward sysctl-dropin` (alias of `forward
+    sysctl`) prints `/etc/sysctl.d/90-anixops-forward.conf`; the start-time
+    warning about disabled forwarding names it. `server -c <config>` is the
+    unit's command (unchanged, now tested).
+  - **Release.** Each linux package carries the pinned gost 3.2.6 as `gost`
+    (archive and binary checked by SHA-256, anix-control's pin). The
+    release publishes `SHA256SUMS` and `<asset>.sig` for both packages and
+    `SHA256SUMS` (base64 raw Ed25519 by the official AnixOps release key,
+    the format of `agent-install.sh.sig`), signed with the secrets
+    `ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY` and
+    `ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY`, which this repository needs before
+    the next tag (docs/INSTALL.md). `scripts/check_release_assets.py`
+    checks the packages in every build and the workflow in the release
+    prerequisite tests.
+  - **scripts/install.sh** stays the root install and upgrade path: it
+    refuses a node Control's installer set up, installs the bundled gost,
+    runs `migrate-paths`, uses the new plugin defaults and gives the root
+    unit `RuntimeDirectory=anixops-agent`.
+
 - Agent control stream, maintenance outbox, alive list, plugin artifacts by
   client certificate and error codes (AG-5b; anix-control #172 and #174, SDK
   go_dev aa1c36f1). An enrolled Agent whose Control serves `config.v1`,

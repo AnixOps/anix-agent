@@ -36,7 +36,7 @@ import (
 
 // DefaultRoot is where the data-plane state lives unless
 // AgentStream.StateDir says otherwise.
-const DefaultRoot = "/var/lib/anix-agent/stream"
+const DefaultRoot = "/var/lib/anixops-agent/stream"
 
 const (
 	stateFile  = "state.json"

@@ -34,7 +34,15 @@ func (p *Conf) ValidateForProduction() error {
 	if rootProduction && len(p.NodeConfig) == 0 && !forwardOnly {
 		return fmt.Errorf("production configuration requires at least one node")
 	}
-	if rootProduction && len(p.CoresConfig) == 0 && !forwardOnly {
+	// Nodes configured from the stream (credential-only, the O1
+	// installer's configuration) run on the compiled-in cores.
+	streamOnly := len(p.NodeConfig) > 0
+	for i := range p.NodeConfig {
+		if !p.NodeConfig[i].ApiConfig.StreamCredentialOnly() {
+			streamOnly = false
+		}
+	}
+	if rootProduction && len(p.CoresConfig) == 0 && !forwardOnly && !streamOnly {
 		return fmt.Errorf("production configuration requires at least one core")
 	}
 	configuredCores := make(map[string]struct{}, len(p.CoresConfig))
@@ -74,6 +82,9 @@ func (p *Conf) ValidateForProduction() error {
 		if err := validateProductionNode(i, api, p.NodeConfig[i].Options); err != nil {
 			return err
 		}
+		if api.StreamCredentialOnly() && strings.TrimSpace(p.NodeConfig[i].Options.Core) == "" {
+			continue
+		}
 		if _, exists := configuredCores[strings.ToLower(strings.TrimSpace(p.NodeConfig[i].Options.Core))]; !exists {
 			return fmt.Errorf("production node %d references Core %q that is not configured", i, p.NodeConfig[i].Options.Core)
 		}
@@ -89,26 +100,39 @@ func validateProductionNode(index int, api ApiConfig, options Options) error {
 		}
 	}
 
+	// A credential-only node (no ApiKey; an enrollment credential or an
+	// enrolled identity, and the stream data plane) takes its
+	// configuration, users and maintenance from the stream: no legacy
+	// transport settings, no core to name, the plugin supervisor optional.
+	streamOnly := api.StreamCredentialOnly()
+
 	require(validProductionHTTPSURL(api.APIHost), "ApiHost must be a non-placeholder HTTPS URL")
 	require(api.Transport == "http" || api.Transport == "grpc", "Transport must be http or grpc")
 	require(api.AgentControlEnabled, "AgentControlEnabled must be true")
 	require(!api.AgentControlAllowInsecure, "AgentControlAllowInsecure must be false")
-	require(api.PluginSupervisorEnabled, "PluginSupervisorEnabled must be true")
+	require(api.PluginSupervisorEnabled || streamOnly, "PluginSupervisorEnabled must be true")
 	require(api.GRPCUseTLS, "GRPCUseTLS must be true")
 	require(validProductionHostPort(api.GRPCHost), "GRPCHost must be a non-placeholder host:port")
-	require(nonPlaceholder(api.GRPCServerName), "GRPCServerName is required and must not be a placeholder")
+	// A credential-only node may leave GRPCServerName out: the TLS name
+	// is then GRPCHost's host, checked above.
+	require(nonPlaceholder(api.GRPCServerName) || (streamOnly && strings.TrimSpace(api.GRPCServerName) == ""),
+		"GRPCServerName is required and must not be a placeholder")
 	require(api.GRPCKeepalive > 0 && api.GRPCKeepalive <= 300, "GRPCKeepalive must be between 1 and 300 seconds")
 	require(api.Timeout > 0 && api.Timeout <= 300, "Timeout must be between 1 and 300 seconds")
-	require(api.EnableSign, "EnableSign must be true")
-	require(nonPlaceholder(options.Core), "Core is required and must not be a placeholder")
+	require(api.EnableSign || streamOnly, "EnableSign must be true")
+	require(nonPlaceholder(options.Core) || (streamOnly && strings.TrimSpace(options.Core) == ""), "Core is required and must not be a placeholder")
 
-	decodedKey, keyErr := base64.StdEncoding.DecodeString(strings.TrimSpace(api.PluginOfficialPublicKey))
-	require(keyErr == nil && len(decodedKey) == 32, "PluginOfficialPublicKey must be one base64 Ed25519 public key")
-	require(filepath.IsAbs(api.PluginRoot), "PluginRoot must be an absolute path")
-	require(filepath.IsAbs(api.PluginSocketDir), "PluginSocketDir must be an absolute path")
-	require(filepath.Clean(api.PluginRoot) != filepath.Clean(api.PluginSocketDir), "PluginRoot and PluginSocketDir must be different")
+	if api.PluginSupervisorEnabled || !streamOnly {
+		decodedKey, keyErr := base64.StdEncoding.DecodeString(strings.TrimSpace(api.PluginOfficialPublicKey))
+		require(keyErr == nil && len(decodedKey) == 32, "PluginOfficialPublicKey must be one base64 Ed25519 public key")
+		require(filepath.IsAbs(api.PluginRootDir()), "PluginRoot must be an absolute path")
+		require(filepath.IsAbs(api.PluginSocketBase()), "PluginSocketDir must be an absolute path")
+		require(filepath.Clean(api.PluginRootDir()) != filepath.Clean(api.PluginSocketBase()), "PluginRoot and PluginSocketDir must be different")
+	}
 
-	if api.AutoRegister {
+	if streamOnly {
+		require(api.NodeID > 0, "NodeID must be positive")
+	} else if api.AutoRegister {
 		require(nonPlaceholderSecret(api.AuthKey), "AuthKey is required and must not be a placeholder when AutoRegister is true")
 		require(api.EnableSign, "EnableSign must be true when AutoRegister is true")
 		require(api.EncryptCredential, "EncryptCredential must be true when AutoRegister is true")
@@ -119,8 +143,8 @@ func validateProductionNode(index int, api ApiConfig, options Options) error {
 	}
 
 	syncConfig := options.SyncConfig
-	require(syncConfig != nil, "SyncConfig is required")
-	if syncConfig != nil {
+	require(syncConfig != nil || streamOnly, "SyncConfig is required")
+	if syncConfig != nil && !streamOnly {
 		require(syncConfig.EnableWebSocket, "SyncConfig.EnableWebSocket must be true")
 		require(syncConfig.WSEndpoint == "/api/v2/agent/ws" || syncConfig.WSEndpoint == "/api/v2/node/ws", "SyncConfig.WSEndpoint must use an authenticated maintenance endpoint")
 		require(syncConfig.ReconnectInterval > 0 && syncConfig.ReconnectInterval <= 300, "SyncConfig.ReconnectInterval must be between 1 and 300 seconds")
@@ -200,7 +224,9 @@ func validateProductionForwardNode(api ApiConfig) error {
 	require(api.GRPCUseTLS, "GRPCUseTLS must be true")
 	require(!api.AgentControlAllowInsecure, "AgentControlAllowInsecure must be false")
 	require(validProductionHostPort(api.GRPCHost), "GRPCHost must be a non-placeholder host:port")
-	require(nonPlaceholder(api.GRPCServerName), "GRPCServerName is required and must not be a placeholder")
+	// Without GRPCServerName the TLS name is GRPCHost's host (the O1
+	// installer's configuration), checked above.
+	require(strings.TrimSpace(api.GRPCServerName) == "" || nonPlaceholder(api.GRPCServerName), "GRPCServerName must not be a placeholder")
 	require(api.NodeID > 0, "NodeID must be positive")
 	// No ApiKey: a forward node enrolls with its token or a one-time
 	// credential (AgentIdentity.EnrollCredentialFile, which the Agent

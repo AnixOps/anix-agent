@@ -14,8 +14,8 @@ func TestAgentControlIdentityDefaultsToAutoEnrollmentOnTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity == nil || !identity.Enroll || identity.Dir != "/var/lib/anix-agent/pki" || identity.EnrollCredentialFile != "" {
-		t.Fatalf("identity = %+v, want auto enrollment under /var/lib/anix-agent/pki", identity)
+	if identity == nil || !identity.Enroll || identity.Dir != "/var/lib/anixops-agent/pki" || identity.EnrollCredentialFile != "" {
+		t.Fatalf("identity = %+v, want auto enrollment under /var/lib/anixops-agent/pki", identity)
 	}
 
 	identity, err = agentControlIdentity(&conf.ApiConfig{AgentIdentity: conf.AgentIdentityConfig{

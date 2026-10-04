@@ -18,8 +18,10 @@ DATA_DIR="${INSTALL_DIR}/data"
 BIN_PATH="${INSTALL_DIR}/anix-agent"
 LEGACY_BIN_PATH="${LEGACY_INSTALL_DIR}/V2bX"
 VERSION_FILE="${INSTALL_DIR}/.release-version"
-PLUGIN_ROOT="${test_root}/var/lib/anixops/plugins"
-PLUGIN_SOCKET_DIR="${test_root}/run/anixops/plugins"
+STATE_ROOT="${test_root}/var/lib/anixops-agent"
+GOST_BINARY="${test_root}/usr/lib/anixops-agent/gost"
+PLUGIN_ROOT="${test_root}/var/lib/anixops-agent/plugins"
+PLUGIN_SOCKET_DIR="${test_root}/run/anixops-agent/plugins"
 SYSTEMD_UNIT_DIR="${test_root}/etc/systemd/system"
 OPENRC_INIT_DIR="${test_root}/etc/init.d"
 
@@ -144,6 +146,7 @@ grep -Fq 'ANIX_AGENT_CONFIG:-/etc/anixops/agent/config.json' "${repo_root}/Docke
 grep -Fq '[ -e /etc/V2bX/config.json ]' "${repo_root}/Dockerfile"
 
 ensure_plugin_layout
+[[ "$(stat -c '%a' "${STATE_ROOT}")" == "700" ]]
 [[ "$(stat -c '%a' "${PLUGIN_ROOT}")" == "750" ]]
 [[ "$(stat -c '%a' "${PLUGIN_SOCKET_DIR}")" == "750" ]]
 
@@ -156,6 +159,7 @@ VERSION_FILE="${INSTALL_DIR}/.release-version"
 mkdir -p "${install_fixture}" "${tmp_dir}"
 printf '#!/bin/sh\nexit 0\n' >"${install_fixture}/anix-agent"
 chmod 0755 "${install_fixture}/anix-agent"
+printf '%s\n' pinned-gost >"${install_fixture}/gost"
 printf '%s\n' production-template >"${install_fixture}/config.production.json"
 printf '%s\n' development-template >"${install_fixture}/config.json"
 touch "${test_root}/release-fixture.zip"
@@ -176,14 +180,30 @@ install_files "${test_root}/release-fixture.zip" "v9.9.9"
 [[ "$(cat "${CONFIG_DIR}/config.json")" == "production-template" ]]
 [[ "$(stat -c '%a' "${CONFIG_DIR}/config.json")" == "600" ]]
 [[ "$(cat "${VERSION_FILE}")" == "v9.9.9" ]]
+# The pinned gost of the release (H20) goes where anixops-gost.service runs it.
+[[ "$(cat "${GOST_BINARY}")" == "pinned-gost" ]]
+[[ "$(stat -c '%a' "${GOST_BINARY}")" == "755" ]]
+
+# A node installed by Control's O1 installer (user anixops-agent, sandboxed)
+# is never switched back to the root layout.
+o1_units="${test_root}/o1-units"
+mkdir -p "${o1_units}"
+printf '[Service]\nUser=anixops-agent\n' >"${o1_units}/${SERVICE_NAME}.service"
+if (SYSTEMD_UNIT_DIR="${o1_units}" refuse_o1_install >/dev/null 2>&1); then
+    echo "an O1 install was not refused" >&2
+    exit 1
+fi
+printf '[Service]\nUser=root\n' >"${o1_units}/${SERVICE_NAME}.service"
+(SYSTEMD_UNIT_DIR="${o1_units}" refuse_o1_install)
+grep -Fq 'RuntimeDirectory=anixops-agent' "${repo_root}/scripts/install.sh"
 
 for example in \
     config.json config.grpc.json config.production.json config_auto_register.json config_realtime_sync.json \
     config_test_local.json config.wireguard.json; do
     example_path="${repo_root}/example/${example}"
     grep -Fq '"PluginSupervisorEnabled": true' "${example_path}"
-    grep -Fq '"PluginRoot": "/var/lib/anixops/plugins"' "${example_path}"
-    grep -Fq '"PluginSocketDir": "/run/anixops/plugins"' "${example_path}"
+    grep -Fq '"PluginRoot": "/var/lib/anixops-agent/plugins"' "${example_path}"
+    grep -Fq '"PluginSocketDir": "/run/anixops-agent/plugins"' "${example_path}"
     grep -Fq '"PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="' "${example_path}"
 done
 
@@ -229,8 +249,8 @@ done
     grep -Fq '"MaintenanceEnvironment": "production"' "${wizard_config}"
     grep -Fq '"WSEndpoint": "/api/v2/agent/ws"' "${wizard_config}"
     grep -Fq '"PluginSupervisorEnabled": true' "${wizard_config}"
-    grep -Fq '"PluginRoot": "/var/lib/anixops/plugins"' "${wizard_config}"
-    grep -Fq '"PluginSocketDir": "/run/anixops/plugins"' "${wizard_config}"
+    grep -Fq '"PluginRoot": "/var/lib/anixops-agent/plugins"' "${wizard_config}"
+    grep -Fq '"PluginSocketDir": "/run/anixops-agent/plugins"' "${wizard_config}"
     grep -Fq '"PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="' "${wizard_config}"
     grep -Fq '"Transport": "http"' "${wizard_config}"
     agent_control_host_is_loopback "[::1]:50051" "http://example.com"

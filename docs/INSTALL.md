@@ -7,6 +7,152 @@ Supported installer targets are Linux `amd64` and Linux `arm64`. Pin an exact
 tag in production so the installer, archive, management script, and checksum
 all come from the same release.
 
+## One-Command Install From Control (Recommended)
+
+New nodes are installed with the command on the node's page in AnixOps
+Control ("复制安装命令"), Control's `/install.sh` (anix-control
+`internal/agentinstall/install.sh`, docs/guide/agent-onboarding.md there):
+
+```bash
+curl -fsSL https://<control>/install.sh | sudo bash -s -- \
+  --control https://<control> --node proxy-12 --token anixagt_...
+```
+
+It installs this repository's release package for the node's architecture
+(checked by SHA-256 and by its `.sig`, see "Release Signing"), and runs the
+Agent as the unprivileged user `anixops-agent` (owner decision H13): ambient
+`CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE` only, `NoNewPrivileges`,
+`ProtectSystem=strict` with `ReadWritePaths=/var/lib/anixops-agent
+/var/lib/anixops-gost`; root is used by the installer only. The unit runs
+`/usr/lib/anixops-agent/anix-agent server -c /etc/anixops/agent/config.json`.
+
+The configuration it writes holds credentials only (no `ApiKey`, no `Cores`):
+
+```json
+{
+  "Cores": [],
+  "Nodes": [{
+    "ApiHost": "https://<control>", "Transport": "grpc",
+    "GRPCHost": "<grpc host:port>", "GRPCUseTLS": true,
+    "AgentControlEnabled": true, "AgentControlAllowInsecure": false,
+    "AgentNode": "proxy-12", "NodeID": 12,
+    "AgentIdentity": {"Enroll": "auto", "CertDir": "/var/lib/anixops-agent/pki",
+                      "EnrollCredentialFile": "/var/lib/anixops-agent/enroll.credential"},
+    "AgentStream": {"StateDir": "/var/lib/anixops-agent/stream"}
+  }]
+}
+```
+
+- A **proxy node** (`proxy-<id>`) without `ApiKey` enrolls with the one-time
+  credential (the file is removed after use), then authenticates with its
+  client certificate only. Its configuration, users and reports go over the
+  control stream's data plane; it never falls back to the legacy transports.
+  Until the stream is up (enrollment may wait for the credential, or Control
+  may be unreachable) the node waits instead of failing. With `"Cores": []`
+  every compiled-in core runs behind the selector (xray, sing, hysteria2,
+  wireguard, in that order of preference) and each node of the stream's
+  configuration runs on the first core that serves its protocol.
+- A **forward node** (`forward-<id>`) runs the forward component only.
+- A node without `ApiKey` that speaks to Control (`AgentNode` set or
+  `AgentControlEnabled`) must have the stream data plane (`AgentStream.DataPlane`
+  `auto`), TLS, and an enrollment credential or an enrolled identity
+  (`CertDir/proxy-<id>/identity.pem`); `validate-config` refuses it
+  otherwise. Configurations with an `ApiKey` work as before.
+
+### Forwarding and sysctl
+
+nftables forwarding needs the kernel to forward. The Agent checks
+`net.ipv4.ip_forward` and `net.ipv6.conf.all.forwarding` at start and logs a
+warning when they are off; it never changes them itself. The drop-in:
+
+```bash
+anix-agent forward sysctl-dropin | sudo tee /etc/sysctl.d/90-anixops-forward.conf
+sudo sysctl --system
+```
+
+`anix-agent forward gost-unit` prints `anixops-gost.service`.
+
+## File System Layout
+
+| Path | Purpose |
+|---|---|
+| `/etc/anixops/agent/config.json` | Configuration (read only for the Agent) |
+| `/var/lib/anixops-agent/pki` | Agent identity (`AgentIdentity.CertDir` default) |
+| `/var/lib/anixops-agent/stream` | Stream state and report spool (`AgentStream.StateDir` default) |
+| `/var/lib/anixops-agent/forward` | Forwarding state (`Forward.StateDir` default) |
+| `/var/lib/anixops-agent/plugins` | Official plugin data (`PluginRoot` default) |
+| `/run/anixops-agent/plugins` | Plugin sockets (`PluginSocketDir` default; the unit's `RuntimeDirectory=anixops-agent`) |
+| `/var/lib/anixops-gost` | gost configuration and link certificates |
+| `/usr/lib/anixops-agent/gost` | The pinned gost of the release |
+
+`PluginRoot` and `PluginSocketDir` now default as above when both are left
+out; a configured `PluginRoot` without `PluginSocketDir` keeps its sockets in
+`PluginRoot/sockets` as before.
+
+### Migration of earlier defaults
+
+Earlier releases kept the identity in `/var/lib/anix-agent/pki`, the stream
+state in `/var/lib/anix-agent/stream` and plugin data in
+`/var/lib/anixops/plugins`. They move once:
+
+- Only defaults move. A path the configuration names is used as it is.
+- A directory is copied when the old one exists and the new one does not;
+  an existing new directory is never touched.
+- The copy is made next to the new directory and renamed into place (all or
+  nothing), with file modes and symbolic links kept (a link into the old
+  tree points into the copy); sockets, pipes and devices are skipped.
+- The old directory is never removed: identity material always keeps a copy,
+  and an earlier release still starts. Remove it by hand once the node runs.
+- The Agent does this at start as its own user. If the copy fails (the old
+  directory is not readable or the new place not writable, as in the
+  sandbox), it logs a warning and keeps using the old directory for that
+  run.
+- An installer running as root copies for the sandboxed Agent:
+  `anix-agent migrate-paths --chown anixops-agent` (the copies then belong
+  to that user; `pki` refuses files owned by another user). `scripts/install.sh`
+  runs `anix-agent migrate-paths` on every root install and upgrade.
+
+## Release Signing
+
+Every release publishes, next to `anix-agent-linux-64.zip` and
+`anix-agent-linux-arm64-v8a.zip` (each with its `.dgst`):
+
+- the pinned gost v3 release (H20; 3.2.6, archive and binary checked by
+  SHA-256, the pin anix-control's CI uses) as `gost` inside each zip;
+- `SHA256SUMS` of both packages;
+- `<asset>.sig` for each package and for `SHA256SUMS`: base64 of the raw
+  Ed25519 signature by the official AnixOps release key over the file's
+  exact bytes (the format of anix-control's `agent-install.sh.sig`).
+
+Verify a package:
+
+```bash
+printf '%s' 'MCowBQYDK2VwAyEAlvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM=' | base64 -d >official.der
+base64 -d anix-agent-linux-64.zip.sig >anix-agent-linux-64.zip.sig.bin
+openssl pkeyutl -verify -pubin -keyform DER -inkey official.der -rawin \
+  -in anix-agent-linux-64.zip -sigfile anix-agent-linux-64.zip.sig.bin
+```
+
+The release job signs with the repository secrets anix-control uses for the
+same key; they must be added to this repository (Settings, Secrets and
+variables, Actions) before the first signed tag:
+
+| Secret | Value |
+|---|---|
+| `ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY` | The official release key, PEM (`openssl pkeyutl -sign -inkey` reads it) |
+| `ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY` | `lvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM=` |
+
+Without them, or with another public key, the release job fails before
+publishing; pull requests and branch builds need no secret (they build and
+check the packages but do not sign).
+
+## Root Install With scripts/install.sh
+
+`scripts/install.sh` keeps the earlier root layout for existing root installs
+(including V2bX migrations) and their upgrades. It refuses a node that
+Control's installer set up (`User=anixops-agent` in `anix-agent.service`):
+upgrade such a node by running its install command from Control again.
+
 ## Fresh Install
 
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
@@ -28,7 +174,9 @@ and installs these paths:
 |---|---|
 | `/usr/local/anixops-agent/anix-agent` | GitHub Actions-built Agent binary |
 | `/etc/anixops/agent/config.json` | Persistent node configuration |
-| `/etc/anixops/agent/credential.json*` | Auto-register credentials when used |
+| `/etc/anixops/agent/credential.json*` | Auto-register credentials when used (new templates: `/var/lib/anixops-agent/credential.json.enc`) |
+| `/usr/lib/anixops-agent/gost` | The pinned gost the release ships |
+| `/var/lib/anixops-agent` | Identity, stream state, forwarding state, plugin data |
 | `/usr/local/anixops-agent/backups/` | Previous binaries retained during update |
 | `/usr/local/anixops-agent/.release-version` | Installed release tag |
 | `anix-agent.service` | systemd service (`anix-agent` on OpenRC) |

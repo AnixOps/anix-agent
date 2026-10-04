@@ -220,7 +220,7 @@ func checkIPForwarding(logger *log.Entry) {
 			continue
 		}
 		if strings.TrimSpace(string(data)) != "1" {
-			logger.WithField("sysctl", name).Warn("The kernel does not forward packets; nftables forwarding needs it (install the sysctl drop-in /etc/sysctl.d/90-anixops-forward.conf)")
+			logger.WithField("sysctl", name).Warn("The kernel does not forward packets; nftables forwarding needs it: as root, run 'anix-agent forward sysctl-dropin > /etc/sysctl.d/90-anixops-forward.conf && sysctl --system'")
 		}
 	}
 }

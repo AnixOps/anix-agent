@@ -106,6 +106,7 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	}
 	limiter.Init()
 	log.Info("Start AnixOps Agent...")
+	migrateLegacyPaths(c)
 
 	// Forwarding (F3b): the drivers are probed and the persisted state is
 	// re-applied before any control stream connects.
@@ -134,7 +135,7 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	vc, err := vCore.NewCore(c.CoresConfig)
+	vc, err := vCore.NewForConfig(c.CoresConfig, len(c.NodeConfig))
 	if err != nil {
 		log.WithField("err", err).Error("new core failed")
 		return fmt.Errorf("create core: %w", err)
@@ -169,13 +170,14 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	sdns := os.Getenv("SING_DNS_PATH")
 	if watch {
 		err = c.Watch(config, xdns, sdns, func() {
+			migrateLegacyPaths(c)
 			nodes.Close()
 			err = vc.Close()
 			if err != nil {
 				log.WithField("err", err).Error("Restart node failed")
 				return
 			}
-			vc, err = vCore.NewCore(c.CoresConfig)
+			vc, err = vCore.NewForConfig(c.CoresConfig, len(c.NodeConfig))
 			if err != nil {
 				log.WithField("err", err).Error("New core failed")
 				return
@@ -203,6 +205,23 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	runtime.GC()
 	waitForExitSignal()
 	return nil
+}
+
+// migrateLegacyPaths moves the earlier default directories the
+// configuration uses to the O1 layout (conf.LegacyDefaultPaths), once, as
+// the Agent's own user. A copy that fails leaves the Agent on the old
+// directory; an installer running as root migrates with
+// "anix-agent migrate-paths --chown anixops-agent" instead.
+func migrateLegacyPaths(c *conf.Conf) {
+	for _, report := range c.MigrateLegacyDefaults(conf.MigrateOptions{}) {
+		fields := log.Fields{"what": report.Path.Name, "from": report.Path.Old, "to": report.Path.New}
+		if report.Err != nil {
+			log.WithFields(fields).WithError(report.Err).
+				Warn("Could not copy the earlier default directory to the new layout; using the earlier directory (run 'anix-agent migrate-paths' as root)")
+			continue
+		}
+		log.WithFields(fields).Info("Copied the earlier default directory to the new layout; the earlier directory is left in place and no longer used")
+	}
 }
 
 // waitForExitSignal blocks until SIGINT or SIGTERM.
