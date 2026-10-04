@@ -24,10 +24,17 @@ func (p *Conf) ValidateForProduction() error {
 		return fmt.Errorf("unsupported Environment %q", p.Environment)
 	}
 	rootProduction := rootEnvironment == "production"
-	if rootProduction && len(p.NodeConfig) == 0 {
+	// A forward node's Agent runs no proxy node and no core.
+	forwardOnly := p.Forward.ForwardNodeOnly()
+	if rootProduction && forwardOnly {
+		if err := validateProductionForwardNode(*p.Forward.ForwardNode); err != nil {
+			return err
+		}
+	}
+	if rootProduction && len(p.NodeConfig) == 0 && !forwardOnly {
 		return fmt.Errorf("production configuration requires at least one node")
 	}
-	if rootProduction && len(p.CoresConfig) == 0 {
+	if rootProduction && len(p.CoresConfig) == 0 && !forwardOnly {
 		return fmt.Errorf("production configuration requires at least one core")
 	}
 	configuredCores := make(map[string]struct{}, len(p.CoresConfig))
@@ -179,4 +186,28 @@ func placeholder(raw string) bool {
 		strings.Contains(lower, ".test") || strings.Contains(lower, ".localhost") || lower == "localhost" ||
 		strings.Contains(lower, "your-") || strings.Contains(lower, "replace") ||
 		strings.Contains(lower, "change_me") || strings.Contains(lower, "change-me")
+}
+
+// validateProductionForwardNode checks a forward node's connection: TLS to
+// a real Control, never plaintext, and an identity that enrolls.
+func validateProductionForwardNode(api ApiConfig) error {
+	var problems []string
+	require := func(ok bool, message string) {
+		if !ok {
+			problems = append(problems, message)
+		}
+	}
+	require(api.GRPCUseTLS, "GRPCUseTLS must be true")
+	require(!api.AgentControlAllowInsecure, "AgentControlAllowInsecure must be false")
+	require(validProductionHostPort(api.GRPCHost), "GRPCHost must be a non-placeholder host:port")
+	require(nonPlaceholder(api.GRPCServerName), "GRPCServerName is required and must not be a placeholder")
+	require(api.NodeID > 0, "NodeID must be positive")
+	// No ApiKey: a forward node enrolls with its token or a one-time
+	// credential (AgentIdentity.EnrollCredentialFile, which the Agent
+	// removes after use) and then presents its certificate only.
+	require(api.Key == "" || nonPlaceholderSecret(api.Key), "ApiKey, when set, must not be a placeholder")
+	if len(problems) > 0 {
+		return fmt.Errorf("production forward node configuration is not ready: %s", strings.Join(problems, "; "))
+	}
+	return nil
 }

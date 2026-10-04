@@ -15,6 +15,8 @@ type Conf struct {
 	LogConfig   LogConfig    `json:"Log"`
 	CoresConfig []CoreConfig `json:"Cores"`
 	NodeConfig  []NodeConfig `json:"Nodes"`
+	// Forward turns on the forward component (forward.go).
+	Forward *ForwardConfig `json:"Forward"`
 }
 
 func New() *Conf {
@@ -44,7 +46,13 @@ func (p *Conf) LoadFromPath(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("unmarshal config error: %s", err)
 	}
+	if err = p.normalizeAgentNodes(); err != nil {
+		return err
+	}
 	if err = p.validateAgentIdentities(); err != nil {
+		return err
+	}
+	if err = p.Forward.Validate(); err != nil {
 		return err
 	}
 	if err = p.ValidateForProduction(); err != nil {

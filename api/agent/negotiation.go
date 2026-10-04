@@ -54,7 +54,8 @@ var dataPlaneCapabilities = []string{
 
 // implementedDataPlane lists the data-plane capabilities this Agent
 // implements and may advertise. Each feature (AG-3 configuration, AG-4
-// users, AG-5 reports, AG-5b maintenance, alive list and artifacts) adds
+// users, AG-5 reports, AG-5b maintenance, alive list and artifacts, F3b
+// forwarding) adds
 // its name with its payload handling. A Hello lists one only when the
 // client's DataPlane has a handler for it.
 var implementedDataPlane = map[string]bool{
@@ -65,6 +66,7 @@ var implementedDataPlane = map[string]bool{
 	agentcontrol.CapabilityMaintenance:    true,
 	agentcontrol.CapabilityAlive:          true,
 	agentcontrol.CapabilityArtifacts:      true,
+	agentcontrol.CapabilityForward:        true,
 }
 
 // ErrMTLSRequired reports that Control refused the node credential because

@@ -35,6 +35,7 @@ import (
 
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
+	"github.com/AnixOps/anix-control/sdk/forward/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	grpccredentials "google.golang.org/grpc/credentials"
@@ -62,9 +63,13 @@ type Control struct {
 	agentv1pb.UnimplementedAgentEnrollmentServer
 	agentv1pb.UnimplementedAgentArtifactsServer
 
-	NodeID  uint32
-	APIKey  string
-	Cluster string
+	NodeID uint32
+	// NodeKind is the node's kind: agentcontrol.NodeKindProxy (when empty)
+	// or agentcontrol.NodeKindForward (a forward node: certificate-only
+	// streams, forward.v1, no users or reports.v1).
+	NodeKind string
+	APIKey   string
+	Cluster  string
 	// ServerName is the name in the server certificate.
 	ServerName string
 	// Address is the listener's host:port.
@@ -134,6 +139,10 @@ type Control struct {
 	// refusedSerials fail with this code (agent_cert_*).
 	refuseCertificate string
 	refusedSerials    map[string]bool
+
+	// Forwarding (forward.v1): forward.go; link certificates: link.go.
+	forward forwardState
+	link    linkState
 }
 
 // userChange is one row of the subscriber change log.
@@ -886,7 +895,7 @@ func (c *Control) issue(csrDER []byte) (*agentv1pb.AgentCertificate, error) {
 	serial := new(big.Int).SetBytes(serialBytes)
 	now := time.Now()
 	notAfter := now.Add(7 * 24 * time.Hour)
-	identity, err := agentcontrol.NewAgentIdentity(c.Cluster, agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: c.NodeID})
+	identity, err := agentcontrol.NewAgentIdentity(c.Cluster, c.node())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -921,6 +930,9 @@ func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequ
 	}
 	if metadataValue(ctx, agentcontrol.MetadataNodeID) != strconv.FormatUint(uint64(c.NodeID), 10) {
 		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
+	}
+	if kind := metadataValue(ctx, agentcontrol.MetadataNodeKind); (kind == "" && c.node().Kind != agentcontrol.NodeKindProxy) || (kind != "" && kind != c.node().Kind) {
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected: another node kind")
 	}
 	if credential := request.EnrollmentCredential; credential != "" {
 		c.mu.Lock()
@@ -973,11 +985,15 @@ func (c *Control) serverCapabilities(hello *agentv1pb.Hello, certificate bool) [
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var capabilities []*agentv1pb.Capability
+	forward := c.servesForwardLocked(hello)
 	for _, name := range agentcontrol.DataPlaneCapabilities {
 		if !c.serves[name] || !agentcontrol.HasCapabilityVersion(hello.GetCapabilities(), name, agentcontrol.CapabilityVersionV1) {
 			continue
 		}
 		if name == agentcontrol.CapabilityArtifacts && !certificate {
+			continue
+		}
+		if !c.offersLocked(name, forward) {
 			continue
 		}
 		capability := &agentv1pb.Capability{Name: name, Version: agentcontrol.CapabilityVersionV1}
@@ -1017,6 +1033,10 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 		certificate = true
 		update(func(record *StreamAuth) { record.CertificateSerial = hex.EncodeToString(leaf.SerialNumber.Bytes()) })
 	} else {
+		if c.node().Kind == agentcontrol.NodeKindForward {
+			// A forward node's token never authenticates the stream.
+			return status.Error(codes.Unauthenticated, "a forward node authenticates the stream with its client certificate")
+		}
 		if mode == ModeRequired {
 			stream.SetTrailer(metadata.Pairs(agentcontrol.MetadataErrorCode, agentcontrol.ErrorCodeMTLSRequired))
 			return status.Error(codes.Unauthenticated, agentcontrol.ErrorCodeMTLSRequired+": an agent client certificate is required (agent_control.mtls: required)")
@@ -1052,6 +1072,7 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 	if current.negotiated[agentcontrol.CapabilityConfig] {
 		current.configRev = hello.GetConfigRevision()
 	}
+	heartbeat := c.recordForwardHelloLocked(current, hello)
 	c.hellos = append(c.hellos, proto.Clone(hello).(*agentv1pb.Hello))
 	c.sessions[current.id] = current
 	desired := c.desired
@@ -1065,7 +1086,7 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 	if err := current.send(&agentv1pb.ControlToAgent{
 		RequestId: first.RequestId, NodeId: c.NodeID,
 		Payload: &agentv1pb.ControlToAgent_HelloAck{HelloAck: &agentv1pb.HelloAck{
-			SessionId: current.id, HeartbeatIntervalSeconds: 1, ServerCapabilities: serverCapabilities,
+			SessionId: current.id, HeartbeatIntervalSeconds: heartbeat, ServerCapabilities: serverCapabilities,
 		}},
 	}); err != nil {
 		return err
@@ -1159,6 +1180,10 @@ func (c *Control) handle(current *session, message *agentv1pb.AgentToControl) er
 	case *agentv1pb.AgentToControl_PackageReport:
 		if !current.negotiated[agentcontrol.CapabilityPackageReports] {
 			return status.Error(codes.InvalidArgument, "package_report needs capability package-reports.v1")
+		}
+		if wire.IsReport(payload.PackageReport) {
+			c.handleForwardReport(current, payload.PackageReport)
+			return nil
 		}
 		c.mu.Lock()
 		c.packageReports = append(c.packageReports, proto.Clone(payload.PackageReport).(*agentv1pb.PackageReport))

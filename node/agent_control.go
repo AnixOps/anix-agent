@@ -100,6 +100,9 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	}
 	if dataPlane != nil {
 		dataPlane.client = client
+		if dataPlane.forward != nil {
+			attachForward(dataPlane.forward, client)
+		}
 	}
 	controller.agentClient = client
 	return client, nil
@@ -132,6 +135,10 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 			TrafficMaxBytes: settings.SpoolBytes(), LogsMaxBytes: settings.LogSpoolBytes(), MaxAge: settings.SpoolMaxAge(),
 			Status: dataPlane.nodeStatus,
 		},
+	}
+	if dataPlane.forward != nil {
+		// The stream carries the node's forwarding (forward.v1).
+		config.Forward = dataPlane.forward
 	}
 	if supervisor := dataPlane.supervisor(); supervisor != nil {
 		// The plugin supervisor's maintenance outbox (maintenance.v1) and

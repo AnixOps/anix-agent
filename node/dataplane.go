@@ -12,6 +12,7 @@ import (
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/common/monitor"
+	"github.com/AnixOps/anix-agent/v4/forward"
 	"github.com/AnixOps/anix-agent/v4/plugin"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -45,6 +46,9 @@ type nodeDataPlane struct {
 	nodeID      int
 	controllers []*Controller
 	client      *agentapi.Client
+	// forward runs the forwarding state of the node's snapshots (F3b),
+	// nil when the node does not forward.
+	forward *forward.Component
 
 	// startupUsers are the users the controllers start with during a
 	// stream start (startupUsersSet), nil otherwise: they then pull them.
@@ -113,6 +117,13 @@ func (n *nodeDataPlane) mode(capability string) agentapi.DataPlaneMode {
 // entry of the snapshot, started or reloaded through the legacy restart
 // path.
 func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
+	if n.forward != nil {
+		// The forwarding member first: a malformed one refuses the
+		// document as a whole.
+		if err := n.forward.ApplySnapshot(ctx, snapshot); err != nil {
+			return err
+		}
+	}
 	var errs []error
 	for _, controller := range n.controllers {
 		if err := ctx.Err(); err != nil {

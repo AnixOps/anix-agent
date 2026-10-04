@@ -31,6 +31,17 @@ PLUGIN_ROOT="${PLUGIN_ROOT:-/var/lib/anixops/plugins}"
 PLUGIN_SOCKET_DIR="${PLUGIN_SOCKET_DIR:-/run/anixops/plugins}"
 
 SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+SYSCTL_DIR="${SYSCTL_DIR:-/etc/sysctl.d}"
+
+# Forwarding (forward-sdk.md sections 6, 9 and 14): ANIXOPS_FORWARD=1
+# prepares the node for the Agent's forward component: gost's account and
+# directory, the anixops-gost unit, the sysctl drop-in, and the Agent in
+# gost's group.
+FORWARD="${ANIXOPS_FORWARD:-0}"
+GOST_USER="anixops-gost"
+GOST_DIR="/var/lib/anixops-gost"
+GOST_BINARY="/usr/lib/anixops-agent/gost"
+FORWARD_STATE_DIR="/var/lib/anixops-agent/forward"
 OPENRC_INIT_DIR="${OPENRC_INIT_DIR:-/etc/init.d}"
 
 API_BASE="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}"
@@ -543,7 +554,47 @@ ensure_plugin_layout() {
     install -d -m 0750 "${PLUGIN_ROOT}" "${PLUGIN_SOCKET_DIR}"
 }
 
+# setup_forward prepares a forward-capable node (ANIXOPS_FORWARD=1):
+#   - gost's own system account and group anixops-gost (no shell, no home);
+#   - ${GOST_DIR} and its tls/ (link certificates) owned by root (the
+#     Agent's user) with group anixops-gost, mode 0750: only the Agent
+#     writes, only gost reads;
+#   - the Agent's forwarding state ${FORWARD_STATE_DIR}, mode 0700;
+#   - anixops-gost.service from the Agent itself (gost.UnitFile), enabled;
+#     it starts once the driver wrote its configuration;
+#   - /etc/sysctl.d/90-anixops-forward.conf: the kernel forwards IPv4 and
+#     IPv6 (nftables DNAT needs it).
+# The Agent's unit then gets SupplementaryGroups=anixops-gost (install_service)
+# so it reaches gost's web API socket.
+setup_forward() {
+    [[ "${FORWARD}" == "1" ]] || return 0
+    if [[ "${release}" == "alpine" ]]; then
+        warn "Forwarding needs systemd (the anixops-gost unit); skipped on OpenRC"
+        return 0
+    fi
+    info "Preparing forwarding (gost account, directories, unit, sysctl) ..."
+    getent group "${GOST_USER}" >/dev/null 2>&1 || groupadd --system "${GOST_USER}"
+    if ! id "${GOST_USER}" >/dev/null 2>&1; then
+        useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin -g "${GOST_USER}" "${GOST_USER}"
+    fi
+    install -d -m 0750 -o root -g "${GOST_USER}" "${GOST_DIR}" "${GOST_DIR}/tls"
+    install -d -m 0700 -o root -g root "${FORWARD_STATE_DIR}"
+    mkdir -p "${SYSTEMD_UNIT_DIR}" "${SYSCTL_DIR}"
+    "${BIN_PATH}" forward gost-unit >"${SYSTEMD_UNIT_DIR}/anixops-gost.service"
+    "${BIN_PATH}" forward sysctl >"${SYSCTL_DIR}/90-anixops-forward.conf"
+    sysctl -p "${SYSCTL_DIR}/90-anixops-forward.conf" >/dev/null 2>&1 || warn "Could not apply ${SYSCTL_DIR}/90-anixops-forward.conf now; it applies at the next boot"
+    systemctl daemon-reload
+    systemctl enable anixops-gost >/dev/null 2>&1 || true
+    if [[ ! -x "${GOST_BINARY}" ]]; then
+        warn "The pinned gost is not installed at ${GOST_BINARY}: the gost driver stays unavailable (nftables forwarding works)"
+    fi
+}
+
 install_service() {
+    local supplementary_groups=""
+    if [[ "${FORWARD}" == "1" ]] && getent group "${GOST_USER}" >/dev/null 2>&1; then
+        supplementary_groups="SupplementaryGroups=${GOST_USER}"
+    fi
     if [[ "${release}" == "alpine" ]]; then
         mkdir -p "${OPENRC_INIT_DIR}"
         cat >"${OPENRC_INIT_DIR}/${SERVICE_NAME}" <<EOF
@@ -577,6 +628,7 @@ Wants=network.target
 Type=simple
 User=root
 Group=root
+${supplementary_groups}
 WorkingDirectory=${INSTALL_DIR}/
 ExecStart=${BIN_PATH} server -c ${CONFIG_DIR}/config.json
 Restart=always
@@ -656,6 +708,8 @@ ${INSTALL_DIR}/backups/ 以便服务启动失败时自动恢复。
 ${LEGACY_MANAGE_CMD_NAME} 命令继续作为兼容别名。
 
 环境变量（可选）:
+  ANIXOPS_FORWARD=1  准备转发节点：gost 账户与目录、anixops-gost 单元、
+               sysctl 转发配置（/etc/sysctl.d/90-anixops-forward.conf）
   REPO_OWNER   默认: AnixOps
   REPO_NAME    默认: anix-agent
   REPO_BRANCH  默认: dev_new
@@ -720,6 +774,7 @@ main() {
     install_files "${zip_path}" "${version}"
     ensure_plugin_layout
     install_manage_script "${manager_path}"
+    setup_forward
     install_service
 
     if [[ "${migration_detected}" == "true" ]]; then

@@ -62,7 +62,13 @@ func (f OperationHandlerFunc) HandleOperation(ctx context.Context, operation *ag
 type DialContextFunc func(context.Context, string, ...grpc.DialOption) (*grpc.ClientConn, error)
 
 type Config struct {
-	Target           string
+	Target string
+	// NodeKind is the kind of node NodeID names: agentcontrol.NodeKindProxy
+	// (the default) or agentcontrol.NodeKindForward. A forward node's
+	// stream needs Identity: Control authenticates forward nodes by client
+	// certificate only, and enrolls them with their token and the
+	// x-node-kind metadata.
+	NodeKind         string
 	NodeID           int
 	APIKey           string
 	UseTLS           bool
@@ -156,7 +162,24 @@ func NewClient(config Config) (*Client, error) {
 	if config.NodeID <= 0 {
 		return nil, fmt.Errorf("agent node ID must be positive")
 	}
-	if strings.TrimSpace(config.APIKey) == "" {
+	if config.NodeID > int(^uint32(0)) {
+		return nil, fmt.Errorf("agent node ID %d is out of range", config.NodeID)
+	}
+	switch config.NodeKind {
+	case "":
+		config.NodeKind = agentcontrol.NodeKindProxy
+	case agentcontrol.NodeKindProxy:
+	case agentcontrol.NodeKindForward:
+		if config.Identity == nil {
+			return nil, fmt.Errorf("a forward node's agent control stream needs the agent identity (client certificate): Control does not accept a forward node's token on the stream")
+		}
+	default:
+		return nil, fmt.Errorf("unknown agent node kind %q", config.NodeKind)
+	}
+	if strings.TrimSpace(config.APIKey) == "" && config.Identity == nil {
+		// Without an identity the API key is the only credential. With
+		// one, the Agent may enroll with a one-time credential and never
+		// hold a node key (the O1 installer's configuration).
 		return nil, fmt.Errorf("agent API key is required")
 	}
 	if config.Heartbeat <= 0 {
@@ -221,6 +244,17 @@ func NewClient(config Config) (*Client, error) {
 					// silence when Control cannot record a batch now.
 					capability.Attributes = map[string]string{agentcontrol.ReportsAttributeTransientAck: agentcontrol.ReportsTransientAckV1}
 				}
+				if name == agentcontrol.CapabilityForward {
+					// The node's capabilities ride in the attribute, so
+					// Control plans for the node before its first
+					// snapshot.
+					forward, err := plane.config.Forward.HelloCapability()
+					if err != nil {
+						cancel()
+						return nil, fmt.Errorf("agent capability forward.v1: %w", err)
+					}
+					capability = forward
+				}
 				client.config.Capabilities = append(client.config.Capabilities, capability)
 			}
 		}
@@ -278,6 +312,11 @@ func (c *Client) Close() error {
 		c.dataPlane.close()
 	}
 	return nil
+}
+
+// Node is the node the client speaks for (Config.NodeKind and NodeID).
+func (c *Client) Node() agentcontrol.AgentNode {
+	return agentcontrol.AgentNode{Kind: c.config.NodeKind, ID: uint32(c.config.NodeID)} // #nosec G115 -- NewClient bounds the ID.
 }
 
 // DataPlane returns the client's data plane, nil without
@@ -373,6 +412,9 @@ func (c *Client) run() {
 		} else if wrongNode {
 			// Logged by the identity; reconnecting fast would only repeat
 			// the refusal.
+		} else if errors.Is(err, errAwaitingCertificate) {
+			// The identity logs its enrollment attempts.
+			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID}).Debug(err.Error())
 		} else if errors.Is(err, errSessionRecycled) {
 			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID}).
 				Info("Reconnecting the Agent control stream with the new client certificate")
@@ -618,8 +660,16 @@ func (s *sessionOperationState) close() {
 	}
 }
 
+// errAwaitingCertificate: a forward node, or an Agent without a node key,
+// has no client certificate yet; it opens no stream until it enrolled.
+var errAwaitingCertificate = errors.New("the agent has no client certificate yet and no other credential for the control stream; waiting for enrollment")
+
 func (c *Client) runSession() (bool, error) {
 	var connectedAt time.Time
+	if (c.config.NodeKind == agentcontrol.NodeKindForward || strings.TrimSpace(c.config.APIKey) == "") &&
+		(c.identity == nil || c.identity.certificate() == nil) {
+		return false, errAwaitingCertificate
+	}
 	dialCtx, dialCancel := context.WithTimeout(c.ctx, c.config.DialTimeout)
 	defer dialCancel()
 
@@ -1252,6 +1302,16 @@ func (c *Client) sessionCapabilities(presented bool) []*agentv1pb.Capability {
 		if capability.Name == agentcontrol.CapabilityArtifacts && !presented {
 			continue
 		}
+		if capability.Name == agentcontrol.CapabilityForward && c.dataPlane != nil && c.dataPlane.config.Forward != nil {
+			// The node's capabilities as they are now: a link certificate
+			// that arrived since adds the encrypted link securities.
+			if current, err := c.dataPlane.config.Forward.HelloCapability(); err == nil {
+				capability = current
+			} else {
+				log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID, "error": err}).
+					Warn("Could not refresh the node's forwarding capabilities; listing the previous ones")
+			}
+		}
 		capabilities = append(capabilities, capability)
 	}
 	return capabilities
@@ -1392,7 +1452,7 @@ func (c *Client) streamFailure(stream agentv1pb.AgentControlService_ControlStrea
 		case certificateReenroll:
 			// Control refused the certificate itself: drop it and enroll
 			// again.
-			c.identity.rejected(session.identity, reason)
+			c.identity.rejected(session.identity, reason, refusalCode(err))
 		case certificateWrongNode:
 			// A configuration error: keep the certificate, retry slowly.
 			c.identity.wrongNode(err)
