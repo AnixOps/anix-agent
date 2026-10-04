@@ -413,87 +413,11 @@ func (c *Controller) buildSyncConfig() *SyncConfig {
 	return config
 }
 
-// reloadNode 重载节点配置 (用于同步管理器)
+// reloadNode reloads the node with newNode, a full configuration pushed by
+// the legacy WebSocket (sync manager): the same reconciliation as the
+// other transports, with the previous configuration restored on failure.
 func (c *Controller) reloadNode(newNode *panel.NodeInfo) error {
-	log.WithField("tag", c.tag).Info("Reloading node configuration")
-
-	// 保存旧的 tag
-	oldTag := c.tag
-
-	// 删除旧节点
-	if err := c.server.DelNode(oldTag); err != nil {
-		log.WithFields(log.Fields{
-			"tag": oldTag,
-			"err": err,
-		}).Error("Failed to delete old node")
-		return err
-	}
-	c.nodeAdded = false
-
-	// 更新 tag
-	if len(c.Options.Name) == 0 {
-		c.tag = c.buildNodeTag(newNode)
-		// 更新 limiter
-		if c.limiterAdded {
-			limiter.DeleteLimiter(oldTag)
-			c.limiterAdded = false
-		}
-		l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
-		c.limiter = l
-		c.limiterAdded = true
-	}
-
-	// 更新规则
-	if err := c.limiter.UpdateRule(&newNode.Rules); err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Failed to update rules")
-		return err
-	}
-
-	// 请求证书
-	if newNode.Security == panel.Tls {
-		if err := c.requestCert(); err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Failed to request cert")
-			return err
-		}
-	}
-
-	// 添加新节点
-	if err := c.server.AddNode(c.tag, newNode, c.Options); err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Failed to add new node")
-		return err
-	}
-	c.nodeAdded = true
-
-	// 添加用户
-	added, err := c.server.AddUsers(&vCore.AddUsersParams{
-		Tag:      c.tag,
-		Users:    c.userList,
-		NodeInfo: newNode,
-	})
-	if err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Failed to add users")
-		return err
-	}
-
-	c.info = newNode
-	c.traffic = make(map[string]int64)
-
-	log.WithFields(log.Fields{
-		"tag":   c.tag,
-		"users": added,
-	}).Info("Node reloaded successfully")
-
-	return nil
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+	return c.reconcileLocked(newNode, nil, nil)
 }

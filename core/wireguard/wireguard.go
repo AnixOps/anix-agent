@@ -242,14 +242,14 @@ func (w *WireGuard) DelNode(tag string) error {
 	state, ok := w.nodes[tag]
 	w.mu.Unlock()
 	if !ok {
-		return errors.New("the node is not have")
+		return vCore.ErrNodeNotFound
 	}
 	state.applyMu.Lock()
 	defer state.applyMu.Unlock()
 	w.mu.Lock()
 	if current, exists := w.nodes[tag]; !exists || current != state {
 		w.mu.Unlock()
-		return errors.New("the node is not have")
+		return vCore.ErrNodeNotFound
 	}
 	delete(w.nodes, tag)
 	delete(w.traffic, tag)

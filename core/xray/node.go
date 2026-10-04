@@ -72,6 +72,8 @@ func (c *Xray) AddNode(tag string, info *panel.NodeInfo, config *conf.Options) e
 	}
 	err = c.addOutbound(outBoundConfig)
 	if err != nil {
+		// Leave no inbound behind for a node that is not added.
+		_ = c.removeInbound(tag)
 		if c.debugger.IsEnabled() {
 			c.debugger.LogError("addOutbound", tag, err)
 		}
@@ -90,6 +92,12 @@ func (c *Xray) addInbound(config *core.InboundHandlerConfig) error {
 		return fmt.Errorf("not an InboundHandler: %s", err)
 	}
 	if err := c.ihm.AddHandler(context.Background(), handler); err != nil {
+		// The manager keeps a handler whose Start failed (a port still in
+		// use): drop it, or the tag stays taken and no later add of the
+		// node, nor of its previous configuration, can succeed.
+		if registered, getErr := c.ihm.GetHandler(context.Background(), handler.Tag()); getErr == nil && registered == handler {
+			_ = c.ihm.RemoveHandler(context.Background(), handler.Tag())
+		}
 		return err
 	}
 	return nil

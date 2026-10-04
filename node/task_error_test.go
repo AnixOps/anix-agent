@@ -154,9 +154,10 @@ func TestNodeInfoMonitorReturnsDeleteErrorWithoutPanic(t *testing.T) {
 			node:  &panel.NodeInfo{Id: 1, Type: "vless"},
 			alive: map[int]int{},
 		},
-		server:  &errorTestCore{delNodeErr: delErr},
-		tag:     "test-node",
-		Options: &conf.Options{},
+		server:    &errorTestCore{delNodeErr: delErr},
+		tag:       "test-node",
+		Options:   &conf.Options{},
+		nodeAdded: true,
 	}
 
 	if err := controller.nodeInfoMonitor(); !errors.Is(err, delErr) {
