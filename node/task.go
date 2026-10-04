@@ -10,7 +10,6 @@ import (
 	"github.com/AnixOps/anix-agent/v4/common/monitor"
 	"github.com/AnixOps/anix-agent/v4/common/task"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
-	"github.com/AnixOps/anix-agent/v4/limiter"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	log "github.com/sirupsen/logrus"
 )
@@ -136,95 +135,36 @@ type pullCacheResetter interface {
 
 // reconcileLocked brings the node to newN (a changed configuration: the
 // node restarts), newU (a changed user list: users are added and removed
-// in place) and newA (the alive list); nil leaves that part as it is.
-// reconcileMu is held.
+// in place) and newA (the alive list); nil leaves that part as it is. A
+// newN equal to the configuration the node runs is no change: the core is
+// not touched (a configuration revision also moves for the forwarding
+// member of the document, which proxy nodes do not run). reconcileMu is
+// held.
 func (c *Controller) reconcileLocked(newN *panel.NodeInfo, newU []panel.UserInfo, newA map[int]int) (err error) {
+	if newN != nil && c.nodeAdded && nodeConfigEqual(c.info, newN) {
+		log.WithField("tag", c.tag).Debug("Node configuration unchanged, no reload")
+		newN = nil
+	}
 	if newN != nil {
-		c.info = newN
-		// nodeInfo changed
 		if newU != nil {
 			c.userList = newU
 		}
-		c.traffic = make(map[string]int64)
-		// Remove old node
-		log.WithField("tag", c.tag).Info("Node changed, reload")
-		err = c.server.DelNode(c.tag)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Delete node failed")
-			return fmt.Errorf("delete node %s: %w", c.tag, err)
-		}
-
-		// Update limiter
-		if len(c.Options.Name) == 0 {
-			oldTag := c.tag
-			c.tag = c.buildNodeTag(newN)
-			// Remove the limiter under the old tag before replacing the tag.
-			limiter.DeleteLimiter(oldTag)
-			// Add new Limiter
-			alive := newA
-			if alive == nil {
-				alive = c.aliveMap
-			}
-			l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, alive)
-			c.limiter = l
-		}
-		// update alive list
 		if newA != nil {
-			c.limiter.AliveList = newA
+			c.aliveMap = newA
 		}
-		// Update rule
-		err = c.limiter.UpdateRule(&newN.Rules)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Update Rule failed")
-			return fmt.Errorf("update rules for node %s: %w", c.tag, err)
+		log.WithField("tag", c.tag).Info("Node changed, reload")
+		if err = c.replaceNodeLocked(newN); err != nil {
+			return err
 		}
-
-		// check cert
-		if newN.Security == panel.Tls {
-			err = c.requestCert()
-			if err != nil {
-				log.WithFields(log.Fields{
-					"tag": c.tag,
-					"err": err,
-				}).Error("Request cert failed")
-				return fmt.Errorf("request certificate for node %s: %w", c.tag, err)
-			}
-		}
-		// add new node
-		err = c.server.AddNode(c.tag, newN, c.Options)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Add node failed")
-			return fmt.Errorf("add node %s: %w", c.tag, err)
-		}
-		_, err = c.server.AddUsers(&vCore.AddUsersParams{
-			Tag:      c.tag,
-			Users:    c.userList,
-			NodeInfo: newN,
-		})
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Add users failed")
-			return fmt.Errorf("add users to node %s: %w", c.tag, err)
-		}
+		c.traffic = make(map[string]int64)
 		// Check interval
-		if c.nodeInfoMonitorPeriodic.Interval != newN.PullInterval &&
+		if c.nodeInfoMonitorPeriodic != nil && c.nodeInfoMonitorPeriodic.Interval != newN.PullInterval &&
 			newN.PullInterval != 0 {
 			c.nodeInfoMonitorPeriodic.Interval = newN.PullInterval
 			c.nodeInfoMonitorPeriodic.Close()
 			_ = c.nodeInfoMonitorPeriodic.Start(false)
 		}
-		if c.userReportPeriodic.Interval != newN.PushInterval &&
+		if c.userReportPeriodic != nil && c.userReportPeriodic.Interval != newN.PushInterval &&
 			newN.PushInterval != 0 {
 			c.userReportPeriodic.Interval = newN.PushInterval
 			c.userReportPeriodic.Close()

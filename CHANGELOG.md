@@ -465,6 +465,33 @@
     and `google.golang.org/protobuf` to v1.36.11, with matching
     `golang.org/x` updates.
 
+### Fixed
+
+- **A failed node reload no longer leaves the node without an inbound.**
+  When the new configuration could not be added (seen: `bind: address
+  already in use` a few seconds after the previous reload), the node stayed
+  deleted and every later snapshot failed with `delete node ...: the node is
+  not have` until the Agent restarted.
+  - Adding a node retries a busy address (EADDRINUSE) three times within
+    3.5 s. If the new configuration still fails, the previous one (tag,
+    limiter, rules, inbound, users) is restored and the error is reported to
+    Control.
+  - The controller tracks whether the core runs the node: a reconciliation
+    after a failed restore adds the node without deleting the absent one,
+    and a delete answered `ErrNodeNotFound` (`core.ErrNodeNotFound`, now
+    returned by the Selector and WireGuard) counts as done.
+  - Xray drops an inbound handler whose start failed (and the inbound of a
+    node whose outbound failed), so the tag is free for the next add.
+  - The legacy WebSocket's full configuration push (`reloadNode`) takes the
+    same path, under the reconciliation lock.
+- **A configuration revision that leaves the proxy node's configuration
+  unchanged no longer reloads its inbound.** A forwarding plan change
+  (`forward.v1`) moves the node's revision; the Agent restarted the
+  VLESS/VMess/... inbound on every one, dropping the users' connections. A
+  snapshot, legacy pull or node.reload whose parsed configuration equals the
+  running one (compared in full, Reality settings included) now only applies
+  the users and the alive list.
+
 ## 3.1.0-alpha.2 - 2026-07-18
 
 ### Added

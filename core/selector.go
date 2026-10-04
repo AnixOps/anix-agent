@@ -10,6 +10,10 @@ import (
 	"github.com/AnixOps/anix-agent/v4/conf"
 )
 
+// ErrNodeNotFound is answered for a tag the core does not run. A caller
+// removing a node may take it as already removed.
+var ErrNodeNotFound = errors.New("the node is not have")
+
 type Selector struct {
 	cores map[string]Core
 	// order is the configuration order of cores: a node that names no
@@ -124,13 +128,13 @@ func (s *Selector) DelNode(tag string) error {
 		s.nodes.Delete(tag)
 		return nil
 	}
-	return errors.New("the node is not have")
+	return ErrNodeNotFound
 }
 
 func (s *Selector) AddUsers(p *AddUsersParams) (added int, err error) {
 	t, e := s.nodes.Load(p.Tag)
 	if !e {
-		return 0, errors.New("the node is not have")
+		return 0, ErrNodeNotFound
 	}
 	return t.(Core).AddUsers(p)
 }
@@ -138,7 +142,7 @@ func (s *Selector) AddUsers(p *AddUsersParams) (added int, err error) {
 func (s *Selector) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
 	t, e := s.nodes.Load(tag)
 	if !e {
-		return nil, errors.New("the node is not have")
+		return nil, ErrNodeNotFound
 	}
 	return t.(Core).GetUserTrafficSlice(tag, reset)
 }
@@ -146,7 +150,7 @@ func (s *Selector) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraf
 func (s *Selector) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
 	t, e := s.nodes.Load(tag)
 	if !e {
-		return nil, errors.New("the node is not have")
+		return nil, ErrNodeNotFound
 	}
 	provider, ok := t.(OnlineDeviceProvider)
 	if !ok {
@@ -158,7 +162,7 @@ func (s *Selector) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
 func (s *Selector) UpdateUserRateLimit(tag, uuid string, speedLimit int) error {
 	t, ok := s.nodes.Load(tag)
 	if !ok {
-		return errors.New("the node is not have")
+		return ErrNodeNotFound
 	}
 	updater, ok := t.(RateLimitUpdater)
 	if !ok {
@@ -170,7 +174,7 @@ func (s *Selector) UpdateUserRateLimit(tag, uuid string, speedLimit int) error {
 func (s *Selector) RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error {
 	t, ok := s.nodes.Load(tag)
 	if !ok {
-		return errors.New("the node is not have")
+		return ErrNodeNotFound
 	}
 	rollbacker, ok := t.(TrafficRollbacker)
 	if !ok {
@@ -182,7 +186,7 @@ func (s *Selector) RollbackUserTrafficSlice(tag string, traffic []panel.UserTraf
 func (s *Selector) DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo) error {
 	t, e := s.nodes.Load(tag)
 	if !e {
-		return errors.New("the node is not have")
+		return ErrNodeNotFound
 	}
 	return t.(Core).DelUsers(users, tag, info)
 }
