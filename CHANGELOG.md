@@ -4,6 +4,33 @@
 
 ### Added
 
+- **`agent.diagnostic` and the forward diagnostic checks** (anix-control
+  F3c, PROTOCOL.md "Diagnostic operation"; Control's route diagnosis,
+  forward-sdk.md section 7.6).
+  - A forward node, and a proxy node that forwards, list `agent.diagnostic`
+    and `diag.v1` (`DataPlaneConfig.Diagnostics`). They run Control's
+    diagnostic tasks on the stream (package `diagnostic`).
+  - **Generic actions** for the service `gost` (unit
+    `anixops-gost.service`): `service_status` and `log_tail` (at most 1000
+    lines). `service_restart` is refused, because the forward component
+    manages gost.
+  - **Forward checks** (`forward.Component.Diagnose`):
+    - `forward.listen`: the hop's nftables rules are running, or gost's
+      socket is bound to the port.
+    - `forward.port_conflict`: foreign listeners from `ss -p`, and other
+      tables' dnat, redirect and tproxy rules on the port, nat table
+      included, from `nft -j list ruleset`.
+    - `forward.connect`: a TCP connect to each upstream, all at once.
+    - `forward.udp_probe`: one datagram per upstream. No reply is
+      `inconclusive`.
+  - A check probes only the hop the component holds, never an address
+    Control names. Every address a target resolves to passes
+    `validate.CheckTargetAddress`, under the stricter of the hop's policy and
+    Control's `target_policy`. A check changes nothing on the node.
+  - As the sandboxed `anixops-agent` user, `ss -p` may not name other
+    users' processes. A socket it cannot attribute on a gost hop is taken
+    as gost's.
+
 - O1 installer layout (anix-control #177; owner decisions H13, H20, H25).
   The Agent runs from the configuration Control's `/install.sh` writes, as
   the user `anixops-agent` in a systemd sandbox.

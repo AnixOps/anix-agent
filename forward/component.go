@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
 	"sort"
 	"sync"
@@ -84,8 +85,17 @@ type Options struct {
 	// Links keeps the link certificate (IssueLinkCertificate,
 	// GetLinkTrustBundle); nil leaves the files to someone else.
 	Links *LinkOptions
-	// Dial probes upstreams (TCP connect); nil uses net.Dialer.
+	// Dial probes upstreams (TCP connect, and UDP for the forward
+	// diagnostic checks); nil uses net.Dialer.
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
+	// Lookup resolves a target name for the diagnostic checks; nil uses
+	// the system resolver.
+	Lookup func(ctx context.Context, host string) ([]netip.Addr, error)
+	// Run runs the diagnostic checks' read-only host commands (ss, nft);
+	// nil runs them.
+	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
+	// SS and NFT are those binaries; empty runs them from PATH.
+	SS, NFT string
 
 	// Cadences; zero means the default. Tests shorten them.
 	ReportInterval    time.Duration

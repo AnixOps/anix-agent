@@ -9,6 +9,7 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	agentstate "github.com/AnixOps/anix-agent/v4/api/agent/state"
+	"github.com/AnixOps/anix-agent/v4/diagnostic"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
@@ -34,6 +35,38 @@ type NodeConfig struct {
 	StateRoot string
 	// Component is the forward component, already started.
 	Component *Component
+	// GostUnit is gost's systemd unit for the diagnostic tasks; empty is
+	// anixops-gost.service.
+	GostUnit string
+}
+
+// DefaultGostUnit is the unit the gost driver runs gost as.
+const DefaultGostUnit = "anixops-gost.service"
+
+// NodeDiagnostics answers the agent.diagnostic executor of a node that
+// forwards with component: the forward checks, and the generic tasks on
+// gost's unit, which the component manages, so it is not restarted from
+// a task.
+func NodeDiagnostics(component *Component, gostUnit string) *diagnostic.Executor {
+	if gostUnit == "" {
+		gostUnit = DefaultGostUnit
+	}
+	return &diagnostic.Executor{
+		Forward:   component,
+		Units:     map[string]string{"gost": gostUnit},
+		NoRestart: map[string]string{"gost": "managed by the forward component"},
+	}
+}
+
+// DiagnosticCapabilities answers the operation capability of
+// NodeDiagnostics when existing does not list it yet: agent.diagnostic.
+// diag.v1, which tells Control the handler runs the forward checks, comes
+// from the data plane (DataPlaneConfig.Diagnostics).
+func DiagnosticCapabilities(existing []*agentv1pb.Capability) []*agentv1pb.Capability {
+	if agentcontrol.HasCapability(existing, diagnostic.Operation) {
+		return nil
+	}
+	return []*agentv1pb.Capability{{Name: diagnostic.Operation, Version: agentcontrol.CapabilityVersionV1}}
 }
 
 // Node is a running forward node's Agent.
@@ -63,11 +96,14 @@ func StartNode(ctx context.Context, config NodeConfig) (*Node, error) {
 	applier := config.Component.Applier(nil)
 	clientConfig := config.Client
 	clientConfig.NodeKind = agentcontrol.NodeKindForward
-	clientConfig.DataPlane = &agentapi.DataPlaneConfig{State: store, Config: applier, Forward: config.Component}
+	clientConfig.DataPlane = &agentapi.DataPlaneConfig{State: store, Config: applier, Forward: config.Component, Diagnostics: true}
+	diagnostics := NodeDiagnostics(config.Component, config.GostUnit)
 	clientConfig.Handler = agentapi.OperationHandlerFunc(func(ctx context.Context, operation *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 		switch operation.GetKind() {
 		case "agent.ping":
 			return json.Marshal(map[string]any{"node": node.String(), "time": time.Now().UnixMilli()})
+		case diagnostic.Operation:
+			return diagnostics.Handle(ctx, operation)
 		default:
 			return nil, fmt.Errorf("unsupported desired operation %q on a forward node", operation.GetKind())
 		}
@@ -77,6 +113,7 @@ func StartNode(ctx context.Context, config NodeConfig) (*Node, error) {
 			&agentv1pb.Capability{Name: "agent.control", Version: agentcontrol.CapabilityVersionV1},
 			&agentv1pb.Capability{Name: "agent.ping", Version: agentcontrol.CapabilityVersionV1})
 	}
+	clientConfig.Capabilities = append(clientConfig.Capabilities, DiagnosticCapabilities(clientConfig.Capabilities)...)
 	client, err := agentapi.NewClient(clientConfig)
 	if err != nil {
 		return nil, err

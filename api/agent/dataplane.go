@@ -139,6 +139,11 @@ type DataPlaneConfig struct {
 	// forwarding state rides in config.v1, and the ConfigApplier hands it
 	// to the component.
 	Forward ForwardHandler
+	// Diagnostics advertises diag.v1: the Agent's agent.diagnostic handler
+	// runs the forward checks of Control's route diagnosis (PROTOCOL.md,
+	// "Diagnostic operation"). It adds no payload; set it only with that
+	// handler and the agent.diagnostic capability.
+	Diagnostics bool
 	// LegacyGrace defaults to DefaultLegacyGrace.
 	LegacyGrace time.Duration
 	// Now defaults to time.Now (tests).
@@ -351,6 +356,9 @@ func (d *DataPlane) capabilities() []string {
 	}
 	if d.config.Artifacts {
 		names = append(names, agentcontrol.CapabilityArtifacts)
+	}
+	if d.config.Diagnostics {
+		names = append(names, agentcontrol.CapabilityDiag)
 	}
 	return names
 }
