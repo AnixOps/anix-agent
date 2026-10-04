@@ -283,3 +283,25 @@ func TestDiagnoseUDPProbe(t *testing.T) {
 		t.Fatalf("verdict: %+v", result)
 	}
 }
+
+// A next hop is probed on its link's carrier only.
+func TestDiagnoseLinkCarriers(t *testing.T) {
+	h := diagHarness(t, &hostCommands{})
+	quic := &forwardv1.Upstream{Address: "192.0.2.42", Port: 32000, Weight: 1, NodeRef: "forward-42",
+		Egress: &forwardv1.LinkTransport{Security: forwardv1.LinkSecurity_LINK_SECURITY_QUIC}}
+	tls := &forwardv1.Upstream{Address: "192.0.2.43", Port: 32001, Weight: 1, NodeRef: "forward-43",
+		Egress: &forwardv1.LinkTransport{Security: forwardv1.LinkSecurity_LINK_SECURITY_TLS}}
+	entry := hop("r1", 0, 31000, forwardv1.BalanceStrategy_BALANCE_STRATEGY_ROUND_ROBIN, quic, tls)
+	entry.Engine = forwardv1.Engine_ENGINE_NFTABLES
+	h.c.mu.Lock()
+	h.c.desired = state(2, hashOf(5), entry)
+	h.c.mu.Unlock()
+	connect, _ := h.c.Diagnose(context.Background(), CheckConnect, params("r1", 0))
+	if connect.Items[0].Code != "link_not_tcp" || connect.Items[1].Code != "reachable" {
+		t.Fatalf("connect: %+v", connect)
+	}
+	probe, _ := h.c.Diagnose(context.Background(), CheckUDPProbe, params("r1", 0, "upstream", "192.0.2.43:32001"))
+	if probe.Items[0].Code != "link_not_udp" || probe.Status != VerdictSkipped {
+		t.Fatalf("udp: %+v", probe)
+	}
+}

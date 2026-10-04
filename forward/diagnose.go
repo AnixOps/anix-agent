@@ -396,6 +396,21 @@ func (c *Component) probeUpstream(ctx context.Context, u *forwardv1.Upstream, po
 	if udp {
 		item.Protocol = "udp"
 	}
+	if u.GetNodeRef() != "" {
+		// A next hop listens on its link's carrier: QUIC has no TCP
+		// listener, and TLS, WSS and gRPC no UDP one.
+		security := u.GetEgress().GetSecurity()
+		quic := security == forwardv1.LinkSecurity_LINK_SECURITY_QUIC
+		raw := security == forwardv1.LinkSecurity_LINK_SECURITY_UNSPECIFIED || security == forwardv1.LinkSecurity_LINK_SECURITY_RAW
+		if !udp && quic {
+			item.Status, item.Code, item.Message = VerdictSkipped, "link_not_tcp", "the link to the next hop is QUIC: no TCP listener to connect to"
+			return item
+		}
+		if udp && !raw && !quic {
+			item.Status, item.Code, item.Message = VerdictSkipped, "link_not_udp", "the link to the next hop is "+security.String()+": no UDP listener to probe"
+			return item
+		}
+	}
 	dialTo := u.GetAddress()
 	if u.GetNodeRef() == "" {
 		// A target: every address it resolves to must pass the policy.
