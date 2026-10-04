@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -40,56 +38,44 @@ var (
 	uninstallCommand = cobra.Command{
 		Use:   "uninstall",
 		Short: "Uninstall AnixOps Agent",
-		Run:   uninstallHandle,
+		Long: `Removes what the installers wrote: the anix-agent, anixops-gost and updater
+(anixops-agent-updater.path and .service) units, the polkit rule, the binaries
+in /usr/lib/anixops-agent and /usr/local/anixops-agent, and the commands linked
+to them. The configuration and the node's identity and state stay, for a later
+install, unless --purge is given.`,
+		RunE:         uninstallHandle,
+		SilenceUsage: true,
 	}
 )
 
 func init() {
 	updateCommand.PersistentFlags().StringVar(&targetVersion, "version", "", "update target version")
-	uninstallCommand.Flags().BoolVar(&purgeConfig, "purge", false, "remove the AnixOps Agent configuration directory")
+	uninstallCommand.Flags().BoolVar(&purgeConfig, "purge", false, "also remove the configuration (/etc/anixops/agent), the identity and state (/var/lib/anixops-agent, /var/lib/anixops-gost) and the sysctl drop-in")
 	command.AddCommand(&updateCommand)
 	command.AddCommand(&uninstallCommand)
 }
 
-func uninstallHandle(_ *cobra.Command, _ []string) {
+// uninstallHandle removes the installers' units, binaries and links (see
+// uninstall_linux.go for what that is); --purge also removes the
+// configuration and the state, which are kept otherwise.
+func uninstallHandle(cmd *cobra.Command, _ []string) error {
+	if err := ensureRoot(); err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
 	var yes string
-	fmt.Println(Warn("确定要卸载 AnixOps Agent 吗?(Y/n)"))
-	fmt.Scan(&yes)
+	fmt.Fprintln(out, Warn("确定要卸载 AnixOps Agent 吗?(y/N)"))
+	_, _ = fmt.Fscan(cmd.InOrStdin(), &yes)
 	if strings.ToLower(yes) != "y" {
-		fmt.Println("已取消卸载")
-		return
+		fmt.Fprintln(out, "已取消卸载")
+		return nil
 	}
-	_, _ = exec.RunCommandByShell("systemctl stop anix-agent.service >/dev/null 2>&1 || true; systemctl disable anix-agent.service >/dev/null 2>&1 || true")
-	removeCompatibilitySymlink("/etc/systemd/system/V2bX.service", "/etc/systemd/system/anix-agent.service")
-	removeCompatibilitySymlink("/usr/bin/v2bx-anixops", "/usr/bin/anix-agent")
-	removeCompatibilitySymlink("/usr/local/bin/v2bx-anixops", "/usr/bin/anix-agent")
-	removeCompatibilitySymlink("/usr/bin/V2bX", "/usr/bin/anix-agent")
-	removeCompatibilitySymlink("/usr/local/bin/V2bX", "/usr/bin/anix-agent")
-	_ = os.RemoveAll("/etc/systemd/system/anix-agent.service")
-	_ = os.RemoveAll("/usr/local/anixops-agent/")
-	_ = os.RemoveAll("/usr/bin/anix-agent")
-	_ = os.RemoveAll("/usr/local/bin/anix-agent")
-	if purgeConfig {
-		_ = os.RemoveAll("/etc/anixops/agent/")
-	} else {
-		fmt.Println(Ok("已保留配置目录: /etc/anixops/agent"))
-	}
-	_, err := exec.RunCommandByShell("systemctl daemon-reload && systemctl reset-failed")
+	u := &uninstaller{root: uninstallRoot, purge: purgeConfig, systemctl: uninstallSystemctl}
+	err := u.uninstall()
+	u.report(out)
 	if err != nil {
-		fmt.Println(Err("exec cmd error: ", err))
-		fmt.Println(Err("卸载失败"))
-		return
+		return fmt.Errorf("卸载未完成: %w", err)
 	}
-	fmt.Println(Ok("卸载成功"))
-}
-
-func removeCompatibilitySymlink(path, expectedTarget string) {
-	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		return
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil && resolved == expectedTarget {
-		_ = os.Remove(path)
-	}
+	fmt.Fprintln(out, Ok("卸载成功"))
+	return nil
 }

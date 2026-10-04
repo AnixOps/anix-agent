@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The alive list from the control stream is no longer lost or raced while
+  a node starts.** The data plane applies `AliveList` (alive.v1) on its own
+  goroutine, also while the node's configuration is being applied.
+  `go test -race ./node` reported a data race in
+  `TestEnrolledAgentUnderRequiredNeedsNoLegacyPath` (`startWith` wrote the
+  controller's alive map without the reconcile lock), and the same window
+  lost the list: a list that arrived after the limiter was added but before
+  the node counted as started never reached the limiter, and a list that
+  arrived before the start was overwritten by the one the start had read
+  earlier, so device limits counted a stale list until Control's next one.
+  - The user list, alive map and limiter are now set under the reconcile
+    lock; the limiter takes a list from the stream as soon as it exists; a
+    start keeps a list the stream delivered before it.
+  - CI runs the whole `./node` package under the race detector, not only
+    the maintenance tests (about 50 s on 4 CPUs; 12 runs in a row passed).
+
+- **`anix-agent uninstall` matches the installed layout.** It knew only the
+  root install (`scripts/install.sh`): on a node installed by Control's
+  `/install.sh` (the O1 layout, which the O2/O3 work noted) it left
+  `/usr/lib/anixops-agent` (the Agent, `gost`, the `anix-agent.prev`
+  rollback copy), `anixops-agent-updater.path` and `.service` (the path unit
+  stayed enabled and would start an updater whose binary was gone),
+  `anixops-gost.service` and the polkit rule behind, and `--purge` kept
+  `/var/lib/anixops-agent` (the identity) and `/var/lib/anixops-gost`.
+  - It removes what either installer wrote, and only that: the four units
+    (stopped in the installer's order: updater, Agent, gost), the
+    `V2bX.service` link, the polkit rule, `/usr/lib/anixops-agent`,
+    `/usr/local/anixops-agent`, the commands linked to them, and the manager
+    script when it is this repository's. A link is removed only when it
+    points where the installer pointed it; a file or link of the same name
+    that is anything else is kept and listed (the old command removed
+    `/usr/bin/anix-agent` and `/usr/local/bin/anix-agent` whatever they were).
+  - Without `--purge` the configuration, identity and state stay, as with
+    `install.sh uninstall`; `--purge` also removes `/etc/anixops/agent`
+    (and `/etc/anixops` when empty), `/var/lib/anixops-agent`,
+    `/var/lib/anixops-gost` and `/etc/sysctl.d/90-anixops-forward.conf`.
+    The users, the forward drivers' nftables table and tc qdiscs, and the
+    directories of earlier releases are not the installer's files: they are
+    kept and listed (Control's `install.sh uninstall --purge` removes the
+    users and the forwarding objects).
+  - It refuses to run without root (it used to ignore every removal error),
+    prints what it removed and what it kept, goes on past an error and exits
+    non-zero when something could not be removed, and the prompt now reads
+    `(y/N)`, which is its default.
+    docs/INSTALL.md lists the paths per installer.
+
 ## 4.2.0-rc.1 - 2026-10-04
 
 ### Added

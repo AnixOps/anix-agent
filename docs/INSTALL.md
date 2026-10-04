@@ -265,6 +265,50 @@ The installer preserves `/etc/anixops/agent`, backs up the current executable,
 and restores it if the new service cannot start. To roll back, install the
 previous verified tag and check service health.
 
+## Uninstall
+
+`sudo anix-agent uninstall [--purge]` asks for confirmation and removes what
+the installer wrote, for either installer, and nothing else. Every path is
+removed only when it is the installer's: units, directories and the polkit
+rule by name, links only when they point where the installer pointed them
+(`/usr/local/bin/anix-agent` to `/usr/lib/anixops-agent/anix-agent`, or to
+the manager script), the manager script `/usr/bin/anix-agent` only when it is
+this repository's `scripts/anix-agent.sh`. Anything else of those names is
+left and listed as kept.
+
+This is the Agent binary's command. On a node Control's installer set up,
+`anix-agent` is the binary (`/usr/local/bin/anix-agent`). On a root install it
+is the manager script, whose own `uninstall` removes `anix-agent.service` and
+the program directory; run `/usr/local/anixops-agent/anix-agent uninstall` for
+the command described here.
+
+| Removed by `uninstall` | Installer |
+|---|---|
+| `anixops-agent-updater.path`, `anixops-agent-updater.service`, `anix-agent.service`, `anixops-gost.service` (disabled and stopped in that order), and the `V2bX.service` link to `anix-agent.service` | both |
+| `/etc/polkit-1/rules.d/50-anixops-agent.rules` | Control |
+| `/usr/lib/anixops-agent` (the Agent, `gost`, `anix-agent.prev`, `anix-agent.prev.json`) and the `/usr/local/bin/anix-agent` link | Control (`gost` also: root) |
+| `/usr/local/anixops-agent` (binary, backups, `data/`), `/usr/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links | root |
+
+Without `--purge` the configuration and the node's identity and state stay,
+with gost's directory and the sysctl drop-in, so that installing again finds
+the node enrolled:
+
+| Kept, removed by `--purge` |
+|---|
+| `/etc/anixops/agent` (and `/etc/anixops`, when empty) |
+| `/var/lib/anixops-agent` (identity, stream state, forwarding state, plugins, staged upgrades) |
+| `/var/lib/anixops-gost` |
+| `/etc/sysctl.d/90-anixops-forward.conf` (forwarding stays on until the next boot) |
+
+Not removed even with `--purge`, because the installer did not write them:
+the users `anixops-agent` and `anixops-gost`, the kernel objects the forward
+drivers create (the nftables table `inet anixops_fwd` and the tc root qdiscs
+`af00:`), and the directories of earlier releases (`/var/lib/anix-agent`,
+`/var/lib/anixops/plugins`). The command lists what it kept. AnixOps Control's
+`install.sh uninstall --purge` also removes the users and the forwarding
+objects (only when they carry the drivers' marks). The command does not
+reach Control: revoke the node's credentials there.
+
 ## Legacy V2bX_AnixOps Upgrade
 
 The installer automatically detects `/etc/V2bX`, `/usr/local/V2bX`, and
@@ -323,5 +367,6 @@ Validate one canary entry/exit pair before moving production users. See
 - Pin production deployments to a tag and retain checksum evidence.
 - Back up `/etc/anixops/agent` before overwriting configuration.
 - Upgrade one node at a time and observe panel reports before continuing.
-- Use `anix-agent uninstall` to preserve configuration; add `--purge` only when
-  the new configuration and migration backups should also be removed.
+- Use `anix-agent uninstall` to preserve configuration, identity and state;
+  add `--purge` only when the configuration, the state and migration backups
+  should also be removed (see "Uninstall").

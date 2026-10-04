@@ -64,7 +64,13 @@ jobs:
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
 
       - name: Verify durable maintenance transport and restart policy under race detector
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin ./node -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt|InstanceState)' -count=1
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./common/maintenance ./plugin -run 'Test(Maintenance|Outbox|Qualification|Consecutive|ManualErrors|EventRejects|Corrupt|InstanceState)' -count=1
+
+      - name: Run the node package under race detector
+        # The control-stream data plane applies configuration, users and the
+        # alive list on its own goroutine while the node starts; a race
+        # between them (aliveMap) only showed in tests outside the filter above.
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./node -count=1
 
       - name: Verify WireGuard relay and peer limit contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1

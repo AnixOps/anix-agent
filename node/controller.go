@@ -67,6 +67,12 @@ type Controller struct {
 	// reconcileMu.
 	lastConfigMode agentapi.DataPlaneMode
 	lastUsersMode  agentapi.DataPlaneMode
+	// aliveFromStream is set once the control stream delivered an alive
+	// list: a node that starts after it keeps that list instead of the one
+	// its caller read before. aliveMap, limiter and aliveFromStream are
+	// guarded by reconcileMu: the alive list is applied from the data
+	// plane's goroutine, also while the node starts.
+	aliveFromStream bool
 	*conf.Options
 }
 
@@ -154,14 +160,17 @@ func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 	return c.reconcileLocked(node, nil, nil)
 }
 
-// applyStreamAlive makes the running node's device limits count alive,
-// Control's alive list (alive.v1). A controller that is not started yet
-// takes it at startup.
+// applyStreamAlive makes the node's device limits count alive, Control's
+// alive list (alive.v1). It runs on the data plane's goroutine, also while
+// the node is starting: a limiter that exists takes the list at once (the
+// node may be half started), and a controller that has no limiter yet takes
+// it at startup (addLimiter).
 func (c *Controller) applyStreamAlive(alive map[int]int) {
 	c.reconcileMu.Lock()
 	defer c.reconcileMu.Unlock()
 	c.aliveMap = alive
-	if c.isStarted() && c.limiter != nil {
+	c.aliveFromStream = true
+	if c.limiter != nil {
 		c.limiter.AliveList = alive
 	}
 }
@@ -252,16 +261,32 @@ func (c *Controller) label() string {
 	return fmt.Sprintf("node %d (%s)", c.apiClient.GetNodeID(), nodeType)
 }
 
+// addLimiter sets the node's users and alive list and adds its limiter,
+// under reconcileMu: the data plane applies an alive list (applyStreamAlive)
+// from its own goroutine while the node starts. A list that came from the
+// stream before this point is newer than alive, which the caller read
+// earlier, so it stays.
+func (c *Controller) addLimiter(users []panel.UserInfo, alive map[int]int) *limiter.Limiter {
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+	c.userList = users
+	if !c.aliveFromStream || c.aliveMap == nil {
+		c.aliveMap = alive
+	}
+	if c.aliveMap == nil {
+		c.aliveMap = make(map[int]int)
+	}
+	l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
+	c.limiter = l
+	c.limiterAdded = true
+	return l
+}
+
 // startWith starts the node with its configuration, users and alive list.
 func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, alive map[int]int) error {
 	var err error
-	c.userList = users
-	if len(c.userList) == 0 {
+	if len(users) == 0 {
 		log.Warn("No users found for this node, will continue running and check for users periodically")
-	}
-	c.aliveMap = alive
-	if c.aliveMap == nil {
-		c.aliveMap = make(map[int]int)
 	}
 	if len(c.Options.Name) == 0 {
 		c.tag = c.buildNodeTag(node)
@@ -272,9 +297,7 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 	log.StandardLogger().AddHook(c.logHook)
 
 	// add limiter
-	l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
-	c.limiter = l
-	c.limiterAdded = true
+	l := c.addLimiter(users, alive)
 	// add rule limiter
 	if err = l.UpdateRule(&node.Rules); err != nil {
 		return fmt.Errorf("update rule error: %s", err)
