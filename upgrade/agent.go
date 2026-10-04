@@ -54,8 +54,19 @@ type Agent struct {
 	// UpdaterActive replaces the systemctl check (tests).
 	UpdaterActive func(context.Context) bool
 
-	mu   sync.Mutex
-	busy bool
+	mu sync.Mutex
+	// flight is the upgrade running here, until its hand-off settled.
+	flight *flight
+}
+
+// flight is one running upgrade.
+type flight struct {
+	target, action string
+	done           chan struct{}
+}
+
+func (f *flight) same(target, action string) bool {
+	return agentcontrol.SameAgentVersion(f.target, target) && f.action == action
 }
 
 var (
@@ -135,63 +146,79 @@ func (a *Agent) updaterActive(ctx context.Context) bool {
 
 // Admit refuses, before the acknowledgement, an agent.upgrade that does
 // not parse (upgrade_invalid_request) or arrives while another upgrade is
-// in progress (upgrade_in_progress). Other kinds pass.
+// in progress (upgrade_in_progress). The same upgrade through the host's
+// other node identity is admitted: Handle joins it. Other kinds pass.
 func (a *Agent) Admit(operation *agentv1pb.DesiredOperation) error {
 	if operation.GetKind() != agentcontrol.OperationKindAgentUpgrade {
 		return nil
 	}
-	if _, err := agentcontrol.ParseUpgradeRequest(operation.GetPayloadJson()); err != nil {
+	request, err := agentcontrol.ParseUpgradeRequest(operation.GetPayloadJson())
+	if err != nil {
 		return &Error{Code: agentcontrol.UpgradeErrorInvalidRequest, Err: err}
 	}
-	if a.inProgress() {
+	if agentcontrol.SameAgentVersion(a.Version, request.TargetVersion) {
+		return nil
+	}
+	a.mu.Lock()
+	running := a.flight
+	a.mu.Unlock()
+	if running != nil && !running.same(request.TargetVersion, request.Action) {
 		return codeError(agentcontrol.UpgradeErrorBusy, "another upgrade is in progress")
+	}
+	if pending, ok := a.pendingRequest(); ok && !sameHandOff(pending, request) {
+		return codeError(agentcontrol.UpgradeErrorBusy, "the updater has not taken the previous request yet")
 	}
 	return nil
 }
 
-// inProgress reports an upgrade running here or a hand-off the updater has
-// not taken yet.
-func (a *Agent) inProgress() bool {
-	a.mu.Lock()
-	busy := a.busy
-	a.mu.Unlock()
-	return busy || a.pendingRequest()
+func sameHandOff(handOff HandOff, request agentcontrol.UpgradeRequest) bool {
+	return agentcontrol.SameAgentVersion(handOff.TargetVersion, request.TargetVersion) && handOff.Action == request.Action
 }
 
-// pendingRequest reports a request.json the updater has not consumed, and
-// removes one older than StaleRequest.
-func (a *Agent) pendingRequest() bool {
+// pendingRequest answers a request.json the updater has not consumed, and
+// removes one older than StaleRequest. A request it cannot read still
+// counts as pending, for no target.
+func (a *Agent) pendingRequest() (HandOff, bool) {
+	var handOff HandOff
 	path := filepath.Join(a.dir(), RequestFile)
 	info, err := os.Lstat(path)
 	if err != nil {
-		return false
+		return handOff, false
 	}
 	stale := a.StaleRequest
 	if stale <= 0 {
 		stale = DefaultStaleRequest
 	}
 	if a.now().Sub(info.ModTime()) < stale {
-		return true
+		if data, err := readSmall(path, maxHandOffBytes); err == nil {
+			_ = json.Unmarshal(data, &handOff)
+		}
+		return handOff, true
 	}
 	log.WithFields(log.Fields{"component": "agent-upgrade", "request": path, "age": a.now().Sub(info.ModTime()).Round(time.Second)}).
 		Warn("The updater never took the upgrade request; removing it (is anixops-agent-updater.path active?)")
 	_ = os.Remove(path)
-	return false
+	return handOff, false
 }
 
-func (a *Agent) begin() bool {
+// begin claims the Agent for an upgrade. When another runs it answers it
+// instead (running non-nil).
+func (a *Agent) begin(target, action string) (running *flight) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.busy {
-		return false
+	if a.flight != nil {
+		return a.flight
 	}
-	a.busy = true
-	return true
+	a.flight = &flight{target: target, action: action, done: make(chan struct{})}
+	return nil
 }
 
 func (a *Agent) end() {
 	a.mu.Lock()
-	a.busy = false
+	if a.flight != nil {
+		close(a.flight.done)
+		a.flight = nil
+	}
 	a.mu.Unlock()
 }
 
@@ -229,8 +256,21 @@ func (a *Agent) Handle(ctx context.Context, operation *agentv1pb.DesiredOperatio
 	if agentcontrol.SameAgentVersion(a.Version, request.TargetVersion) {
 		return state(agentcontrol.UpgradePhaseCurrent, a.Version, nil)
 	}
-	if !a.begin() {
-		return state("", a.Version, codeError(agentcontrol.UpgradeErrorBusy, "another upgrade is in progress"))
+	// The same upgrade through the host's other node identity waits for
+	// the running one and joins its hand-off; another one is refused.
+	for {
+		running := a.begin(request.TargetVersion, request.Action)
+		if running == nil {
+			break
+		}
+		if !running.same(request.TargetVersion, request.Action) {
+			return state("", a.Version, codeError(agentcontrol.UpgradeErrorBusy, "another upgrade is in progress"))
+		}
+		select {
+		case <-running.done:
+		case <-ctx.Done():
+			return state("", a.Version, codeError(agentcontrol.UpgradeErrorBusy, "the same upgrade is still in progress"))
+		}
 	}
 	handedOff := false
 	defer func() {
@@ -238,7 +278,11 @@ func (a *Agent) Handle(ctx context.Context, operation *agentv1pb.DesiredOperatio
 			a.end()
 		}
 	}()
-	if a.pendingRequest() {
+	if pending, ok := a.pendingRequest(); ok {
+		if sameHandOff(pending, request) {
+			// Already with the updater, which restarts the whole Agent.
+			return state(agentcontrol.UpgradePhaseHandedOff, request.TargetVersion, nil)
+		}
 		return state("", a.Version, codeError(agentcontrol.UpgradeErrorBusy, "the updater has not taken the previous request yet"))
 	}
 	logger := log.WithFields(log.Fields{"component": "agent-upgrade", "operation_id": operation.GetOperationId(),

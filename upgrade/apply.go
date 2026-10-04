@@ -212,7 +212,7 @@ func (a *Applier) upgrade(ctx context.Context, dir string, handOff HandOff, resu
 	// and unpacked is a file only root can change.
 	zipPath, err := copyIn(filepath.Join(dir, handOff.File), lib, handOff.Size)
 	if err != nil {
-		return codeError(agentcontrol.UpgradeErrorDigest, "cannot read the staged release: %v", err)
+		return err
 	}
 	defer func() { _ = os.Remove(zipPath) }()
 	if err := verifyFile(zipPath, handOff, a.key()); err != nil {
@@ -453,18 +453,23 @@ func verifyFile(path string, handOff HandOff, key ed25519.PublicKey) error {
 	return VerifyRelease(data, handOff.Size, handOff.SHA256, handOff.Signature, key)
 }
 
-// copyIn copies a staged file of the Agent's directory into dir, refusing
-// links and anything but size bytes.
+// copyIn copies a staged file of the Agent's directory into dir: a link
+// or anything but a regular file is an invalid request, another size a
+// digest mismatch.
 func copyIn(source, dir string, size int64) (string, error) {
 	file, info, err := openRegular(source)
 	if err != nil {
-		return "", err
+		return "", codeError(agentcontrol.UpgradeErrorInvalidRequest, "cannot read the staged release: %v", err)
 	}
 	defer func() { _ = file.Close() }()
 	if info.Size() != size {
-		return "", fmt.Errorf("the staged release is %d bytes, not %d", info.Size(), size)
+		return "", codeError(agentcontrol.UpgradeErrorDigest, "the staged release is %d bytes, not %d", info.Size(), size)
 	}
-	return copyReader(io.LimitReader(file, size+1), dir, ".upgrade.*.zip", 0o600, size)
+	path, err := copyReader(io.LimitReader(file, size+1), dir, ".upgrade.*.zip", 0o600, size)
+	if err != nil {
+		return "", codeError(ErrorInstall, "cannot copy the staged release: %v", err)
+	}
+	return path, nil
 }
 
 // copyFile copies a regular file into a new temporary file of dir.

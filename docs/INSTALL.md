@@ -128,7 +128,9 @@ upgrades"). An Agent never upgrades on its own.
   before them is upgraded by re-running the installer.
 - **The Agent** (`agent.upgrade`, package `upgrade`) refuses the operation
   before acknowledging it when it does not parse (`upgrade_invalid_request`)
-  or another upgrade is in progress (`upgrade_in_progress`). On the target
+  or another upgrade is in progress (`upgrade_in_progress`); the same
+  upgrade offered through the host's other node identity joins the running
+  one and answers `handed_off` with it. On the target
   release already it answers `SUCCEEDED` `current`, which is also the
   answer to Control's replay after the restart. Otherwise it picks the
   artifact of its architecture, reports `downloading`, fetches it into

@@ -253,8 +253,8 @@ func TestApplyRefusesAStagedLink(t *testing.T) {
 	if err := os.Symlink(elsewhere, staged); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.applier.Apply(context.Background()); err == nil {
-		t.Fatal("a staged symbolic link is refused")
+	if _, err := f.applier.Apply(context.Background()); ErrorCode(err, "") != agentcontrol.UpgradeErrorInvalidRequest {
+		t.Fatalf("a staged symbolic link is refused: %v", err)
 	}
 	if string(readFile(t, filepath.Join(f.lib, BinaryName))) != string(f.old) {
 		t.Fatal("nothing installed")

@@ -23,6 +23,10 @@ type mirror struct {
 	mu     sync.Mutex
 	files  map[string][]byte
 	hits   []string
+	// gate, when set, holds every download until it is closed; started
+	// receives each held request's path.
+	gate    chan struct{}
+	started chan string
 }
 
 func newMirror(t *testing.T) *mirror {
@@ -31,7 +35,12 @@ func newMirror(t *testing.T) *mirror {
 		m.mu.Lock()
 		m.hits = append(m.hits, r.URL.Path)
 		data, ok := m.files[r.URL.Path]
+		gate, started := m.gate, m.started
 		m.mu.Unlock()
+		if gate != nil {
+			started <- r.URL.Path
+			<-gate
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -372,5 +381,53 @@ func TestLogLastResultSetsItAside(t *testing.T) {
 	f.agent.LogLastResult()
 	if exists(filepath.Join(f.dir, ResultFile)) || !exists(filepath.Join(f.dir, ResultFile+".seen")) {
 		t.Fatal("result.json is logged once")
+	}
+}
+
+// A host that runs proxy-<id> and forward-<id> gets the offer twice: the
+// second identity joins the first one's hand-off instead of failing.
+func TestTheSameUpgradeThroughAnotherIdentityJoinsTheHandOff(t *testing.T) {
+	f := newAgentFixture(t)
+	artifact, _ := f.artifact(t, "amd64", "v4.2.0")
+	f.mirror.gate, f.mirror.started = make(chan struct{}), make(chan string, 4)
+	request := agentcontrol.UpgradeRequest{Action: agentcontrol.UpgradeActionUpgrade, TargetVersion: "v4.2.0", Artifacts: []agentcontrol.UpgradeArtifact{artifact}}
+	proxy, forward := upgradeOperation(t, request), upgradeOperation(t, request)
+	forward.OperationId = "op-forward"
+
+	first := make(chan *run, 1)
+	go func() { first <- f.handle(t, proxy) }()
+	<-f.mirror.started
+	if err := f.agent.Admit(forward); err != nil {
+		t.Fatalf("the same upgrade is admitted: %v", err)
+	}
+	other := request
+	other.TargetVersion = "v4.3.0"
+	if err := f.agent.Admit(upgradeOperation(t, other)); ErrorCode(err, "") != agentcontrol.UpgradeErrorBusy {
+		t.Fatalf("another upgrade is refused: %v", err)
+	}
+	second := make(chan *run, 1)
+	go func() { second <- f.handle(t, forward) }()
+	close(f.mirror.gate)
+	r1 := <-first
+	if r1.err != nil || r1.state.Phase != agentcontrol.UpgradePhaseHandedOff {
+		t.Fatalf("first: %+v %v", r1.state, r1.err)
+	}
+	select {
+	case r := <-second:
+		t.Fatalf("the second waits for the first's hand-off: %+v", r.state)
+	case <-time.After(50 * time.Millisecond):
+	}
+	r1.finish(agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED)
+	r2 := <-second
+	if r2.err != nil || r2.state.Phase != agentcontrol.UpgradePhaseHandedOff || len(r2.progress) != 0 {
+		t.Fatalf("second: %+v %v %v", r2.state, r2.err, r2.progress)
+	}
+	r2.finish(agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED)
+	if hits := f.mirror.requested(); len(hits) != 1 {
+		t.Fatalf("one download: %v", hits)
+	}
+	var handOff HandOff
+	if err := json.Unmarshal(readFile(t, filepath.Join(f.dir, RequestFile)), &handOff); err != nil || handOff.OperationID != "op-1" {
+		t.Fatalf("one request, the first's: %+v %v", handOff, err)
 	}
 }

@@ -18,6 +18,9 @@
     - It refuses the operation before acknowledging it when it does not
       parse (`upgrade_invalid_request`) or another upgrade is in progress
       (`upgrade_in_progress`, also while a hand-off waits for the updater).
+      The same upgrade offered through the host's other node identity is
+      admitted: it waits for the running one and answers `handed_off` once
+      that hand-off is with the updater (one download, one request).
     - On the target already: `SUCCEEDED` `current`, which also answers
       Control's replay after the restart.
     - Otherwise: the artifact of its `GOARCH` (`upgrade_no_artifact`),
