@@ -4,6 +4,62 @@
 
 ### Added
 
+- **Control-pushed staged upgrades: `upgrade.v1` and `agent.upgrade`**
+  (anix-control O4, PROTOCOL.md "Agent upgrades", forward-sdk.md section 9;
+  owner decision H19: Control decides the batches, an Agent never upgrades
+  on its own, artifacts are verified with the official Ed25519 key).
+  - **Negotiation.** Proxy and forward nodes list `upgrade.v1`
+    (`DataPlaneConfig.Upgrade`) only when `anixops-agent-updater.path` is
+    active. The official release key is compiled in
+    (`upgrade.OfficialPublicKey`, the key of anix-control's `install.sh`).
+    One handler serves every node identity of the process, so a host that
+    runs `proxy-<id>` and `forward-<id>` upgrades once.
+  - **The Agent** (package `upgrade`, `Agent`):
+    - It refuses the operation before acknowledging it when it does not
+      parse (`upgrade_invalid_request`) or another upgrade is in progress
+      (`upgrade_in_progress`, also while a hand-off waits for the updater).
+    - On the target already: `SUCCEEDED` `current`, which also answers
+      Control's replay after the restart.
+    - Otherwise: the artifact of its `GOARCH` (`upgrade_no_artifact`),
+      `APPLYING` `downloading` into `/var/lib/anixops-agent/upgrade` (at
+      most `size` bytes), `APPLYING` `verifying` (size, SHA-256, Ed25519
+      signature: `upgrade_digest_mismatch`, `upgrade_signature_invalid`; the
+      download is removed).
+    - The hand-off: `request.json` is written to a temporary file,
+      `SUCCEEDED` `handed_off` is sent, and only then is the request renamed
+      into place (the updater restarts the Agent). If the terminal state is
+      not a success (the deadline passed), the request is dropped.
+    - A rollback needs `anix-agent.prev.json` naming the target
+      (`upgrade_no_previous_release`); no updater:
+      `upgrade_updater_unavailable`.
+  - **The updater**: `anix-agent upgrade apply --request <file>`, the
+    `ExecStart` of the root oneshot `anixops-agent-updater.service`
+    (`upgrade.Applier`). It trusts nothing in the request:
+    - It consumes the request and reads it and the staged release without
+      following links.
+    - It copies the release into `/usr/lib/anixops-agent` and verifies it
+      again with its own key.
+    - It refuses a downgrade other than a rollback to the kept release
+      (`upgrade_downgrade_refused`).
+    - It unpacks only the regular files `anix-agent` and `gost`, and checks
+      that the new binary's `version` prints the target.
+    - It keeps the installed binary as `anix-agent.prev` with
+      `anix-agent.prev.json` (version, SHA-256), swaps by rename and
+      restarts `anix-agent.service`.
+    - When the new Agent does not stay active with one main process for 30
+      s, it reinstates the kept binary and restarts again
+      (`upgrade_start_failed`).
+    - It writes `result.json`, which the next Agent logs once.
+    - It never restarts `anixops-gost.service`. A release `gost` whose
+      SHA-256 is the pinned one (`upgrade.PinnedGostSHA256`, kept equal to
+      `release.yml` by a test) is installed for gost's next start.
+  - **Client hooks** (`api/agent`): `Config.Admit` refuses an operation
+    before its acknowledgement; `ReportProgress` sends `APPLYING` with
+    `state_json`; `AfterTerminal` runs after the terminal state was recorded
+    and sent, with the phase actually sent.
+  - anix-control SDK `49a3d9bc` (`agentcontrol.CapabilityUpgrade`,
+    `UpgradeRequest`).
+
 - **`agent.diagnostic` and the forward diagnostic checks** (anix-control
   F3c, PROTOCOL.md "Diagnostic operation"; Control's route diagnosis,
   forward-sdk.md section 7.6).

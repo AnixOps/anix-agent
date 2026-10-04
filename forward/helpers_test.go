@@ -59,10 +59,20 @@ func (d *testDriver) Apply(ctx context.Context, a driver.Artifact) (driver.Apply
 type dialer struct {
 	mu   sync.Mutex
 	down map[string]bool
-	n    atomic.Int64
+	// by counts the dials per address: the health loop dials too, so a
+	// test counts only the addresses it is about.
+	by map[string]int
+	n  atomic.Int64
 }
 
-func newDialer() *dialer { return &dialer{down: map[string]bool{}} }
+func newDialer() *dialer { return &dialer{down: map[string]bool{}, by: map[string]int{}} }
+
+// dials answers how often address was dialed.
+func (d *dialer) dials(address string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.by[address]
+}
 
 func (d *dialer) set(address string, down bool) {
 	d.mu.Lock()
@@ -73,6 +83,7 @@ func (d *dialer) set(address string, down bool) {
 func (d *dialer) dial(ctx context.Context, _, address string) (net.Conn, error) {
 	d.n.Add(1)
 	d.mu.Lock()
+	d.by[address]++
 	down := d.down[address]
 	d.mu.Unlock()
 	if down {

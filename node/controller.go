@@ -16,6 +16,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/diagnostic"
 	"github.com/AnixOps/anix-agent/v4/limiter"
 	"github.com/AnixOps/anix-agent/v4/plugin"
+	"github.com/AnixOps/anix-agent/v4/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
@@ -53,6 +54,8 @@ type Controller struct {
 	// diagnostics runs agent.diagnostic when the node forwards (the
 	// forward checks of Control's route diagnosis); nil otherwise.
 	diagnostics *diagnostic.Executor
+	// upgrader runs agent.upgrade (upgrade.v1); nil without one.
+	upgrader *upgrade.Agent
 	// nodeType is the configured NodeType; it picks the controller's entry
 	// of a configuration snapshot (legacy_pull.types), empty for the node's
 	// default answer.

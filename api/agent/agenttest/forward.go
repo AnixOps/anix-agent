@@ -75,7 +75,8 @@ func (c *Control) offersLocked(name string, forward bool) bool {
 		return true
 	}
 	switch name {
-	case agentcontrol.CapabilityConfig:
+	case agentcontrol.CapabilityConfig, agentcontrol.CapabilityUpgrade:
+		// upgrade.v1 goes to proxy and forward nodes alike (O4).
 		return true
 	case agentcontrol.CapabilityPackageReports:
 		return forward

@@ -144,6 +144,11 @@ type DataPlaneConfig struct {
 	// "Diagnostic operation"). It adds no payload; set it only with that
 	// handler and the agent.diagnostic capability.
 	Diagnostics bool
+	// Upgrade advertises upgrade.v1: the Agent's agent.upgrade handler
+	// stages Control's upgrades for the privileged updater (PROTOCOL.md,
+	// "Agent upgrades"). It adds no payload; set it only when that handler
+	// runs and the updater is installed (package upgrade, Available).
+	Upgrade bool
 	// LegacyGrace defaults to DefaultLegacyGrace.
 	LegacyGrace time.Duration
 	// Now defaults to time.Now (tests).
@@ -359,6 +364,9 @@ func (d *DataPlane) capabilities() []string {
 	}
 	if d.config.Diagnostics {
 		names = append(names, agentcontrol.CapabilityDiag)
+	}
+	if d.config.Upgrade {
+		names = append(names, agentcontrol.CapabilityUpgrade)
 	}
 	return names
 }
