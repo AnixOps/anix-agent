@@ -10,6 +10,7 @@ import (
 
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/forward"
 	"github.com/AnixOps/anix-agent/v4/limiter"
 	"github.com/AnixOps/anix-agent/v4/node"
 	log "github.com/sirupsen/logrus"
@@ -105,6 +106,34 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	}
 	limiter.Init()
 	log.Info("Start AnixOps Agent...")
+
+	// Forwarding (F3b): the drivers are probed and the persisted state is
+	// re-applied before any control stream connects.
+	var forwardComponent *forward.Component
+	forwardProxyNode := 0
+	if c.Forward.Enabled() {
+		forwardComponent, forwardProxyNode, err = node.NewForwardComponent(c.Forward, c.NodeConfig)
+		if err != nil {
+			log.WithField("err", err).Error("Start the forward component failed")
+			return fmt.Errorf("start forwarding: %w", err)
+		}
+		defer forwardComponent.Close()
+		if c.Forward.ForwardNodeOnly() {
+			forwardNode, err := node.StartForward(c.Forward, forwardComponent)
+			if err != nil {
+				log.WithField("err", err).Error("Start the forward node failed")
+				return fmt.Errorf("start the forward node: %w", err)
+			}
+			defer forwardNode.Close()
+			log.Info("Forward node started")
+			if len(c.CoresConfig) == 0 && len(c.NodeConfig) == 0 {
+				// A forward node only: no proxy core to run.
+				waitForExitSignal()
+				return nil
+			}
+		}
+	}
+
 	vc, err := vCore.NewCore(c.CoresConfig)
 	if err != nil {
 		log.WithField("err", err).Error("new core failed")
@@ -127,6 +156,9 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	}
 
 	nodes := node.New()
+	if forwardComponent != nil && !c.Forward.ForwardNodeOnly() {
+		nodes.SetForward(forwardComponent, forwardProxyNode)
+	}
 	err = nodes.Start(c.NodeConfig, vc)
 	if err != nil {
 		log.WithField("err", err).Error("Run nodes failed")
@@ -169,11 +201,13 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	}
 	// clear memory
 	runtime.GC()
-	// wait exit signal
-	{
-		osSignals := make(chan os.Signal, 1)
-		signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
-		<-osSignals
-	}
+	waitForExitSignal()
 	return nil
+}
+
+// waitForExitSignal blocks until SIGINT or SIGTERM.
+func waitForExitSignal() {
+	osSignals := make(chan os.Signal, 1)
+	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
+	<-osSignals
 }

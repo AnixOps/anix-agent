@@ -20,6 +20,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/common/maintenance"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/forward"
 	"github.com/AnixOps/anix-agent/v4/plugin"
 	log "github.com/sirupsen/logrus"
 )
@@ -35,6 +36,9 @@ type Node struct {
 	supervisorSpecs       map[int]pluginSupervisorSpec
 	supervisorFactory     func(plugin.Config) (*plugin.Supervisor, error)
 	allowLegacySingleNode bool
+	// forward rides the stream of proxy node forwardNodeID (SetForward).
+	forward       *forward.Component
+	forwardNodeID int
 }
 
 func New() *Node {
@@ -173,6 +177,9 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 		var dataPlane *nodeDataPlane
 		if dataPlaneEnabled(candidate.apiConfig) {
 			dataPlane = newNodeDataPlane(nodeID, nodeControllers(n.controllers, controllerIdentities, nodeID, candidate.identity))
+			if n.forward != nil && nodeID == n.forwardNodeID {
+				dataPlane.forward = n.forward
+			}
 		}
 		agentClient, agentErr := newAgentControlClientForSupervisor(&candidate.apiConfig, candidate.controller, core, candidate.supervisor, dataPlane)
 		if agentErr != nil {
