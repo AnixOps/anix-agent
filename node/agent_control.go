@@ -18,6 +18,8 @@ import (
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/diagnostic"
+	"github.com/AnixOps/anix-agent/v4/forward"
 	"github.com/AnixOps/anix-agent/v4/plugin"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -67,6 +69,14 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		}
 	}
 
+	capabilities := agentCapabilities(core, supervisor != nil)
+	controller.diagnostics = nil
+	if dataPlane != nil && dataPlane.forward != nil {
+		// A forwarding proxy node runs Control's forward checks.
+		controller.diagnostics = forward.NodeDiagnostics(dataPlane.forward, "")
+		capabilities = append(capabilities, forward.DiagnosticCapabilities(capabilities)...)
+	}
+
 	hostname, _ := os.Hostname()
 	keepaliveTime := time.Duration(apiConfig.GRPCKeepalive) * time.Second
 	client, err := agentapi.NewClient(agentapi.Config{
@@ -78,7 +88,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		Identity:     identity,
 		AgentVersion: panel.Version,
 		InstanceID:   fmt.Sprintf("%s-%d-%d", hostname, os.Getpid(), nodeID),
-		Capabilities: agentCapabilities(core, supervisor != nil),
+		Capabilities: capabilities,
 		Labels: map[string]string{
 			"core":      core.Type(),
 			"node_type": apiConfig.NodeType,
@@ -143,8 +153,10 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 		},
 	}
 	if dataPlane.forward != nil {
-		// The stream carries the node's forwarding (forward.v1).
+		// The stream carries the node's forwarding (forward.v1), and the
+		// controller runs Control's forward checks (diag.v1).
 		config.Forward = dataPlane.forward
+		config.Diagnostics = true
 	}
 	if supervisor := dataPlane.supervisor(); supervisor != nil {
 		// The plugin supervisor's maintenance outbox (maintenance.v1) and
@@ -344,6 +356,11 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 			return nil, err
 		}
 		return c.pluginSupervisor.Handle(ctx, operation.Kind, envelope)
+	case diagnostic.Operation:
+		if c.diagnostics == nil {
+			return nil, fmt.Errorf("unsupported desired operation %q", operation.Kind)
+		}
+		return c.diagnostics.Handle(ctx, operation)
 	case "agent.ping":
 		return json.Marshal(map[string]any{
 			"node_id": c.apiClient.GetNodeID(),

@@ -2,8 +2,10 @@ package forward
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/api/agent/agenttest"
 	agentstate "github.com/AnixOps/anix-agent/v4/api/agent/state"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
 	"github.com/AnixOps/anix-control/sdk/forward/driver"
 	"github.com/AnixOps/anix-control/sdk/forward/driver/fake"
@@ -239,5 +242,76 @@ func TestProxyNodeCarriesForwarding(t *testing.T) {
 	}
 	if _, err := wire.Report(c.Report(context.Background())); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Control's route diagnosis reaches a forward node as agent.diagnostic: the
+// Agent lists agent.diagnostic and diag.v1, runs the forward check on the
+// hop it holds and answers the generic state with the check's result.
+func TestForwardNodeRunsDiagnosticChecks(t *testing.T) {
+	control := newForwardControl(t, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
+	agent := startStreamAgent(t, control, t.TempDir(), fake.NewHost(nil))
+	eventually(t, "the forward.v1 session", func() bool { return agent.client.Negotiated(agentcontrol.CapabilityForward) })
+	hellos := control.Hellos()
+	listed := map[string]bool{}
+	for _, capability := range hellos[len(hellos)-1].GetCapabilities() {
+		listed[capability.GetName()+"."+capability.GetVersion()] = true
+	}
+	if !listed["agent.diagnostic.v1"] || !listed["diag.v1"] {
+		t.Fatalf("capabilities %v", listed)
+	}
+	one := state(3, hashOf(1), hop("R1", 0, 30001, rr, up("192.0.2.10", 443, 0)))
+	control.SetDesiredConfig(agenttest.ForwardSnapshot(10, map[string]any{"kind": "forward"}, one), true)
+	eventually(t, "the state applied", func() bool { return agent.h.c.Status().Generation == 3 })
+
+	send := func(action string, params map[string]any) *agentv1pb.ObservedState {
+		t.Helper()
+		id := control.SendOperation("agent.diagnostic", func(_, operationID string, _ uint64) []byte {
+			payload, _ := json.Marshal(map[string]any{"task": map[string]any{"id": operationID, "type": "diagnostic", "action": action, "params": params, "timeout": 3}})
+			return payload
+		})
+		var terminal *agentv1pb.ObservedState
+		eventually(t, "the check's terminal state", func() bool {
+			for _, observed := range control.ObservedStates() {
+				if observed.GetOperationId() == id && (observed.GetPhase() == agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED || observed.GetPhase() == agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED) {
+					terminal = observed
+					return true
+				}
+			}
+			return false
+		})
+		return terminal
+	}
+	observed := send(CheckConnect, map[string]any{"route_id": "R1", "hop_index": 0, "timeout_ms": 500, "generation": 3, "target_policy": "public_only"})
+	if observed.GetPhase() != agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED {
+		t.Fatalf("observed %v", observed)
+	}
+	var answer struct {
+		Success bool        `json:"success"`
+		Output  string      `json:"output"`
+		Result  CheckResult `json:"result"`
+	}
+	if err := json.Unmarshal(observed.GetStateJson(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Success || answer.Result.Check != CheckConnect || answer.Result.Generation != 3 || len(answer.Result.Items) != 1 ||
+		answer.Result.Items[0].Target != "192.0.2.10:443" || answer.Result.Items[0].Status != VerdictOK {
+		t.Fatalf("answer %+v", answer)
+	}
+	// A check that cannot run fails the operation; one that ran and found
+	// a fault succeeds with the fault in its result.
+	if failed := send("forward.bogus", map[string]any{}); failed.GetPhase() != agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED {
+		t.Fatalf("unknown action: %v", failed)
+	}
+	missing := send(CheckListen, map[string]any{"route_id": "R9", "hop_index": 0})
+	if err := json.Unmarshal(missing.GetStateJson(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer.Success || answer.Result.Code != "hop_not_applied" {
+		t.Fatalf("missing hop %+v", answer)
+	}
+	if refused := send("service_restart", map[string]any{"service": "gost"}); refused.GetPhase() != agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED ||
+		!strings.Contains(refused.GetMessage(), "managed by the forward component") {
+		t.Fatalf("restart: %v", refused)
 	}
 }

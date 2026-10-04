@@ -13,6 +13,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/common/task"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/diagnostic"
 	"github.com/AnixOps/anix-agent/v4/limiter"
 	"github.com/AnixOps/anix-agent/v4/plugin"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
@@ -49,6 +50,9 @@ type Controller struct {
 	stream *nodeDataPlane
 	// agentClient is the node's Agent control client, nil without one.
 	agentClient *agentapi.Client
+	// diagnostics runs agent.diagnostic when the node forwards (the
+	// forward checks of Control's route diagnosis); nil otherwise.
+	diagnostics *diagnostic.Executor
 	// nodeType is the configured NodeType; it picks the controller's entry
 	// of a configuration snapshot (legacy_pull.types), empty for the node's
 	// default answer.
