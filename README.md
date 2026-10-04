@@ -25,20 +25,21 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 3.1 Alpha.2 范围
+## 4.2.0-rc.1 范围
 
-`v3.1.0-alpha.2` 提供 AnixOps 官方签名软件包 `machine-telemetry` 1.1.0，
-以及对应的 Control 签名 WebUI 合约。它是正式 3.1--4.0 分阶段版本线的首个
-可安装候选，不接管生产业务流量。`AgentControlEnabled` 和
-`PluginSupervisorEnabled` 仍必须由操作员显式启用，并应只在 TLS 控制流上的少量
-canary 节点验证包签名、重连、幂等操作、观察状态和回滚。现有 REST/UniProxy、
-旧版 gRPC 与 WebSocket 链路继续作为数据面和回退路径。
+`v4.2.0-rc.1` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+4.2.0-rc.1 使用同一版本号（H25），是 v4.2 转发与 Agent 控制面的首个候选版本：
 
-产品发布版本回到 3.1 阶段线；Go 模块路径 `/v4` 是兼容 ABI 命名空间，并不表示
-本次已经发布 4.0。`v4.0.0-alpha.1` 至 `v4.0.0-alpha.7` 保留为历史预览制品，
-不能作为本阶段的发布范围或生产接管依据。
+- Agent 控制流（AG-1 至 AG-5b）：A2 协商、mTLS 身份（Control 4.2 默认 `required`）、
+  配置与用户下发、流上报告与包报告、维护事件、alive 列表和插件制品；
+- 转发组件（F3b）：执行 Control 下发的 `forward.v1` 计划（nftables 与 gost 驱动）；
+- O1 安装布局、`agent.diagnostic` 诊断与转发检查、Control 推送的分阶段升级（`upgrade.v1`）；
+- `machine-telemetry` 可选上报 systemd 服务表（H24：只报单元、状态、CPU 与内存，只保留最新）；
+- 节点重载失败时恢复原配置；仅转发计划变化时不再重载代理入站。
 
-## 历史 v4 Alpha 运行时预览（非 3.1.0-alpha.2 发布范围）
+升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
+
+## 历史 v4 Alpha 运行时预览（非 4.2.0-rc.1 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
@@ -108,7 +109,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v3.1.0-alpha.2
+export VERSION=v4.2.0-rc.1
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
