@@ -27,7 +27,10 @@ LEGACY_DATA_DIR="${LEGACY_INSTALL_DIR}/data"
 LEGACY_BIN_PATH="${LEGACY_INSTALL_DIR}/V2bX"
 LEGACY_MANAGE_CMD_NAME="v2bx-anixops"
 MIGRATION_DIR="${CONFIG_DIR}/migration"
-PLUGIN_ROOT="${PLUGIN_ROOT:-/var/lib/anixops-agent/plugins}"
+# The O1 layout (H13): state under /var/lib/anixops-agent, runtime files in
+# the unit's RuntimeDirectory /run/anixops-agent.
+STATE_ROOT="/var/lib/anixops-agent"
+PLUGIN_ROOT="${PLUGIN_ROOT:-${STATE_ROOT}/plugins}"
 PLUGIN_SOCKET_DIR="${PLUGIN_SOCKET_DIR:-/run/anixops-agent/plugins}"
 
 SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
