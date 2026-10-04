@@ -556,6 +556,26 @@
     150 ms pause in the background start, 24 of 24 failed before and 0 of 24
     after.
 
+- **`TestMaintenanceWebSocketStopsWhenALaterSessionNegotiatesMaintenance` no
+  longer fails intermittently** (seen on CI, `stream_required_test.go:252:
+  Condition never satisfied`). A test-only fix; the Agent's behaviour is
+  unchanged.
+  - The test waited for `Client.Negotiated(maintenance.v1)` and then ran the
+    node monitor once. `Negotiated` turns true in `setConnected`, but the
+    data plane records the session (`sessionStarted`) a moment later, and
+    the mode that `retireLegacySync` reads (`streamCarriesMaintenance`)
+    follows that. A monitor run inside the gap sees maintenance on the legacy
+    transport and keeps the maintenance WebSocket; nothing in the test runs
+    it again (its periodic run is a `PullInterval` away). The test now waits
+    for `streamCarriesMaintenance()` before the call.
+  - Not a defect of the running Agent: the monitor repeats every
+    `PullInterval` (60 s by default), so the maintenance WebSocket stops at
+    the next run after the session negotiates `maintenance.v1`.
+  - Under `-race` with CPU burners on one core, 11 of 480 runs failed before
+    (all at that line) and 0 of 480 after; with the gap widened by a 300 ms
+    pause between `setConnected` and `sessionStarted`, 6 of 6 failed before
+    and 0 of 6 after.
+
 ## 3.1.0-alpha.2 - 2026-07-18
 
 ### Added
