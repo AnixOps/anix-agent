@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The alive list from the control stream is no longer lost or raced while
+  a node starts.** The data plane applies `AliveList` (alive.v1) on its own
+  goroutine, also while the node's configuration is being applied.
+  `go test -race ./node` reported a data race in
+  `TestEnrolledAgentUnderRequiredNeedsNoLegacyPath` (`startWith` wrote the
+  controller's alive map without the reconcile lock), and the same window
+  lost the list: a list that arrived after the limiter was added but before
+  the node counted as started never reached the limiter, and a list that
+  arrived before the start was overwritten by the one the start had read
+  earlier, so device limits counted a stale list until Control's next one.
+  - The user list, alive map and limiter are now set under the reconcile
+    lock; the limiter takes a list from the stream as soon as it exists; a
+    start keeps a list the stream delivered before it.
+  - CI runs the whole `./node` package under the race detector, not only
+    the maintenance tests (about 50 s on 4 CPUs; 12 runs in a row passed).
+
 ## 4.2.0-rc.1 - 2026-10-04
 
 ### Added
