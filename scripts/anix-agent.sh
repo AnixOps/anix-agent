@@ -19,8 +19,8 @@ BIN_PATH="${INSTALL_DIR}/anix-agent"
 CONFIG_DIR="/etc/anixops/agent"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}"
 CMD_NAME="anix-agent"
-DEFAULT_PLUGIN_ROOT="/var/lib/anixops/plugins"
-DEFAULT_PLUGIN_SOCKET_DIR="/run/anixops/plugins"
+DEFAULT_PLUGIN_ROOT="/var/lib/anixops-agent/plugins"
+DEFAULT_PLUGIN_SOCKET_DIR="/run/anixops-agent/plugins"
 OFFICIAL_PLUGIN_PUBLIC_KEY="IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="
 
 LEGACY_SERVICE_NAME="V2bX"
@@ -472,7 +472,7 @@ init_config_wizard() {
       "Timeout": ${timeout},
       "EnableSign": true,
       "EncryptCredential": true,
-      "CredentialFile": "/var/lib/anixops/agent/credential.json.enc",
+      "CredentialFile": "/var/lib/anixops-agent/credential.json.enc",
       "SyncConfig": {
         "EnableWebSocket": true,
         "WSEndpoint": "/api/v2/agent/ws",

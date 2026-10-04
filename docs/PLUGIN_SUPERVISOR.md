@@ -13,8 +13,8 @@ Add the following fields to the node `ApiConfig` that owns the physical Agent:
   "AgentControlEnabled": true,
   "PluginSupervisorEnabled": true,
   "MaintenanceEnvironment": "staging",
-  "PluginRoot": "/var/lib/anixops/plugins",
-  "PluginSocketDir": "/run/anixops/plugins",
+  "PluginRoot": "/var/lib/anixops-agent/plugins",
+  "PluginSocketDir": "/run/anixops-agent/plugins",
   "PluginOfficialPublicKey": "BASE64_ED25519_PUBLIC_KEY"
 }
 ```
@@ -139,14 +139,14 @@ auxiliary runtimes; they must use a packaged Agent entrypoint.
 The signed executable receives:
 
 ```text
---anixops-socket /run/anixops/plugins/nodes/<node_id>/<plugin>.sock
---anixops-config /var/lib/anixops/plugins/nodes/<node_id>/<plugin>/<version>/config.json
+--anixops-socket /run/anixops-agent/plugins/nodes/<node_id>/<plugin>.sock
+--anixops-config /var/lib/anixops-agent/plugins/nodes/<node_id>/<plugin>/<version>/config.json
 ```
 
 A manifest that declares `plugin.runtime-state` also receives:
 
 ```text
---anixops-state /var/lib/anixops/plugins/nodes/<node_id>/<plugin>/runtime-state/ownership.json
+--anixops-state /var/lib/anixops-agent/plugins/nodes/<node_id>/<plugin>/runtime-state/ownership.json
 ```
 
 The state path is stable across plugin-version and Agent-process changes. A

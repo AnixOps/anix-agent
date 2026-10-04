@@ -12,11 +12,15 @@ import (
 
 type Selector struct {
 	cores map[string]Core
+	// order is the configuration order of cores: a node that names no
+	// core runs on the first one that serves its protocol.
+	order []string
 	nodes sync.Map
 }
 
 func NewSelector(c []conf.CoreConfig) (Core, error) {
 	cs := make(map[string]Core, len(c))
+	order := make([]string, 0, len(c))
 	for _, t := range c {
 		f, ok := cores[strings.ToLower(t.Type)]
 		if !ok {
@@ -26,14 +30,18 @@ func NewSelector(c []conf.CoreConfig) (Core, error) {
 		if err != nil {
 			return nil, err
 		}
-		if t.Name == "" {
-			cs[t.Type] = core1
-		} else {
-			cs[t.Name] = core1
+		key := t.Name
+		if key == "" {
+			key = t.Type
 		}
+		if _, seen := cs[key]; !seen {
+			order = append(order, key)
+		}
+		cs[key] = core1
 	}
 	return &Selector{
 		cores: cs,
+		order: order,
 	}, nil
 }
 
@@ -74,8 +82,9 @@ func (s *Selector) AddNode(tag string, info *panel.NodeInfo, option *conf.Option
 			core = c
 		}
 	} else {
-		// use type to select core
-		for _, c := range s.cores {
+		// use type to select core: the first in configuration order
+		for _, key := range s.order {
+			c := s.cores[key]
 			if len(option.Core) == 0 {
 				if !isSupported(info.Type, c.Protocols()) {
 					continue
@@ -84,6 +93,7 @@ func (s *Selector) AddNode(tag string, info *panel.NodeInfo, option *conf.Option
 				continue
 			}
 			core = c
+			break
 		}
 	}
 	if core == nil {
@@ -179,8 +189,8 @@ func (s *Selector) DelUsers(users []panel.UserInfo, tag string, info *panel.Node
 
 func (s *Selector) Protocols() []string {
 	protocols := make([]string, 0)
-	for i := range s.cores {
-		protocols = append(protocols, s.cores[i].Protocols()...)
+	for _, key := range s.order {
+		protocols = append(protocols, s.cores[key].Protocols()...)
 	}
 	return protocols
 }
@@ -188,7 +198,8 @@ func (s *Selector) Protocols() []string {
 func (s *Selector) Type() string {
 	t := "Selector("
 	var flag bool
-	for n, c := range s.cores {
+	for _, n := range s.order {
+		c := s.cores[n]
 		if flag {
 			t += " "
 		} else {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
@@ -49,6 +50,13 @@ type nodeDataPlane struct {
 	// forward runs the forwarding state of the node's snapshots (F3b),
 	// nil when the node does not forward.
 	forward *forward.Component
+	// streamOnly marks a node without an API key (the O1 installer's
+	// credential-only configuration): it has no legacy transport, so it
+	// waits for the stream (enrollment, then Control's snapshot) instead
+	// of falling back. awaiting is set while it waits in the background.
+	streamOnly bool
+	awaiting   atomic.Bool
+	background sync.WaitGroup
 
 	// startupUsers are the users the controllers start with during a
 	// stream start (startupUsersSet), nil otherwise: they then pull them.
@@ -217,7 +225,6 @@ func (n *nodeDataPlane) clearStartupUsers() {
 // started here.
 func (n *nodeDataPlane) start(ctx context.Context) error {
 	plane := n.client.DataPlane()
-	defer n.clearStartupUsers()
 	n.stop, n.stopped = make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(n.stopped)
@@ -245,9 +252,11 @@ func (n *nodeDataPlane) start(ctx context.Context) error {
 		}
 	}
 	if err := n.client.Start(); err != nil {
+		n.clearStartupUsers()
 		return err
 	}
 	if n.allStarted() {
+		n.clearStartupUsers()
 		plane.Activate()
 		return nil
 	}
@@ -255,9 +264,71 @@ func (n *nodeDataPlane) start(ctx context.Context) error {
 	waitCtx, cancel := context.WithTimeout(ctx, streamStartupWait)
 	_, waitErr := plane.WaitSession(waitCtx)
 	cancel()
+	if waitErr != nil && n.streamOnly && persistedConfig == nil {
+		// No legacy transport to fall back to: the node starts when the
+		// stream comes up (after enrollment, which may wait for the
+		// one-time credential), in the background.
+		n.logger().WithError(waitErr).Warn("The Agent control stream did not connect in time; this node has no ApiKey for the legacy transports, so it starts once the stream delivers its configuration (enrollment may still be pending)")
+		n.awaitStream(persistedUsers)
+		return nil
+	}
 	if waitErr != nil {
 		n.logger().WithError(waitErr).Warn("The Agent control stream did not connect in time; starting the node on the stored state or the legacy transports")
 	}
+	return n.finishStart(ctx, waitErr, persistedConfig, persistedUsers)
+}
+
+// streamStartFailed ends the Agent when a stream-only node could not start
+// from the stream in the background: systemd starts it again, as after a
+// failed start in the foreground. Tests replace it.
+var streamStartFailed = func(nodeID int, err error) {
+	log.WithFields(log.Fields{"component": "agent-dataplane", "node_id": nodeID}).WithError(err).
+		Fatal("Could not start the node from the Agent control stream")
+}
+
+// awaitStream starts a stream-only node once its stream has a session.
+func (n *nodeDataPlane) awaitStream(persistedUsers *agentapi.UserSet) {
+	n.awaiting.Store(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := n.stop
+	n.background.Add(1)
+	go func() {
+		defer n.background.Done()
+		defer cancel()
+		defer n.awaiting.Store(false)
+		go func() {
+			select {
+			case <-stop:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		if _, err := n.client.DataPlane().WaitSession(ctx); err != nil {
+			n.clearStartupUsers()
+			return
+		}
+		n.logger().Info("The Agent control stream is up; starting the node from it")
+		if err := n.finishStart(ctx, nil, nil, persistedUsers); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			streamStartFailed(n.nodeID, err)
+		}
+	}()
+}
+
+// waitingForStream tells whether a stream-only node is still waiting for
+// its stream: its controllers must not start on the legacy transports.
+func (n *nodeDataPlane) waitingForStream() bool {
+	return n != nil && n.awaiting.Load()
+}
+
+// finishStart starts the node's controllers once the stream had its
+// chance: from the stream, from the stored state, or on the legacy
+// transports.
+func (n *nodeDataPlane) finishStart(ctx context.Context, waitErr error, persistedConfig *agentv1pb.ConfigSnapshot, persistedUsers *agentapi.UserSet) error {
+	plane := n.client.DataPlane()
+	defer n.clearStartupUsers()
 	configMode := plane.Mode(agentcontrol.CapabilityConfig)
 	usersMode := plane.Mode(agentcontrol.CapabilityUsers)
 
@@ -277,6 +348,9 @@ func (n *nodeDataPlane) start(ctx context.Context) error {
 		plane.RestoreUsers(*persistedUsers)
 		n.setStartupUsers(persistedUsers.Users)
 	default:
+		if n.streamOnly && configMode == agentapi.DataPlaneStream {
+			return fmt.Errorf("node %d: Control serves configuration but not users (users.v1) on the Agent control stream, and this node has no ApiKey for the legacy transports", n.nodeID)
+		}
 		n.clearStartupUsers()
 	}
 
@@ -299,6 +373,9 @@ func (n *nodeDataPlane) start(ctx context.Context) error {
 		}
 		plane.RestoreConfig(persistedConfig)
 	default:
+		if n.streamOnly {
+			return fmt.Errorf("node %d: Control does not serve configuration on the Agent control stream (config.v1), and this node has no ApiKey for the legacy transports: upgrade Control, or configure the node's ApiKey", n.nodeID)
+		}
 		if waitErr == nil {
 			n.logger().Info("Control does not serve configuration on the Agent control stream (config.v1); starting the node on the legacy transports")
 		}

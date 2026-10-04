@@ -39,9 +39,10 @@ func init() {
 			return err
 		},
 	}, &cobra.Command{
-		Use:   "sysctl",
-		Short: "Print the sysctl drop-in that lets the kernel forward",
-		Args:  cobra.NoArgs,
+		Use:     "sysctl",
+		Aliases: []string{"sysctl-dropin"},
+		Short:   "Print the sysctl drop-in that lets the kernel forward (/etc/sysctl.d/90-anixops-forward.conf)",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := fmt.Fprint(cmd.OutOrStdout(), ForwardSysctlDropIn)
 			return err

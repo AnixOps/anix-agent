@@ -194,6 +194,7 @@ func (n *nodeDataPlane) close() {
 			close(n.stop)
 			<-n.stopped
 		}
+		n.background.Wait()
 	})
 }
 

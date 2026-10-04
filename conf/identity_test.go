@@ -16,7 +16,7 @@ func TestAgentIdentityDefaultsToAutoEnrollmentUnderVarLib(t *testing.T) {
 	if got := api.AgentIdentity.EnrollMode(); got != AgentIdentityEnrollAuto {
 		t.Fatalf("EnrollMode() = %q, want auto", got)
 	}
-	if got := api.AgentIdentity.Dir(); got != "/var/lib/anix-agent/pki" {
+	if got := api.AgentIdentity.Dir(); got != "/var/lib/anixops-agent/pki" {
 		t.Fatalf("Dir() = %q", got)
 	}
 	if err := api.AgentIdentity.Validate(); err != nil {

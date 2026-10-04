@@ -16,7 +16,7 @@ func readyProductionAgentConfig() *Conf {
 				APIHost: "https://control.company.net", Transport: "grpc",
 				GRPCHost: "control.company.net:443", GRPCUseTLS: true, GRPCServerName: "control.company.net",
 				AgentControlEnabled: true, MaintenanceEnvironment: "production", PluginSupervisorEnabled: true,
-				PluginRoot: "/var/lib/anixops/plugins", PluginSocketDir: "/run/anixops/plugins",
+				PluginRoot: "/var/lib/anixops-agent/plugins", PluginSocketDir: "/run/anixops-agent/plugins",
 				PluginOfficialPublicKey: "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
 				NodeID:                  7, Key: strings.Repeat("k", 32), Timeout: 30, EnableSign: true, GRPCKeepalive: 30,
 			},

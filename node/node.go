@@ -180,6 +180,7 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 			if n.forward != nil && nodeID == n.forwardNodeID {
 				dataPlane.forward = n.forward
 			}
+			dataPlane.streamOnly = strings.TrimSpace(candidate.apiConfig.Key) == ""
 		}
 		agentClient, agentErr := newAgentControlClientForSupervisor(&candidate.apiConfig, candidate.controller, core, candidate.supervisor, dataPlane)
 		if agentErr != nil {
@@ -203,6 +204,10 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 	// Phase 3: every other controller on the legacy transports.
 	for i, controller := range n.controllers {
 		if controller.isStarted() {
+			continue
+		}
+		if controller.stream != nil && controller.stream.waitingForStream() {
+			// A stream-only node starts from its stream (nodeDataPlane.awaitStream).
 			continue
 		}
 		if err := controller.Start(); err != nil {
@@ -394,14 +399,18 @@ func pluginSupervisorSpecForNodeMode(nodeID int, api conf.ApiConfig, allowLegacy
 		return pluginSupervisorSpec{}, fmt.Errorf("plugin supervisor requires a positive final node ID, got %d", nodeID)
 	}
 	rootBase := strings.TrimSpace(api.PluginRoot)
+	socketBase := strings.TrimSpace(api.PluginSocketDir)
 	if rootBase == "" {
-		return pluginSupervisorSpec{}, fmt.Errorf("PluginRoot is required when PluginSupervisorEnabled is true for node %d", nodeID)
+		// The O1 layout: data under the state root, sockets in the unit's
+		// RuntimeDirectory. A configured PluginRoot without
+		// PluginSocketDir keeps its sockets below it, as before.
+		rootBase = api.PluginRootDir()
+		socketBase = api.PluginSocketBase()
 	}
 	rootBaseAbs, err := filepath.Abs(rootBase)
 	if err != nil {
 		return pluginSupervisorSpec{}, fmt.Errorf("resolve plugin root base for node %d: %w", nodeID, err)
 	}
-	socketBase := strings.TrimSpace(api.PluginSocketDir)
 	socketDir := filepath.Join(rootBaseAbs, "sockets")
 	socketBaseAbs := filepath.Join(rootBaseAbs, "sockets")
 	if socketBase != "" {

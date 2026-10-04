@@ -27,8 +27,11 @@ LEGACY_DATA_DIR="${LEGACY_INSTALL_DIR}/data"
 LEGACY_BIN_PATH="${LEGACY_INSTALL_DIR}/V2bX"
 LEGACY_MANAGE_CMD_NAME="v2bx-anixops"
 MIGRATION_DIR="${CONFIG_DIR}/migration"
-PLUGIN_ROOT="${PLUGIN_ROOT:-/var/lib/anixops/plugins}"
-PLUGIN_SOCKET_DIR="${PLUGIN_SOCKET_DIR:-/run/anixops/plugins}"
+# The O1 layout (H13): state under /var/lib/anixops-agent, runtime files in
+# the unit's RuntimeDirectory /run/anixops-agent.
+STATE_ROOT="/var/lib/anixops-agent"
+PLUGIN_ROOT="${PLUGIN_ROOT:-${STATE_ROOT}/plugins}"
+PLUGIN_SOCKET_DIR="${PLUGIN_SOCKET_DIR:-/run/anixops-agent/plugins}"
 
 SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
 SYSCTL_DIR="${SYSCTL_DIR:-/etc/sysctl.d}"
@@ -96,6 +99,22 @@ warn() {
 
 error() {
     echo -e "${red}$*${plain}" >&2
+}
+
+# refuse_o1_install stops on a node the O1 installer of AnixOps Control set
+# up (the Agent as the user anixops-agent in a systemd sandbox, installed
+# under /usr/lib/anixops-agent): this script installs the root layout and
+# would replace that unit. Such a node upgrades by running the command from
+# its node page in Control again (curl -fsSL https://<control>/install.sh |
+# sudo bash -s -- ...).
+refuse_o1_install() {
+    local unit="${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service"
+    if [[ -f "${unit}" ]] && grep -Eq '^User=anixops-agent[[:space:]]*$' "${unit}"; then
+        error "此节点由 AnixOps Control 的一键安装器安装（anixops-agent 用户、systemd 沙箱）。"
+        error "请在 Control 节点页面复制安装命令重新执行以升级：curl -fsSL https://<control>/install.sh | sudo bash -s -- ..."
+        error "This node was installed by AnixOps Control's installer (user anixops-agent, sandboxed); re-run the command from its node page to upgrade."
+        exit 1
+    fi
 }
 
 need_root() {
@@ -534,6 +553,13 @@ install_files() {
         install -m 0600 "${extract_dir}/config.production.json" "${CONFIG_DIR}/config.json"
     fi
 
+    # The pinned gost (H20) the release ships, run by anixops-gost.service.
+    if [[ -f "${extract_dir}/gost" && ! -L "${extract_dir}/gost" ]]; then
+        mkdir -p "$(dirname "${GOST_BINARY}")"
+        install -m 0755 "${extract_dir}/gost" "${GOST_BINARY}.new"
+        mv -f "${GOST_BINARY}.new" "${GOST_BINARY}"
+    fi
+
     for f in geoip.dat geosite.dat; do
         if [[ -f "${extract_dir}/${f}" ]]; then
             install -m 0644 "${extract_dir}/${f}" "${CONFIG_DIR}/${f}"
@@ -551,7 +577,16 @@ install_files() {
 }
 
 ensure_plugin_layout() {
+    install -d -m 0700 "${STATE_ROOT}"
     install -d -m 0750 "${PLUGIN_ROOT}" "${PLUGIN_SOCKET_DIR}"
+}
+
+# migrate_layout copies the earlier default directories (identity, stream
+# state, plugin data) to ${STATE_ROOT} once, keeping the old ones; the
+# Agent also does this at start. A configuration that names a path keeps it.
+migrate_layout() {
+    install -d -m 0700 "${STATE_ROOT}"
+    "${BIN_PATH}" migrate-paths || warn "Could not copy every earlier directory to ${STATE_ROOT}; the Agent keeps using the earlier ones"
 }
 
 # setup_forward prepares a forward-capable node (ANIXOPS_FORWARD=1):
@@ -634,6 +669,9 @@ ExecStart=${BIN_PATH} server -c ${CONFIG_DIR}/config.json
 Restart=always
 RestartSec=10
 LimitNOFILE=512000
+# Plugin sockets (/run/anixops-agent/plugins).
+RuntimeDirectory=anixops-agent
+RuntimeDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
@@ -692,6 +730,11 @@ Usage:
   bash install.sh                # 安装最新版本
   bash install.sh v0.1.0         # 安装指定版本
 
+新节点请使用 AnixOps Control 节点页面的一键安装命令（Control 的 /install.sh：
+anixops-agent 用户、CAP_NET_ADMIN/CAP_NET_BIND_SERVICE、systemd 沙箱）。
+本脚本保留给已有的 root 安装（含 V2bX 迁移）升级使用；遇到 Control 安装器
+安装的节点会拒绝执行。
+
 安装器只下载 GitHub Release 资产，不会克隆仓库或在节点机执行本地构建。
 安装时会校验发布包 SHA-256，并保留旧二进制到
 ${INSTALL_DIR}/backups/ 以便服务启动失败时自动恢复。
@@ -699,6 +742,7 @@ ${INSTALL_DIR}/backups/ 以便服务启动失败时自动恢复。
 默认路径:
   程序目录: ${INSTALL_DIR}
   配置目录: ${CONFIG_DIR}
+  状态目录: ${STATE_ROOT}（身份 pki、stream、forward、plugins）
   插件目录: ${PLUGIN_ROOT}
   插件 Socket: ${PLUGIN_SOCKET_DIR}
   服务名称: ${SERVICE_NAME}.service
@@ -728,6 +772,7 @@ main() {
     fi
 
     need_root
+    refuse_o1_install
     detect_os
     install_base
     command -v sha256sum >/dev/null 2>&1 || {
@@ -772,6 +817,7 @@ main() {
     capture_legacy_service
     backup_existing_binary
     install_files "${zip_path}" "${version}"
+    migrate_layout
     ensure_plugin_layout
     install_manage_script "${manager_path}"
     setup_forward

@@ -287,7 +287,7 @@ func TestStorePinsTheCluster(t *testing.T) {
 func TestNewStoreNeedsAnAbsoluteRootAndANode(t *testing.T) {
 	_, err := NewStore("relative/pki", testNode)
 	require.Error(t, err)
-	_, err = NewStore("/var/lib/anix-agent/pki", agentcontrol.AgentNode{})
+	_, err = NewStore("/var/lib/anixops-agent/pki", agentcontrol.AgentNode{})
 	require.Error(t, err)
 	store, err := NewStore("", testNode)
 	require.NoError(t, err)

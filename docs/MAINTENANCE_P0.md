@@ -21,8 +21,8 @@ anix-agent validate-config -c /etc/anixops/agent/config.json
   "Transport": "http",
   "AgentControlEnabled": true,
   "PluginSupervisorEnabled": true,
-  "PluginRoot": "/var/lib/anixops/plugins",
-  "PluginSocketDir": "/run/anixops/plugins",
+  "PluginRoot": "/var/lib/anixops-agent/plugins",
+  "PluginSocketDir": "/run/anixops-agent/plugins",
   "PluginOfficialPublicKey": "BASE64_ED25519_PUBLIC_KEY",
   "MaintenanceEnvironment": "production"
 }

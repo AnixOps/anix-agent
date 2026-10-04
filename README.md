@@ -90,9 +90,17 @@ FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、
 | 主程序 | `/usr/local/anixops-agent/anix-agent` |
 | 配置目录 | `/etc/anixops/agent` |
 | 主配置 | `/etc/anixops/agent/config.json` |
-| 官方插件状态 | `/var/lib/anixops/plugins` |
-| 插件 Unix socket | `/run/anixops/plugins` |
+| 官方插件状态 | `/var/lib/anixops-agent/plugins` |
+| 插件 Unix socket | `/run/anixops-agent/plugins` |
+| 身份 / stream / 转发状态 | `/var/lib/anixops-agent/{pki,stream,forward}` |
+| gost（随 Release 附带，固定 3.2.6） | `/usr/lib/anixops-agent/gost`，配置 `/var/lib/anixops-gost` |
 | 容器镜像 | `ghcr.io/anixops/anix-agent` |
+
+新节点使用 AnixOps Control 节点页面的一键安装命令（Control 的 `/install.sh`）：
+Agent 以 `anixops-agent` 用户运行（仅 `CAP_NET_ADMIN`、`CAP_NET_BIND_SERVICE`，
+systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期默认目录
+（`/var/lib/anix-agent/{pki,stream}`、`/var/lib/anixops/plugins`）会被一次性复制到
+新位置，旧目录保留。详见 [docs/INSTALL.md](docs/INSTALL.md)。
 
 ## Release 安装
 
@@ -192,8 +200,8 @@ Windows：
   "AgentControlEnabled": true,
   "AgentControlAllowInsecure": false,
   "PluginSupervisorEnabled": true,
-  "PluginRoot": "/var/lib/anixops/plugins",
-  "PluginSocketDir": "/run/anixops/plugins",
+  "PluginRoot": "/var/lib/anixops-agent/plugins",
+  "PluginSocketDir": "/run/anixops-agent/plugins",
   "PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
   "NodeID": 1,
   "ApiKey": "your-api-key"
@@ -228,7 +236,7 @@ Windows：
 ```json
 "AgentIdentity": {
   "Enroll": "auto",
-  "CertDir": "/var/lib/anix-agent/pki",
+  "CertDir": "/var/lib/anixops-agent/pki",
   "EnrollCredentialFile": "/etc/anixops/agent/enroll.token",
   "Cluster": ""
 }
@@ -250,7 +258,7 @@ WebSocket `config_update` 或 `node.reload` 的重新拉取：
   `default`），解析逻辑与 UniProxy 应答完全相同，内核按原有方式重启。
 - 每个快照都会以 `ConfigStatus` 回复（成功或失败原因）。
 - 成功应用的快照保存在 `AgentStream.StateDir/proxy-<NodeID>/config.pb`
-  （默认 `/var/lib/anix-agent/stream`，目录 0700、文件 0600）。重启时即使 Control
+  （默认 `/var/lib/anixops-agent/stream`，目录 0700、文件 0600）。重启时即使 Control
   不可达也直接运行该配置，并在 Hello 中上报其 revision，Control 只在配置变化时下发。
 - 无本地快照时最多等待 20 秒建立控制流；协商到 `config.v1` 后最多等待 60 秒的快照，
   超时则启动失败（由 systemd 重启），不会退回旧链路。控制流不可用或 Control
@@ -261,7 +269,7 @@ WebSocket `config_update` 或 `node.reload` 的重新拉取：
 ```json
 "AgentStream": {
   "DataPlane": "auto",
-  "StateDir": "/var/lib/anix-agent/stream"
+  "StateDir": "/var/lib/anixops-agent/stream"
 }
 ```
 
@@ -305,7 +313,7 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
 ```json
 "AgentStream": {
   "DataPlane": "auto",
-  "StateDir": "/var/lib/anix-agent/stream",
+  "StateDir": "/var/lib/anixops-agent/stream",
   "SpoolMaxMB": 64,
   "LogSpoolMaxMB": 16,
   "SpoolMaxAgeHours": 72

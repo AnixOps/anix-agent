@@ -19,7 +19,7 @@ const (
 )
 
 // DefaultAgentIdentityCertDir is where node identities live.
-const DefaultAgentIdentityCertDir = "/var/lib/anix-agent/pki"
+const DefaultAgentIdentityCertDir = "/var/lib/anixops-agent/pki"
 
 var agentIdentityClusterPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
@@ -32,7 +32,7 @@ type AgentIdentityConfig struct {
 	// Enroll is "auto" (default) or "off".
 	Enroll string `json:"Enroll"`
 	// CertDir is the identity root, an absolute path; default
-	// /var/lib/anix-agent/pki.
+	// /var/lib/anixops-agent/pki.
 	CertDir string `json:"CertDir"`
 	// EnrollCredentialFile is an absolute path to a one-time anixagt_
 	// enrollment credential (`anix-control agent token create`), mode 0600.

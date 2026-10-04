@@ -36,6 +36,10 @@ type GRPCClientConfig struct {
 	ServerName    string
 	EnableSign    bool
 	SupportsSync  bool
+	// Lazy connects on first use instead of at construction: a
+	// credential-only node (no ApiKey) does not use the legacy services,
+	// and must start while Control is still unreachable.
+	Lazy bool
 }
 
 // GRPCClient is a gRPC transport implementation for panel communication.
@@ -94,8 +98,10 @@ func NewGRPCClient(cfg *GRPCClientConfig) (*GRPCClient, error) {
 	}
 
 	dialOpts := []grpc.DialOption{
-		grpc.WithBlock(),
 		grpc.WithKeepaliveParams(ka),
+	}
+	if !cfg.Lazy {
+		dialOpts = append(dialOpts, grpc.WithBlock())
 	}
 
 	if cfg.UseTLS {

@@ -341,6 +341,12 @@ func TestIdentityFallsBackToAPIKeyWhenControlDoesNotRequestTheCertificate(t *tes
 	first := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, first)
 	waitReady(t, first)
+	// Ready can come before the enrollment is stored: wait for it, or the
+	// second client starts without an identity to keep.
+	require.Eventually(t, func() bool {
+		status := first.TransportStatus()
+		return status.Identity != nil && status.Identity.Enrolled
+	}, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, first.Close())
 
 	// The rollback switch: agent_control.mtls: off requests no certificate.

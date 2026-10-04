@@ -20,7 +20,7 @@ const (
 )
 
 // DefaultAgentStreamStateDir is where the data-plane state lives.
-const DefaultAgentStreamStateDir = "/var/lib/anix-agent/stream"
+const DefaultAgentStreamStateDir = "/var/lib/anixops-agent/stream"
 
 // AgentStreamConfig is the data plane of the Agent control stream
 // (AgentControlEnabled): the node's configuration (config.v1) and users
@@ -34,7 +34,7 @@ type AgentStreamConfig struct {
 	// node (StateDir/proxy-<NodeID>), so a restart while Control is
 	// unreachable runs the last applied configuration and users and still
 	// delivers its reports; an absolute path, default
-	// /var/lib/anix-agent/stream.
+	// /var/lib/anixops-agent/stream.
 	StateDir string `json:"StateDir"`
 	// SpoolMaxMB bounds the traffic report spool (default 64 MiB);
 	// LogSpoolMaxMB the log spool (default 16 MiB). The oldest batches are

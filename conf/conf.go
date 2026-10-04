@@ -52,6 +52,9 @@ func (p *Conf) LoadFromPath(filePath string) error {
 	if err = p.validateAgentIdentities(); err != nil {
 		return err
 	}
+	if err = p.validateNodeCredentials(); err != nil {
+		return err
+	}
 	if err = p.Forward.Validate(); err != nil {
 		return err
 	}

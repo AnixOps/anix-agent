@@ -11,6 +11,19 @@ on:
 permissions:
   contents: read
 
+env:
+  # The gost v3 release every Agent package ships (H20), the one
+  # anix-control's ci.yml pins: archives and binaries checked by SHA-256.
+  GOST_VERSION: '3.2.6'
+  GOST_LINUX_AMD64_ARCHIVE_SHA256: 'b39037b0380ea001fb3c0c28441c2e10bfc694f90682739a65b53e55dce5238b'
+  GOST_LINUX_AMD64_BINARY_SHA256: 'a2aea24efb4597b5f57b35b8e1bbcc59f439b80723854d4371f6828b46682ffb'
+  GOST_LINUX_ARM64_ARCHIVE_SHA256: 'f674c8f4a033dc1dfd4f0d5e9602fbe5b0d0f81307bf3794f44b5b5d6d622eae'
+  GOST_LINUX_ARM64_BINARY_SHA256: '343c3e003996ca0437b9cc47dd1500cd0475ba09f5a5f17e50851854e06a1ca7'
+  # The official AnixOps release key (anix-control plugins.official_public_key,
+  # OFFICIAL_PUBLIC_KEY of its install.sh): base64 of the raw Ed25519 public
+  # key. The signing secret must belong to it.
+  ANIXOPS_OFFICIAL_PUBLIC_KEY: 'lvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM='
+
 jobs:
   tag-gate:
     name: validate release tag
@@ -46,6 +59,11 @@ jobs:
 
       - name: Test release version gate
         run: python3 scripts/check_release_version.py --self-test
+
+      - name: Test release asset checks (gost in the package, SHA256SUMS, signatures)
+        run: |
+          python3 scripts/check_release_assets.py --self-test
+          python3 scripts/check_release_assets.py workflow --file .github/workflows/release.yml
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -150,6 +168,28 @@ jobs:
             curl -L "${DOWNLOAD_URL}" -o ./build_assets/${FILE_NAME}
           done
 
+      # The pinned gost (H20) ships in the package as `gost`; the O1
+      # installer installs it as /usr/lib/anixops-agent/gost, which
+      # anixops-gost.service runs.
+      - name: Bundle the pinned gost
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          case "${GOARCH}" in
+            amd64) archive_sha256="${GOST_LINUX_AMD64_ARCHIVE_SHA256}"; binary_sha256="${GOST_LINUX_AMD64_BINARY_SHA256}" ;;
+            arm64) archive_sha256="${GOST_LINUX_ARM64_ARCHIVE_SHA256}"; binary_sha256="${GOST_LINUX_ARM64_BINARY_SHA256}" ;;
+            *) echo "no pinned gost for ${GOARCH}" >&2; exit 1 ;;
+          esac
+          archive="${RUNNER_TEMP}/gost_${GOST_VERSION}_linux_${GOARCH}.tar.gz"
+          curl --fail --location --retry 3 --output "${archive}" \
+            "https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_${GOARCH}.tar.gz"
+          echo "${archive_sha256}  ${archive}" | sha256sum --check --strict
+          stage="$(mktemp -d "${RUNNER_TEMP}/gost.XXXXXX")"
+          tar -xzf "${archive}" -C "${stage}" gost
+          install -m 0755 "${stage}/gost" build_assets/gost
+          echo "${binary_sha256}  build_assets/gost" | sha256sum --check --strict
+          echo "GOST_BINARY_SHA256=${binary_sha256}" >> "$GITHUB_ENV"
+
       - name: Create ZIP archive
         shell: bash
         run: |
@@ -164,6 +204,9 @@ jobs:
           do
             openssl dgst -$METHOD $FILE | sed 's/([^)]*)//g' >>$DGST
           done
+
+      - name: Check the package holds the Agent and the pinned gost
+        run: python3 scripts/check_release_assets.py zip --zip "./anix-agent-${{ matrix.asset_name }}.zip" --gost-sha256 "${GOST_BINARY_SHA256}"
 
       - name: Upload files to Artifacts
         uses: actions/upload-artifact@v4
@@ -405,6 +448,44 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # SHA256SUMS, and a detached signature per package and for
+      # SHA256SUMS: base64 of the raw Ed25519 signature by the official
+      # AnixOps release key over the file's exact bytes, the format of
+      # anix-control's agent-install.sh.sig. The O1 installer verifies
+      # <package>.sig next to the package it downloads.
+      - name: Write SHA256SUMS and sign the release assets
+        working-directory: dist
+        env:
+          ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY: ${{ secrets.ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY }}
+          ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY: ${{ secrets.ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY}" ]] || {
+            echo "ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY is required to sign the Agent release (see docs/INSTALL.md, "Release Signing")" >&2
+            exit 1
+          }
+          [[ "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" == "${ANIXOPS_OFFICIAL_PUBLIC_KEY}" ]] || {
+            echo "ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY is not the official AnixOps release key" >&2
+            exit 1
+          }
+          key_file="$(mktemp)"
+          official_der="$(mktemp)"
+          signature_bin="$(mktemp)"
+          trap 'rm -f "${key_file}" "${official_der}" "${signature_bin}"' EXIT
+          printf '%s\n' "${ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY}" >"${key_file}"
+          chmod 0600 "${key_file}"
+          unset ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY
+          { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s' "${ANIXOPS_OFFICIAL_PUBLIC_KEY}" | base64 -d; } >"${official_der}"
+          packages=(anix-agent-linux-64.zip anix-agent-linux-arm64-v8a.zip)
+          sha256sum "${packages[@]}" >SHA256SUMS
+          for file in "${packages[@]}" SHA256SUMS; do
+            openssl pkeyutl -sign -inkey "${key_file}" -rawin -in "${file}" -out "${signature_bin}"
+            printf '%s\n' "$(base64 -w0 "${signature_bin}")" >"${file}.sig"
+            openssl pkeyutl -verify -pubin -keyform DER -inkey "${official_der}" -rawin \
+              -in "${file}" -sigfile "${signature_bin}"
+          done
+
       - name: Show release files
         run: ls -lh dist
 
@@ -417,5 +498,9 @@ jobs:
           files: |
             dist/anix-agent-linux-64.zip
             dist/anix-agent-linux-64.zip.dgst
+            dist/anix-agent-linux-64.zip.sig
             dist/anix-agent-linux-arm64-v8a.zip
             dist/anix-agent-linux-arm64-v8a.zip.dgst
+            dist/anix-agent-linux-arm64-v8a.zip.sig
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
