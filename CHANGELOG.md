@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 4.2.0-rc.1 - 2026-10-04
+
 ### Added
 
 - **Control-pushed staged upgrades: `upgrade.v1` and `agent.upgrade`**
