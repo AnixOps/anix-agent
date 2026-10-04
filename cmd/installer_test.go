@@ -13,6 +13,8 @@ import (
 
 func TestServerAcceptsTheUnitCommand(t *testing.T) {
 	// ExecStart=/usr/lib/anixops-agent/anix-agent server -c /etc/anixops/agent/config.json
+	previous := config
+	t.Cleanup(func() { config = previous })
 	found, args, err := command.Find([]string{"server", "-c", "/etc/anixops/agent/config.json"})
 	require.NoError(t, err)
 	require.Equal(t, "server", found.Name())
@@ -20,7 +22,6 @@ func TestServerAcceptsTheUnitCommand(t *testing.T) {
 	value, err := found.Flags().GetString("config")
 	require.NoError(t, err)
 	require.Equal(t, "/etc/anixops/agent/config.json", value)
-	config = getDefaultConfigPath()
 }
 
 func TestForwardSysctlDropIn(t *testing.T) {

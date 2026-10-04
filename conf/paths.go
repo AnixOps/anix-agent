@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // The AnixOps Agent's file system layout (owner decision H13, the O1
@@ -98,18 +97,18 @@ type MigrateOptions struct {
 	UID, GID int
 }
 
-// MigrateLegacyPath copies the directory old to new when old exists and
-// new does not. The copy is made next to new and renamed into place, so new
-// appears complete or not at all; old is never removed (identity material
+// MigrateLegacyPath copies the directory old to next when old exists and
+// next does not. The copy is made beside next and renamed into place, so
+// next appears complete or not at all; old is never removed (identity material
 // always keeps a copy, and an earlier release can still be started).
 // Regular files, directories and symbolic links are copied with their
 // modes; sockets, pipes and devices are skipped.
-func MigrateLegacyPath(old, new string, opts MigrateOptions) (MigrationOutcome, error) {
-	old, new = filepath.Clean(old), filepath.Clean(new)
-	if old == new {
+func MigrateLegacyPath(old, next string, opts MigrateOptions) (MigrationOutcome, error) {
+	old, next = filepath.Clean(old), filepath.Clean(next)
+	if old == next {
 		return MigrationNone, nil
 	}
-	if _, err := os.Lstat(new); err == nil {
+	if _, err := os.Lstat(next); err == nil {
 		return MigrationNone, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return MigrationNone, err
@@ -124,19 +123,19 @@ func MigrateLegacyPath(old, new string, opts MigrateOptions) (MigrationOutcome, 
 	if !info.IsDir() {
 		return MigrationNone, fmt.Errorf("%s is not a directory", old)
 	}
-	parent := filepath.Dir(new)
+	parent := filepath.Dir(next)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return MigrationNone, err
 	}
-	staging, err := os.MkdirTemp(parent, "."+filepath.Base(new)+".migrating-")
+	staging, err := os.MkdirTemp(parent, "."+filepath.Base(next)+".migrating-")
 	if err != nil {
 		return MigrationNone, err
 	}
-	if err := copyTree(old, staging, new, opts); err != nil {
+	if err := copyTree(old, staging, next, opts); err != nil {
 		_ = os.RemoveAll(staging)
 		return MigrationNone, err
 	}
-	if err := os.Rename(staging, new); err != nil {
+	if err := os.Rename(staging, next); err != nil {
 		_ = os.RemoveAll(staging)
 		return MigrationNone, err
 	}
@@ -228,8 +227,8 @@ func chownCopy(target string, info fs.FileInfo, opts MigrateOptions) error {
 	if os.Geteuid() != 0 {
 		return nil
 	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return os.Lchown(target, int(stat.Uid), int(stat.Gid))
+	if uid, gid, ok := fileOwner(info); ok {
+		return os.Lchown(target, uid, gid)
 	}
 	return nil
 }
