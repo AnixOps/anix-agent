@@ -59,11 +59,23 @@ Each installed version is retained under the selected node namespace at
 `plugin.install` accepts the strict `anixops.io/plugin-install/v1alpha1`
 descriptor from the Agent Control stream. Its manifest and artifact URLs must
 be exact same-origin `/api/v3/agent/plugin-releases/<plugin>/<version>/...`
-paths with matching `sha256` and `size` query values. The Agent authenticates
-both raw-body GETs with its existing `X-API-Key`, refuses redirects and encoded
-or traversal paths, enforces a 1 MiB manifest limit and 64 MiB artifact limit,
-then verifies exact size, SHA-256, publisher, API version, trust-root key ID,
-and Ed25519 signature before installation.
+paths with matching `sha256` and `size` query values. When the control stream
+negotiated `artifacts.v1` (an enrolled Agent, on a session authenticated by its
+client certificate) the Agent downloads both documents from Control's
+`AgentArtifacts` service by their content address (plugin id, version,
+SHA-256, size), the artifact in chunks written in offset order up to its size,
+retrying `plugin_release_download_busy` and `Unavailable`, and cross-checks the
+`PluginRelease` Control describes them by (digests, sizes, signature,
+`ed25519`, publisher, key ID, plugin API version) against the descriptor; a
+certificate refusal (`agent_cert_*`) discards the certificate and enrolls
+again; the API key is never sent then. Without `artifacts.v1` on the session
+(an Agent not enrolled yet, or a Control 4.1.x that predates AgentArtifacts,
+since the v4.2 upgrade runs the new Agent first) the Agent uses the HTTP
+download, authenticating both raw-body GETs with its existing `X-API-Key`; it
+refuses redirects and encoded or traversal paths, and names a refusal with
+`agent_mtls_required` in the install error. Either way it enforces a 1 MiB manifest limit and
+64 MiB artifact limit, then verifies exact size, SHA-256, publisher, API
+version, trust-root key ID, and Ed25519 signature before installation.
 
 New versions are assembled under a private staging directory and published by
 one atomic rename. Exact retries verify and reuse a complete immutable version;
@@ -284,4 +296,4 @@ parser is the SDK's `systemdreport.ParseConfig`.
 
 ## Maintenance reporting
 
-Enabling the Supervisor starts node-scoped maintenance monitoring and a durable outbox. The first delivery uses the authenticated HTTP/WebSocket sync connection; HTTP/REST nodes reuse sync and gRPC nodes start a maintenance-only WebSocket bridge using the HTTP(S) ApiHost and existing registered node credentials alongside GRPCHost. WebSocket must remain enabled. Health failures and process exits follow the 3 failures / 2 minutes gate. Only machine-telemetry may restart automatically, at most twice per instance per rolling 30 minutes, persisted across Agent restarts. Credentials, permissions, signatures and invalid configuration always require manual handling. See [the maintenance runbook](MAINTENANCE_P0.md) for configuration, storage, acknowledgment, recovery and acceptance boundaries.
+Enabling the Supervisor starts node-scoped maintenance monitoring and a durable outbox. While the Agent control stream negotiates `maintenance.v1` the outbox drains on the stream as `MaintenanceEvents` batches (at most 50 events and 256 KiB, oldest first, one batch awaiting its `MaintenanceAck`): an event is removed when Control answers `persisted`, dropped (and logged with its `error_code`) when Control refuses it for good, and kept and sent again not before `retry_after_ms` when Control answers `maintenance_unavailable` or nothing; `maintenance_batch_too_large` halves the batch instead of dropping. No WebSocket is opened then, and a maintenance-only WebSocket started before the stream negotiated it stops. Without `maintenance.v1` the delivery uses the authenticated HTTP/WebSocket sync connection; HTTP/REST nodes reuse sync and gRPC nodes start a maintenance-only WebSocket bridge using the HTTP(S) ApiHost and existing registered node credentials alongside GRPCHost. WebSocket must remain enabled for that fallback. Health failures and process exits follow the 3 failures / 2 minutes gate. Only machine-telemetry may restart automatically, at most twice per instance per rolling 30 minutes, persisted across Agent restarts. Credentials, permissions, signatures and invalid configuration always require manual handling. See [the maintenance runbook](MAINTENANCE_P0.md) for configuration, storage, acknowledgment, recovery and acceptance boundaries.

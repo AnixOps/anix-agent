@@ -101,6 +101,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	if dataPlane != nil {
 		dataPlane.client = client
 	}
+	controller.agentClient = client
 	return client, nil
 }
 
@@ -126,14 +127,20 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 		}
 	}
 	config := &agentapi.DataPlaneConfig{
-		State: store, Control: target, Config: dataPlane, Users: dataPlane, LegacyGrace: streamLegacyGrace,
+		State: store, Control: target, Config: dataPlane, Users: dataPlane, Alive: dataPlane, LegacyGrace: streamLegacyGrace,
 		Reports: &agentapi.ReportsConfig{
 			TrafficMaxBytes: settings.SpoolBytes(), LogsMaxBytes: settings.LogSpoolBytes(), MaxAge: settings.SpoolMaxAge(),
 			Status: dataPlane.nodeStatus,
 		},
 	}
 	if supervisor := dataPlane.supervisor(); supervisor != nil {
+		// The plugin supervisor's maintenance outbox (maintenance.v1) and
+		// its release downloads (artifacts.v1) ride the stream.
 		config.PackageReports = &agentapi.PackageReportsConfig{Collect: supervisor.PackageReports}
+		if store := supervisor.MaintenanceStore(); store != nil {
+			config.Maintenance = &agentapi.MaintenanceConfig{Outbox: maintenanceOutbox{store: store}, Interval: streamMaintenanceInterval}
+		}
+		config.Artifacts = true
 	}
 	return config, nil
 }
@@ -310,11 +317,7 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 		if err != nil {
 			return nil, err
 		}
-		installer, err := plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
-			Supervisor: c.pluginSupervisor,
-			BaseURL:    c.apiClient.GetAPIHost(),
-			APIKey:     c.apiClient.GetAPIKey(),
-		})
+		installer, err := c.pluginInstaller()
 		if err != nil {
 			return nil, err
 		}
@@ -352,6 +355,32 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 		})
 	default:
 		return nil, fmt.Errorf("unsupported desired operation %q", operation.Kind)
+	}
+}
+
+// pluginInstaller downloads plugin releases from AgentArtifacts by the
+// client certificate when the session negotiated artifacts.v1 (the API key
+// is never sent then), and over HTTP with the node API key otherwise: an
+// Agent that is not enrolled, or whose Control predates AgentArtifacts
+// (4.1.x; the v4.2 upgrade runs the new Agent before the new Control).
+func (c *Controller) pluginInstaller() (*plugin.RemoteInstaller, error) {
+	download := agentapi.PluginDownloadHTTP
+	if c.agentClient != nil {
+		download = c.agentClient.PluginDownload()
+	}
+	switch download {
+	case agentapi.PluginDownloadArtifacts:
+		artifacts, err := c.agentClient.PluginArtifacts()
+		if err != nil {
+			return nil, err
+		}
+		return plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{Supervisor: c.pluginSupervisor, Artifacts: artifacts})
+	default:
+		return plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
+			Supervisor: c.pluginSupervisor,
+			BaseURL:    c.apiClient.GetAPIHost(),
+			APIKey:     c.apiClient.GetAPIKey(),
+		})
 	}
 }
 

@@ -4,6 +4,69 @@
 
 ### Added
 
+- Agent control stream, maintenance outbox, alive list, plugin artifacts by
+  client certificate and error codes (AG-5b; anix-control #172 and #174, SDK
+  go_dev aa1c36f1). An enrolled Agent whose Control serves `config.v1`,
+  `users.v1`, `reports.v1`, `alive.v1` and, with the plugin supervisor,
+  `maintenance.v1` and `artifacts.v1` makes no request to a legacy channel
+  under `agent_control.mtls: required`.
+  - **`maintenance.v1`.** The supervisor's durable maintenance outbox
+    drains as `MaintenanceEvents` (at most 50 events and 256 KiB per batch,
+    oldest first, one batch in flight). Per event: `persisted` removes it, a
+    refusal (an `error`, or any code but `maintenance_unavailable`, also an
+    unknown one) drops it and logs its `error_code`, otherwise it stays and
+    goes again not before `retry_after_ms` (30 s without one);
+    `maintenance_batch_too_large` halves the batch. The maintenance-only
+    WebSocket is not opened while the stream carries the outbox, and one
+    started before stops.
+  - **`alive.v1`.** `AliveList` pages are buffered per session and revision
+    and, on `last_page`, replace every controller's alive map (users not
+    listed: 0) in place of UniProxy `alivelist`; a node starting on the
+    stream takes the latest list. A list cut by a reconnect is dropped.
+  - **`artifacts.v1`.** Listed in `Hello` only on a session that presents
+    the client certificate. `plugin.install` downloads the manifest and the
+    artifact from `AgentArtifacts` by the content address of the install
+    configuration, writes chunks in offset order up to the artifact's size,
+    keeps every check of the HTTP download (sizes, SHA-256 of both documents,
+    the ed25519 manifest signature, the artifact digest in the manifest) and
+    cross-checks the `PluginRelease` (digests, sizes, signature, algorithm,
+    publisher, key id, plugin API version). `plugin_release_download_busy`
+    and `Unavailable` are retried with backoff; `agent_cert_*` discards the
+    certificate and enrolls again; the API key is never sent then. Without
+    `artifacts.v1` on the session (an Agent not enrolled yet, or a Control
+    4.1.x before AgentArtifacts: the v4.2 upgrade runs the new Agent first)
+    the HTTP download with `X-API-Key` is used, as before; a refusal there
+    with `agent_mtls_required` is named in the install error.
+  - **Enrollment credential.** While the Agent waits for a one-time
+    credential it looks for the file every 5 s (was 1 minute), so a
+    credential written after a refusal is used promptly.
+  - **Codes.** `ConfigStatus.error_code` on every refusal
+    (`config_format_unsupported`, `config_hash_mismatch`, `config_invalid`
+    for a document the node cannot read, `config_apply_failed`).
+    `reports.v1` is listed with `transient_ack: "v1"`; a batch answered
+    `report_unavailable` stays in the spool and goes again not before
+    `retry_after_ms`, and a `ReportAck` with only an unknown code is a
+    refusal. Certificate refusals are decided on their code (status message
+    prefix, then the `x-anix-error-code` trailer; the old messages for older
+    Controls): `agent_cert_revoked`, `expired`, `invalid` and
+    `wrong_cluster` discard the certificate and enroll again;
+    `agent_cert_wrong_node` keeps it, logs a configuration error at most
+    every 10 minutes and reconnects no faster than every 5 minutes;
+    `agent_enrollment_rejected` stops using that bootstrap.
+  - **Status.** A runtime health change sends a `NodeStatus` at once, with
+    the current system usage (the last sample if reading it fails).
+  - **Metrics.** New heartbeat metrics
+    `agent_dataplane_maintenance_{pending,persisted_total,refused_total,deferred_total}`,
+    `agent_dataplane_alive_{revision,users}`,
+    `agent_dataplane_artifact_{downloads,failures}_total`,
+    `agent_dataplane_reports_deferred_total` and
+    `agent_identity_wrong_node_refusals_total`.
+  - `agent.diagnostic` is not advertised: the Agent has no diagnostic task
+    executor yet.
+  - `agenttest` serves the offer rule as an intersection, maintenance
+    batches and acknowledgements, paged alive lists, `AgentArtifacts`, error
+    codes and transient report acknowledgements, and sends operations.
+
 - Agent control stream, reports and package reports on the stream, with
   the spool (AG-5). The Agent advertises `reports.v1` and
   `package-reports.v1`; when Control serves them (A2-5, systemd panel 1/7)

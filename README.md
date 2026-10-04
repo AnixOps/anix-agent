@@ -277,10 +277,11 @@ UniProxy `user`、v2board `GetUsers`，也不处理 WebSocket `user_update` / `u
 - 用户集合与游标保存在 `AgentStream.StateDir/proxy-<NodeID>/users.pb`（0600，
   最多每 2 秒写一次，退出时写入），并作为 `Hello.users_cursor` 上报；重连或重启后从
   游标继续。游标为 0、早于 Control 变更日志的保留范围或超前时，Control 分页全量重发。
-- 控制流同时承载配置与用户时不再启动旧的 WebSocket（插件维护 outbox 仍使用仅维护
-  模式的 WebSocket，Control 尚无对应的流消息）。
-- UniProxy `alivelist`（其他节点的在线 IP 计数）没有流上的对应消息：此时设备数限制
-  只统计本节点的连接。
+- 控制流同时承载配置与用户时不再启动旧的 WebSocket；插件维护 outbox 在协商
+  `maintenance.v1` 时也走控制流，不再需要仅维护模式的 WebSocket。
+- Control 支持 `alive.v1` 时，设备数限制使用控制流下发的 `AliveList`（所有节点的
+  在线设备数，分页，收到 `last_page` 后整体替换，未列出的用户为 0），取代 UniProxy
+  `alivelist`；断线时未收完的列表被丢弃。没有 `alive.v1` 时只统计本节点的连接。
 
 ### 控制流数据面：上报与 spool（reports.v1、package-reports.v1）
 
@@ -311,9 +312,30 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
 }
 ```
 
-Control 4.2 默认 `agent_control.mtls: required`：配置、用户与上报都在 mTLS 控制流上时，
-Agent 不再访问旧的 REST、gRPC 与 WebSocket 通道（插件维护 outbox 与插件包下载除外，
-Control 尚无对应的流消息）。
+### 控制流数据面：维护事件、在线设备数、插件包与错误码
+
+- `maintenance.v1`：插件维护 outbox 以 `MaintenanceEvents`（每批最多 50 条、256 KiB）
+  在控制流上发送；`persisted` 删除，带错误（或未知错误码）的拒绝直接丢弃并记录
+  `error_code`，`maintenance_unavailable` 保留并在 `retry_after_ms` 之后重发。
+- `alive.v1`：见上文“用户”。
+- `artifacts.v1`（已注册、以客户端证书连接时）：插件包与清单通过 `AgentArtifacts`
+  按内容地址下载，校验与 HTTP 下载相同（大小、SHA-256、Ed25519 签名、清单中的包摘要），
+  并核对 `PluginRelease`；`plugin_release_download_busy` 与 `Unavailable` 会重试。
+  未协商 `artifacts.v1` 时（尚未注册，或 Control 4.1.x 尚无 AgentArtifacts；v4.2 升级
+  先升级 Agent）仍使用带 `X-API-Key` 的 HTTP 下载；若被 `agent_mtls_required` 拒绝，
+  安装错误中会明确说明。
+- 等待一次性注册凭据时每 5 秒检查一次凭据文件，写入后很快完成注册。
+- 错误码：`ConfigStatus.error_code`（`config_format_unsupported`、`config_hash_mismatch`、
+  `config_invalid`、`config_apply_failed`）；`reports.v1` 携带 `transient_ack: "v1"`，
+  `report_unavailable` 的批次保留并在 `retry_after_ms` 后重发。证书被拒
+  （`agent_cert_revoked` / `expired` / `invalid` / `wrong_cluster`）时丢弃证书并重新注册；
+  `agent_cert_wrong_node` 视为本地配置错误（保留证书，慢速重试并报错）；
+  `agent_enrollment_rejected` 后不再重试同一凭据。
+- 内核健康变化时立即发送带当前系统用量的 `NodeStatus`。
+
+Control 4.2 默认 `agent_control.mtls: required`：已注册的 Agent 在 Control 支持上述能力时
+完全不访问旧的 REST、gRPC 与 WebSocket 通道（包括维护 WebSocket 与 HTTP 插件下载）；
+首次注册仍需一次性注册凭据（`anix-control agent token create`）。
 
 面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 

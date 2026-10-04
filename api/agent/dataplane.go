@@ -64,6 +64,36 @@ const DefaultLegacyGrace = 5 * time.Minute
 // (PROTOCOL.md, "Configuration").
 const ConfigFormatNodeConfigV1 = "anixops.nodeconfig/v1"
 
+// ErrConfigInvalid marks a configuration the node refused because the
+// document does not parse or fails its checks (ConfigStatus.error_code
+// config_invalid); other apply errors are config_apply_failed. Wrap it with
+// InvalidConfig.
+var ErrConfigInvalid = errors.New("invalid configuration")
+
+// InvalidConfig marks err as a configuration the node cannot run because
+// the document is invalid, not because applying it failed.
+func InvalidConfig(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &invalidConfigError{err: err}
+}
+
+type invalidConfigError struct{ err error }
+
+func (e *invalidConfigError) Error() string { return e.err.Error() }
+func (e *invalidConfigError) Unwrap() []error {
+	return []error{e.err, ErrConfigInvalid}
+}
+
+// configErrorCode is ConfigStatus.error_code for an apply error.
+func configErrorCode(err error) string {
+	if errors.Is(err, ErrConfigInvalid) {
+		return agentcontrol.ConfigErrorCodeInvalid
+	}
+	return agentcontrol.ConfigErrorCodeApplyFailed
+}
+
 // ErrSessionGone means a data-plane payload could not be sent because the
 // session it belongs to has ended or did not negotiate its capability.
 var ErrSessionGone = errors.New("agent control session is gone or did not negotiate the capability")
@@ -94,6 +124,15 @@ type DataPlaneConfig struct {
 	Reports *ReportsConfig
 	// PackageReports turns on package-reports.v1.
 	PackageReports *PackageReportsConfig
+	// Maintenance turns on maintenance.v1: the plugin supervisor's
+	// maintenance outbox drains on the stream.
+	Maintenance *MaintenanceConfig
+	// Alive applies the alive list; set, the client advertises alive.v1.
+	Alive AliveApplier
+	// Artifacts advertises artifacts.v1 on sessions that present the
+	// client certificate: plugin releases download from AgentArtifacts
+	// (Client.PluginArtifacts).
+	Artifacts bool
 	// LegacyGrace defaults to DefaultLegacyGrace.
 	LegacyGrace time.Duration
 	// Now defaults to time.Now (tests).
@@ -104,6 +143,9 @@ type DataPlaneConfig struct {
 type DataPlaneSession struct {
 	ID         string
 	Negotiated []string
+	// TransientAcks: Control answers a batch it cannot record now with
+	// report_unavailable (the transient_ack attribute of reports.v1).
+	TransientAcks bool
 }
 
 // Has reports whether the session negotiated capability.
@@ -167,6 +209,12 @@ type DataPlane struct {
 	// Reports (reports.v1, package-reports.v1).
 	reports reportsState
 
+	// Maintenance outbox (maintenance.v1).
+	maintenance maintenanceState
+
+	// Alive list (alive.v1).
+	alive aliveState
+
 	counters dataPlaneCounters
 }
 
@@ -196,7 +244,8 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 	if config.State == nil {
 		return nil, errors.New("agent data plane: a state store is required")
 	}
-	if config.Config == nil && config.Users == nil && config.Reports == nil && config.PackageReports == nil {
+	if config.Config == nil && config.Users == nil && config.Reports == nil && config.PackageReports == nil &&
+		config.Maintenance == nil && config.Alive == nil && !config.Artifacts {
 		return nil, errors.New("agent data plane: no data-plane handler is configured")
 	}
 	if config.LegacyGrace <= 0 {
@@ -219,6 +268,8 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 		users:         usersState{arrived: make(chan struct{})},
 	}
 	plane.ctx, plane.cancel = context.WithCancel(client.ctx)
+	plane.maintenance.wake = make(chan struct{}, 1)
+	plane.alive.arrived = make(chan struct{})
 	plane.load()
 	if err := plane.openReports(); err != nil {
 		plane.cancel()
@@ -280,6 +331,15 @@ func (d *DataPlane) capabilities() []string {
 	if d.config.PackageReports != nil {
 		names = append(names, agentcontrol.CapabilityPackageReports)
 	}
+	if d.config.Maintenance != nil {
+		names = append(names, agentcontrol.CapabilityMaintenance)
+	}
+	if d.config.Alive != nil {
+		names = append(names, agentcontrol.CapabilityAlive)
+	}
+	if d.config.Artifacts {
+		names = append(names, agentcontrol.CapabilityArtifacts)
+	}
 	return names
 }
 
@@ -294,6 +354,13 @@ func (d *DataPlane) start() {
 		go func() {
 			defer d.wg.Done()
 			d.runReports()
+		}()
+	}
+	if d.config.Maintenance != nil {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.runMaintenance()
 		}()
 	}
 }
@@ -318,16 +385,18 @@ func (d *DataPlane) helloConfigRevision() uint64 {
 	return d.appliedConfig.GetConfigRevision()
 }
 
-// sessionStarted records a session after its HelloAck.
-func (d *DataPlane) sessionStarted(sessionID string, negotiated []string) {
+// sessionStarted records a session after its HelloAck. transientAcks
+// tells whether Control echoed the transient_ack attribute of reports.v1.
+func (d *DataPlane) sessionStarted(sessionID string, negotiated []string, transientAcks bool) {
 	d.mu.Lock()
-	d.session = DataPlaneSession{ID: sessionID, Negotiated: append([]string(nil), negotiated...)}
+	d.session = DataPlaneSession{ID: sessionID, Negotiated: append([]string(nil), negotiated...), TransientAcks: transientAcks}
 	for _, capability := range negotiated {
 		delete(d.streamUntil, capability)
 	}
 	close(d.sessionReady)
 	d.mu.Unlock()
 	d.signalReports()
+	d.signalMaintenance()
 	if err := d.config.State.SaveSession(state.Session{Control: d.config.Control, Negotiated: negotiated, At: d.now().UTC()}); err != nil {
 		d.logger().WithError(err).Warn("Could not record the negotiated data-plane capabilities")
 	}
@@ -346,6 +415,7 @@ func (d *DataPlane) sessionEnded(sessionID string) {
 		d.streamUntil[capability] = ended
 	}
 	d.dropUserPagesLocked(sessionID)
+	d.dropAlivePagesLocked(sessionID)
 	d.session = DataPlaneSession{}
 	d.sessionReady = make(chan struct{})
 }
@@ -460,7 +530,7 @@ func (d *DataPlane) ConfigResult(snapshot *agentv1pb.ConfigSnapshot, err error) 
 
 // receive takes a negotiated data-plane payload from the session's receive
 // loop. It never blocks on applying.
-func (d *DataPlane) receive(sessionID string, payload any) {
+func (d *DataPlane) receive(sessionID, requestID string, payload any) {
 	switch payload := payload.(type) {
 	case *agentv1pb.ControlToAgent_Config:
 		d.receiveConfig(sessionID, payload.Config)
@@ -468,6 +538,10 @@ func (d *DataPlane) receive(sessionID string, payload any) {
 		d.receiveUsers(sessionID, payload.Users)
 	case *agentv1pb.ControlToAgent_ReportAck:
 		d.receiveReportAck(sessionID, payload.ReportAck)
+	case *agentv1pb.ControlToAgent_MaintenanceAck:
+		d.receiveMaintenanceAck(sessionID, requestID, payload.MaintenanceAck)
+	case *agentv1pb.ControlToAgent_AliveList:
+		d.receiveAlive(sessionID, payload.AliveList)
 	}
 }
 
@@ -476,13 +550,13 @@ func (d *DataPlane) receiveConfig(sessionID string, snapshot *agentv1pb.ConfigSn
 	if snapshot == nil {
 		return
 	}
-	if problem := verifySnapshot(snapshot); problem != "" {
+	if problem, code := verifySnapshot(snapshot); problem != "" {
 		d.counters.configRejected.Add(1)
-		d.logger().WithFields(log.Fields{"config_revision": snapshot.GetConfigRevision(), "problem": problem}).
+		d.logger().WithFields(log.Fields{"config_revision": snapshot.GetConfigRevision(), "problem": problem, "error_code": code}).
 			Warn("Refusing a configuration snapshot from Control")
 		if snapshot.GetConfigRevision() != 0 {
 			d.queueStatus(&agentv1pb.ConfigStatus{
-				ConfigRevision: snapshot.GetConfigRevision(), ConfigHash: snapshot.GetConfigHash(), Error: problem,
+				ConfigRevision: snapshot.GetConfigRevision(), ConfigHash: snapshot.GetConfigHash(), Error: problem, ErrorCode: code,
 			})
 		}
 		d.mu.Lock()
@@ -498,17 +572,18 @@ func (d *DataPlane) receiveConfig(sessionID string, snapshot *agentv1pb.ConfigSn
 	d.signal()
 }
 
-// verifySnapshot returns why a snapshot cannot be applied, "" when it can.
-func verifySnapshot(snapshot *agentv1pb.ConfigSnapshot) string {
+// verifySnapshot returns why a snapshot cannot be applied and its
+// ConfigStatus.error_code, "" when it can.
+func verifySnapshot(snapshot *agentv1pb.ConfigSnapshot) (problem, code string) {
 	switch {
 	case snapshot.GetConfigRevision() == 0:
-		return "config_revision is required"
+		return "config_revision is required", agentcontrol.ConfigErrorCodeInvalid
 	case snapshot.GetFormat() != ConfigFormatNodeConfigV1:
-		return fmt.Sprintf("unknown configuration format %q (this Agent applies %s)", snapshot.GetFormat(), ConfigFormatNodeConfigV1)
+		return fmt.Sprintf("unknown configuration format %q (this Agent applies %s)", snapshot.GetFormat(), ConfigFormatNodeConfigV1), agentcontrol.ConfigErrorCodeFormatUnsupported
 	case !state.HashMatches(snapshot):
-		return "config_hash does not match the SHA-256 of config_json"
+		return "config_hash does not match the SHA-256 of config_json", agentcontrol.ConfigErrorCodeHashMismatch
 	}
-	return ""
+	return "", ""
 }
 
 // run applies snapshots and user sets after Activate, delivers statuses
@@ -528,6 +603,7 @@ func (d *DataPlane) run() {
 		d.flushStatus()
 		d.applyPendingConfig()
 		d.applyPendingUsers()
+		d.applyPendingAlive()
 		d.saveUsers(false)
 		d.mu.Lock()
 		next := d.usersWakeLocked()
@@ -573,11 +649,11 @@ func (d *DataPlane) finishConfig(snapshot *agentv1pb.ConfigSnapshot, err error) 
 	status := &agentv1pb.ConfigStatus{ConfigRevision: snapshot.GetConfigRevision(), ConfigHash: snapshot.GetConfigHash(), Applied: err == nil}
 	if err != nil {
 		d.counters.configFailed.Add(1)
-		status.Error = err.Error()
+		status.Error, status.ErrorCode = err.Error(), configErrorCode(err)
 		d.mu.Lock()
 		d.lastConfigError = err.Error()
 		d.mu.Unlock()
-		entry.WithError(err).Error("Could not apply the configuration snapshot from Control")
+		entry.WithError(err).WithField("error_code", status.ErrorCode).Error("Could not apply the configuration snapshot from Control")
 	} else {
 		d.counters.configApplied.Add(1)
 		d.mu.Lock()
@@ -649,6 +725,8 @@ func (d *DataPlane) metrics() map[string]float64 {
 		metrics[MetricUsersApplyFailures] = float64(d.counters.usersFailed.Load())
 	}
 	d.reportsMetrics(metrics)
+	d.maintenanceMetrics(metrics)
+	d.aliveMetrics(metrics)
 	return metrics
 }
 

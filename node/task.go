@@ -89,11 +89,13 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		}
 	}
 	c.lastConfigMode = configMode
-	// The users come from the stream's deltas while it carries users.v1;
-	// the alive list has no stream counterpart and is not pulled then.
+	// The users come from the stream's deltas while it carries users.v1,
+	// and the alive list from its AliveList (alive.v1); the UniProxy
+	// alivelist is pulled only with the legacy user pull.
 	var newU []panel.UserInfo
 	var newA map[int]int
 	usersMode := c.stream.mode(agentcontrol.CapabilityUsers)
+	aliveMode := c.stream.mode(agentcontrol.CapabilityAlive)
 	if usersMode == agentapi.DataPlaneLegacy {
 		if c.lastUsersMode != agentapi.DataPlaneLegacy {
 			if resetter, ok := c.apiClient.(pullCacheResetter); ok {
@@ -108,17 +110,19 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			}).Error("Get user list failed")
 			return fmt.Errorf("get user list: %w", err)
 		}
-		newA, err = c.apiClient.GetUserAlive()
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Get alive list failed")
-			return fmt.Errorf("get alive list: %w", err)
+		if aliveMode == agentapi.DataPlaneLegacy {
+			newA, err = c.apiClient.GetUserAlive()
+			if err != nil {
+				log.WithFields(log.Fields{
+					"tag": c.tag,
+					"err": err,
+				}).Error("Get alive list failed")
+				return fmt.Errorf("get alive list: %w", err)
+			}
 		}
 	}
 	c.lastUsersMode = usersMode
-	if c.streamCarriesNodeData() {
+	if c.streamCarriesNodeData() || c.streamCarriesMaintenance() {
 		c.retireLegacySync()
 	}
 	return c.reconcileLocked(newN, newU, newA)
@@ -307,7 +311,9 @@ func (c *Controller) applyUserDiffLocked(newU []panel.UserInfo) (err error) {
 
 func (c *Controller) reportRuntimeHealth() {
 	if c.stream.streamReports() {
-		// NodeStatus carries the runtime health on the stream.
+		// NodeStatus carries the runtime health on the stream, with the
+		// system usage; a change goes out at once.
+		c.stream.runtimeHealthChanged()
 		return
 	}
 	provider, ok := c.server.(vCore.RuntimeHealthProvider)

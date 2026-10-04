@@ -27,7 +27,9 @@ import (
 // answers its ReportAck, and dropped from the spool on any ReportAck:
 // applied, recorded before, or refused for good. Control sends no ReportAck
 // for a batch it cannot record for now; the Agent resends it after
-// reportAckTimeout. NodeStatus and PackageReport are the latest value only:
+// reportAckTimeout. An Agent that lists reports.v1 with the transient_ack
+// attribute gets report_unavailable instead: the batch stays and is sent
+// again not before retry_after_ms. NodeStatus and PackageReport are the latest value only:
 // never spooled or resent.
 
 // Report spool and cadence defaults.
@@ -59,6 +61,8 @@ const (
 	MetricReportSpoolDropped = "agent_dataplane_report_spool_dropped_total"
 	MetricReportsAcked       = "agent_dataplane_reports_acked_total"
 	MetricReportsRefused     = "agent_dataplane_reports_refused_total"
+	// MetricReportsDeferred counts report_unavailable answers.
+	MetricReportsDeferred = "agent_dataplane_reports_deferred_total"
 )
 
 // ReportsConfig turns on reports.v1.
@@ -106,15 +110,20 @@ type reportsState struct {
 	traffic *spool.Spool
 	logs    *spool.Spool
 
-	mu          sync.Mutex
-	session     string
-	inflight    map[string]time.Time
-	statusAt    time.Time
+	mu       sync.Mutex
+	session  string
+	inflight map[string]time.Time
+	// notBefore holds batches Control answered with report_unavailable:
+	// they are sent again not before then.
+	notBefore map[string]time.Time
+	statusAt  time.Time
+	// statusNow asks for a status at once (a runtime health change).
+	statusNow   bool
 	packageAt   time.Time
 	packageSent map[string]int64
 	pending     bool
 
-	acked, duplicates, refused atomic.Uint64
+	acked, duplicates, refused, deferred atomic.Uint64
 }
 
 // openReports opens the spools under the state directory.
@@ -126,6 +135,7 @@ func (d *DataPlane) openReports() error {
 	d.reports.bootID = hex.EncodeToString(random)
 	d.reports.wake = make(chan struct{}, 1)
 	d.reports.inflight = map[string]time.Time{}
+	d.reports.notBefore = map[string]time.Time{}
 	d.reports.packageSent = map[string]int64{}
 	config := d.config.Reports
 	if config == nil {
@@ -206,12 +216,29 @@ func (d *DataPlane) submit(target *spool.Spool, message *agentv1pb.AgentToContro
 }
 
 // receiveReportAck takes a ReportAck from the session's receive loop:
-// every answer drops the batch from the spool.
+// every answer drops the batch from the spool, but report_unavailable,
+// which keeps it for a resend after retry_after_ms.
 func (d *DataPlane) receiveReportAck(sessionID string, ack *agentv1pb.ReportAck) {
 	if ack == nil || ack.GetBatchId() == "" {
 		return
 	}
 	id := ack.GetBatchId()
+	code := ack.GetErrorCode()
+	if !ack.GetApplied() && ack.GetError() == "" && code == agentcontrol.ReportErrorCodeUnavailable {
+		retry := time.Duration(ack.GetRetryAfterMs()) * time.Millisecond
+		if retry <= 0 {
+			retry = reportAckTimeout
+		}
+		d.reports.deferred.Add(1)
+		d.reports.mu.Lock()
+		delete(d.reports.inflight, id)
+		d.reports.notBefore[id] = d.now().Add(retry)
+		d.reports.mu.Unlock()
+		d.logger().WithFields(log.Fields{"batch_id": id, "error_code": code, "retry_in": retry.String(), "session_id": sessionID}).
+			Info("Control could not record a report batch now; it stays in the spool")
+		d.signalReports()
+		return
+	}
 	removed := false
 	if d.reports.traffic != nil && d.reports.traffic.Remove(id) {
 		removed = true
@@ -220,21 +247,36 @@ func (d *DataPlane) receiveReportAck(sessionID string, ack *agentv1pb.ReportAck)
 	}
 	d.reports.mu.Lock()
 	delete(d.reports.inflight, id)
+	delete(d.reports.notBefore, id)
 	d.reports.mu.Unlock()
 	switch {
 	case ack.GetApplied():
 		d.reports.acked.Add(1)
-	case ack.GetError() == "":
+	case ack.GetError() == "" && code == "":
 		d.reports.duplicates.Add(1)
 		d.reports.acked.Add(1)
 	default:
+		// A refusal, also one with only a code this Agent does not know.
 		d.reports.refused.Add(1)
-		d.logger().WithFields(log.Fields{"batch_id": id, "error": ack.GetError(), "session_id": sessionID}).
+		d.logger().WithFields(log.Fields{"batch_id": id, "error": ack.GetError(), "error_code": code, "session_id": sessionID}).
 			Warn("Control refused a report batch for good; dropping it")
 	}
 	if removed {
 		d.signalReports()
 	}
+}
+
+// StatusChanged asks for a NodeStatus at once, outside the status
+// interval: the runtime health changed. The status carries the current
+// system usage too, since Control writes both from one NodeStatus.
+func (d *DataPlane) StatusChanged() {
+	if d.config.Reports == nil {
+		return
+	}
+	d.reports.mu.Lock()
+	d.reports.statusNow = true
+	d.reports.mu.Unlock()
+	d.signalReports()
 }
 
 // SendStatus sends the node's status on the stream; ErrSessionGone when
@@ -280,6 +322,7 @@ func (d *DataPlane) runReports() {
 			// status and package reports go at once.
 			d.reports.session = session.ID
 			d.reports.inflight = map[string]time.Time{}
+			d.reports.notBefore = map[string]time.Time{}
 			d.reports.statusAt, d.reports.packageAt = time.Time{}, time.Time{}
 			d.reports.packageSent = map[string]int64{}
 		}
@@ -317,6 +360,11 @@ func (d *DataPlane) replay(session DataPlaneSession, now time.Time) {
 		for _, entry := range target.Pending() {
 			d.reports.mu.Lock()
 			sentAt, inflight := d.reports.inflight[entry.BatchID]
+			deferredUntil, deferred := d.reports.notBefore[entry.BatchID]
+			if deferred && !now.Before(deferredUntil) {
+				delete(d.reports.notBefore, entry.BatchID)
+				deferred = false
+			}
 			waiting := 0
 			for _, at := range d.reports.inflight {
 				if now.Sub(at) < reportAckTimeout {
@@ -324,7 +372,7 @@ func (d *DataPlane) replay(session DataPlaneSession, now time.Time) {
 				}
 			}
 			d.reports.mu.Unlock()
-			if inflight && now.Sub(sentAt) < reportAckTimeout {
+			if deferred || (inflight && now.Sub(sentAt) < reportAckTimeout) {
 				continue
 			}
 			if waiting >= reportWindow {
@@ -371,9 +419,9 @@ func (d *DataPlane) reportStatus(session DataPlaneSession, now time.Time) {
 		return
 	}
 	d.reports.mu.Lock()
-	due := d.reports.statusAt.IsZero() || now.Sub(d.reports.statusAt) >= config.StatusInterval
+	due := d.reports.statusNow || d.reports.statusAt.IsZero() || now.Sub(d.reports.statusAt) >= config.StatusInterval
 	if due {
-		d.reports.statusAt = now
+		d.reports.statusAt, d.reports.statusNow = now, false
 	}
 	d.reports.mu.Unlock()
 	if !due {
@@ -457,6 +505,9 @@ func (d *DataPlane) reportsWake(session DataPlaneSession) time.Time {
 		for _, sentAt := range d.reports.inflight {
 			earliest(sentAt.Add(reportAckTimeout))
 		}
+		for _, at := range d.reports.notBefore {
+			earliest(at)
+		}
 		if config := d.config.Reports; config != nil && config.Status != nil && !d.reports.statusAt.IsZero() {
 			earliest(d.reports.statusAt.Add(config.StatusInterval))
 		}
@@ -497,6 +548,7 @@ func (d *DataPlane) reportsMetrics(metrics map[string]float64) {
 	metrics[MetricReportSpoolDropped] = float64(drops.Size + drops.Age + drops.Count)
 	metrics[MetricReportsAcked] = float64(d.reports.acked.Load())
 	metrics[MetricReportsRefused] = float64(d.reports.refused.Load())
+	metrics[MetricReportsDeferred] = float64(d.reports.deferred.Load())
 }
 
 func (d *DataPlane) reportsStatus() *ReportsStatus {

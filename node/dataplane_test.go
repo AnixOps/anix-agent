@@ -148,6 +148,8 @@ type legacyPanel struct {
 	config map[string]any
 	mu     sync.Mutex
 	paths  []string
+	// extra answers a path first when it returns true.
+	extra func(http.ResponseWriter, *http.Request) bool
 }
 
 func newLegacyPanel(t *testing.T, config map[string]any) *legacyPanel {
@@ -156,7 +158,11 @@ func newLegacyPanel(t *testing.T, config map[string]any) *legacyPanel {
 	legacy.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		legacy.mu.Lock()
 		legacy.paths = append(legacy.paths, r.URL.Path)
+		extra := legacy.extra
 		legacy.mu.Unlock()
+		if extra != nil && extra(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v2/server/UniProxy/config":

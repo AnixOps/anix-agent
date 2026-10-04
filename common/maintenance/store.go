@@ -277,6 +277,22 @@ func (s *Store) Acknowledge(ack Acknowledgment) error {
 		return nil
 	})
 }
+
+// Remove deletes events Control refused for good or stored, by event_id
+// (the control stream's maintenance.v1 answers them one by one). Unknown ids
+// are ignored.
+func (s *Store) Remove(eventIDs []string) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	return s.transaction(func(state *diskState) error {
+		for _, id := range eventIDs {
+			delete(state.Events, id)
+			delete(state.Order, id)
+		}
+		return nil
+	})
+}
 func (s *Store) Observe(observation Observation, now time.Time) (Decision, error) {
 	decision := Decision{}
 	if observation.InstanceID == "" {
