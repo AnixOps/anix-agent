@@ -246,3 +246,30 @@ func equalInts(a, b []int) bool {
 	}
 	return true
 }
+
+func TestReloadFailureRestoresTheDerivedTagAndLimiter(t *testing.T) {
+	core := newReloadCore()
+	controller := runningController(t, core, vlessNode(443))
+	// The default: the tag (and the limiter's key) follows the node.
+	delete(core.nodes, "fixed-tag")
+	limiter.DeleteLimiter("fixed-tag")
+	controller.Options.Name = ""
+	controller.tag = controller.buildNodeTag(controller.info)
+	controller.limiter = limiter.AddLimiter(controller.tag, &controller.LimitConfig, controller.userList, controller.aliveMap)
+	t.Cleanup(func() { limiter.DeleteLimiter(controller.tag) })
+	if err := core.AddNode(controller.tag, controller.info, controller.Options); err != nil {
+		t.Fatal(err)
+	}
+	oldTag := controller.tag
+	core.addErr = failPort(8443, errAddrInUse)
+
+	if err := controller.reconcileLocked(vlessNode(8443), nil, nil); !errors.Is(err, errAddrInUse) {
+		t.Fatalf("reconcile error = %v, want the add failure", err)
+	}
+	if controller.tag != oldTag || core.runningPort(t, oldTag) != 443 || !controller.nodeAdded {
+		t.Fatalf("tag %q port %d nodeAdded=%v, want %q on 443", controller.tag, core.runningPort(t, oldTag), controller.nodeAdded, oldTag)
+	}
+	if l, err := limiter.GetLimiter(oldTag); err != nil || l != controller.limiter {
+		t.Fatalf("limiter under %q = %v (%v), want the controller's", oldTag, l, err)
+	}
+}
