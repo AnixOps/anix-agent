@@ -62,7 +62,13 @@ func (f OperationHandlerFunc) HandleOperation(ctx context.Context, operation *ag
 type DialContextFunc func(context.Context, string, ...grpc.DialOption) (*grpc.ClientConn, error)
 
 type Config struct {
-	Target           string
+	Target string
+	// NodeKind is the kind of node NodeID names: agentcontrol.NodeKindProxy
+	// (the default) or agentcontrol.NodeKindForward. A forward node's
+	// stream needs Identity: Control authenticates forward nodes by client
+	// certificate only, and enrolls them with their token and the
+	// x-node-kind metadata.
+	NodeKind         string
 	NodeID           int
 	APIKey           string
 	UseTLS           bool
@@ -156,6 +162,20 @@ func NewClient(config Config) (*Client, error) {
 	if config.NodeID <= 0 {
 		return nil, fmt.Errorf("agent node ID must be positive")
 	}
+	if config.NodeID > int(^uint32(0)) {
+		return nil, fmt.Errorf("agent node ID %d is out of range", config.NodeID)
+	}
+	switch config.NodeKind {
+	case "":
+		config.NodeKind = agentcontrol.NodeKindProxy
+	case agentcontrol.NodeKindProxy:
+	case agentcontrol.NodeKindForward:
+		if config.Identity == nil {
+			return nil, fmt.Errorf("a forward node's agent control stream needs the agent identity (client certificate): Control does not accept a forward node's token on the stream")
+		}
+	default:
+		return nil, fmt.Errorf("unknown agent node kind %q", config.NodeKind)
+	}
 	if strings.TrimSpace(config.APIKey) == "" {
 		return nil, fmt.Errorf("agent API key is required")
 	}
@@ -221,6 +241,17 @@ func NewClient(config Config) (*Client, error) {
 					// silence when Control cannot record a batch now.
 					capability.Attributes = map[string]string{agentcontrol.ReportsAttributeTransientAck: agentcontrol.ReportsTransientAckV1}
 				}
+				if name == agentcontrol.CapabilityForward {
+					// The node's capabilities ride in the attribute, so
+					// Control plans for the node before its first
+					// snapshot.
+					forward, err := plane.config.Forward.HelloCapability()
+					if err != nil {
+						cancel()
+						return nil, fmt.Errorf("agent capability forward.v1: %w", err)
+					}
+					capability = forward
+				}
 				client.config.Capabilities = append(client.config.Capabilities, capability)
 			}
 		}
@@ -278,6 +309,11 @@ func (c *Client) Close() error {
 		c.dataPlane.close()
 	}
 	return nil
+}
+
+// Node is the node the client speaks for (Config.NodeKind and NodeID).
+func (c *Client) Node() agentcontrol.AgentNode {
+	return agentcontrol.AgentNode{Kind: c.config.NodeKind, ID: uint32(c.config.NodeID)} // #nosec G115 -- NewClient bounds the ID.
 }
 
 // DataPlane returns the client's data plane, nil without

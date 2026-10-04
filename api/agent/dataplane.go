@@ -133,6 +133,12 @@ type DataPlaneConfig struct {
 	// client certificate: plugin releases download from AgentArtifacts
 	// (Client.PluginArtifacts).
 	Artifacts bool
+	// Forward is the node's forward component; set, the client advertises
+	// forward.v1 (with package-reports.v1, which carries its reports) and
+	// accepts anixops.nodeconfig/v2 snapshots. It needs Config: the
+	// forwarding state rides in config.v1, and the ConfigApplier hands it
+	// to the component.
+	Forward ForwardHandler
 	// LegacyGrace defaults to DefaultLegacyGrace.
 	LegacyGrace time.Duration
 	// Now defaults to time.Now (tests).
@@ -245,8 +251,11 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 		return nil, errors.New("agent data plane: a state store is required")
 	}
 	if config.Config == nil && config.Users == nil && config.Reports == nil && config.PackageReports == nil &&
-		config.Maintenance == nil && config.Alive == nil && !config.Artifacts {
+		config.Maintenance == nil && config.Alive == nil && !config.Artifacts && config.Forward == nil {
 		return nil, errors.New("agent data plane: no data-plane handler is configured")
+	}
+	if config.Forward != nil && config.Config == nil {
+		return nil, errors.New("agent data plane: forward.v1 needs a ConfigApplier: the forwarding state rides in config.v1")
 	}
 	if config.LegacyGrace <= 0 {
 		config.LegacyGrace = DefaultLegacyGrace
@@ -304,7 +313,7 @@ func (d *DataPlane) load() {
 		case err != nil:
 			d.logger().WithError(err).Warn("Discarding the stored configuration snapshot")
 			_ = store.DiscardConfig()
-		case snapshot != nil && snapshot.GetFormat() != ConfigFormatNodeConfigV1:
+		case snapshot != nil && !d.acceptsFormat(snapshot.GetFormat()):
 			_ = store.DiscardConfig()
 		default:
 			d.persistedConfig = snapshot
@@ -328,8 +337,11 @@ func (d *DataPlane) capabilities() []string {
 	if d.config.Reports != nil {
 		names = append(names, agentcontrol.CapabilityReports)
 	}
-	if d.config.PackageReports != nil {
+	if d.config.PackageReports != nil || d.config.Forward != nil {
 		names = append(names, agentcontrol.CapabilityPackageReports)
+	}
+	if d.config.Forward != nil {
+		names = append(names, agentcontrol.CapabilityForward)
 	}
 	if d.config.Maintenance != nil {
 		names = append(names, agentcontrol.CapabilityMaintenance)
@@ -397,6 +409,9 @@ func (d *DataPlane) sessionStarted(sessionID string, negotiated []string, transi
 	d.mu.Unlock()
 	d.signalReports()
 	d.signalMaintenance()
+	if d.config.Forward != nil {
+		d.config.Forward.ForwardSession(forwardNegotiated(DataPlaneSession{Negotiated: negotiated}))
+	}
 	if err := d.config.State.SaveSession(state.Session{Control: d.config.Control, Negotiated: negotiated, At: d.now().UTC()}); err != nil {
 		d.logger().WithError(err).Warn("Could not record the negotiated data-plane capabilities")
 	}
@@ -550,7 +565,7 @@ func (d *DataPlane) receiveConfig(sessionID string, snapshot *agentv1pb.ConfigSn
 	if snapshot == nil {
 		return
 	}
-	if problem, code := verifySnapshot(snapshot); problem != "" {
+	if problem, code := d.verifySnapshot(snapshot); problem != "" {
 		d.counters.configRejected.Add(1)
 		d.logger().WithFields(log.Fields{"config_revision": snapshot.GetConfigRevision(), "problem": problem, "error_code": code}).
 			Warn("Refusing a configuration snapshot from Control")
@@ -574,12 +589,12 @@ func (d *DataPlane) receiveConfig(sessionID string, snapshot *agentv1pb.ConfigSn
 
 // verifySnapshot returns why a snapshot cannot be applied and its
 // ConfigStatus.error_code, "" when it can.
-func verifySnapshot(snapshot *agentv1pb.ConfigSnapshot) (problem, code string) {
+func (d *DataPlane) verifySnapshot(snapshot *agentv1pb.ConfigSnapshot) (problem, code string) {
 	switch {
 	case snapshot.GetConfigRevision() == 0:
 		return "config_revision is required", agentcontrol.ConfigErrorCodeInvalid
-	case snapshot.GetFormat() != ConfigFormatNodeConfigV1:
-		return fmt.Sprintf("unknown configuration format %q (this Agent applies %s)", snapshot.GetFormat(), ConfigFormatNodeConfigV1), agentcontrol.ConfigErrorCodeFormatUnsupported
+	case !d.acceptsFormat(snapshot.GetFormat()):
+		return fmt.Sprintf("unknown configuration format %q (this Agent applies %s)", snapshot.GetFormat(), d.formatsText()), agentcontrol.ConfigErrorCodeFormatUnsupported
 	case !state.HashMatches(snapshot):
 		return "config_hash does not match the SHA-256 of config_json", agentcontrol.ConfigErrorCodeHashMismatch
 	}

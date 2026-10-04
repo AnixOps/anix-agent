@@ -132,7 +132,7 @@ func newIdentityManager(client *Client, config IdentityConfig) (*identityManager
 	if client.config.NodeID > int(^uint32(0)) {
 		return nil, fmt.Errorf("agent node ID %d is out of range", client.config.NodeID)
 	}
-	node := agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(client.config.NodeID)} // #nosec G115 -- checked above.
+	node := client.Node()
 	store, err := pki.NewStore(config.Dir, node)
 	if err != nil {
 		return nil, err
@@ -494,7 +494,7 @@ func (m *identityManager) enrollWith(ctx context.Context, method, credential str
 	defer conn.Close()
 	pairs := []string{
 		agentcontrol.MetadataNodeID, strconv.Itoa(m.client.config.NodeID),
-		agentcontrol.MetadataNodeKind, agentcontrol.NodeKindProxy,
+		agentcontrol.MetadataNodeKind, m.client.config.NodeKind,
 	}
 	if method == pki.BootstrapNodeAPIKey {
 		pairs = append(pairs, agentcontrol.MetadataAPIKey, m.client.config.APIKey)

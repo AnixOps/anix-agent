@@ -176,7 +176,7 @@ func (d *DataPlane) signalReports() {
 
 // nextBatchID is node:proxy-<id>:<boot id>:<sequence> (at most 128 bytes).
 func (d *DataPlane) nextBatchID() string {
-	return "node:" + agentcontrol.NodeKindProxy + "-" + strconv.Itoa(d.client.config.NodeID) + ":" +
+	return "node:" + d.client.config.NodeKind + "-" + strconv.Itoa(d.client.config.NodeID) + ":" +
 		d.reports.bootID + ":" + strconv.FormatUint(d.reports.seq.Add(1), 10)
 }
 
