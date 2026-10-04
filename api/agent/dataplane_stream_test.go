@@ -566,3 +566,26 @@ func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
+
+func TestEnrollmentCredentialWrittenAfterARefusalIsUsedPromptly(t *testing.T) {
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	client, credential := newStreamClient(t, control, streamOptions{identity: true})
+	require.NoError(t, os.Remove(credential))
+	require.NoError(t, client.Start())
+	require.Eventually(t, func() bool {
+		return strings.Contains(client.TransportStatus().Identity.LastError, "EnrollCredentialFile")
+	}, 5*time.Second, 10*time.Millisecond)
+	writeCredential(t, control, credential, "anixagt_late")
+	start := time.Now()
+	require.Eventually(t, func() bool { return client.TransportStatus().Identity.Enrolled }, 10*time.Second, 50*time.Millisecond)
+	assert.Less(t, time.Since(start), 7*time.Second, "within the 5 s waiting retry, not a minute")
+}
+
+func TestEnrolledAgentWithoutArtifactsUsesTheHTTPDownload(t *testing.T) {
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	client, _ := newStreamClient(t, control, streamOptions{artifacts: true, identity: true})
+	startUsersClient(t, client)
+	require.True(t, client.TransportStatus().Identity.Enrolled)
+	assert.True(t, agentcontrol.HasCapability(control.Hellos()[0].Capabilities, agentcontrol.CapabilityArtifacts), "listed on the certificate session")
+	assert.Equal(t, PluginDownloadHTTP, client.PluginDownload(), "a Control without artifacts.v1 (4.1.x): the HTTP download")
+}

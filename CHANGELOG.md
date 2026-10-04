@@ -32,10 +32,14 @@
     cross-checks the `PluginRelease` (digests, sizes, signature, algorithm,
     publisher, key id, plugin API version). `plugin_release_download_busy`
     and `Unavailable` are retried with backoff; `agent_cert_*` discards the
-    certificate and enrolls again. The HTTP download with `X-API-Key` stays
-    only for an Agent that is not enrolled (or runs its session on the key,
-    or has the stream's data plane off); a certificate session without
-    `artifacts.v1` refuses the install instead of sending the key.
+    certificate and enrolls again; the API key is never sent then. Without
+    `artifacts.v1` on the session (an Agent not enrolled yet, or a Control
+    4.1.x before AgentArtifacts: the v4.2 upgrade runs the new Agent first)
+    the HTTP download with `X-API-Key` is used, as before; a refusal there
+    with `agent_mtls_required` is named in the install error.
+  - **Enrollment credential.** While the Agent waits for a one-time
+    credential it looks for the file every 5 s (was 1 minute), so a
+    credential written after a refusal is used promptly.
   - **Codes.** `ConfigStatus.error_code` on every refusal
     (`config_format_unsupported`, `config_hash_mismatch`, `config_invalid`
     for a document the node cannot read, `config_apply_failed`).

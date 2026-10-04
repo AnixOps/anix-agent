@@ -53,11 +53,14 @@ var (
 	enrollRetryMin         = 30 * time.Second
 	enrollRetryMax         = 30 * time.Minute
 	enrollUnsupportedRetry = 30 * time.Minute
-	enrollWaitingRetry     = time.Minute
-	renewRetryMin          = time.Minute
-	renewRetryMax          = 30 * time.Minute
-	identityRPCTimeout     = 30 * time.Second
-	renewJitterMax         = 30 * time.Minute
+	// enrollWaitingRetry is short: while waiting for a one-time credential
+	// an attempt only reads the credential file (the API key bootstrap was
+	// refused), so a credential written after a refusal is used promptly.
+	enrollWaitingRetry = 5 * time.Second
+	renewRetryMin      = time.Minute
+	renewRetryMax      = 30 * time.Minute
+	identityRPCTimeout = 30 * time.Second
+	renewJitterMax     = 30 * time.Minute
 )
 
 // Enrollment failure classes, which pick the retry delay.

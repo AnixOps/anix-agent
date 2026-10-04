@@ -8,12 +8,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/api/agent/agenttest"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/common/maintenance"
@@ -250,4 +254,80 @@ func TestMaintenanceWebSocketStopsWhenALaterSessionNegotiatesMaintenance(t *test
 		defer controller.syncMu.Unlock()
 		return controller.syncManager == nil
 	}, 5*time.Second, 10*time.Millisecond)
+}
+
+// An enrolled Agent whose Control predates AgentArtifacts (4.1.x, the
+// v4.2 upgrade runs the new Agent first) installs plugins over the HTTP
+// download with the node API key; a Control that refuses the key there
+// (agent_mtls_required) is named in the failure.
+func TestEnrolledAgentWithoutArtifactsFallsBackToTheHTTPDownload(t *testing.T) {
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	control := fixture.control
+	control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
+	release := newSignedRelease(t, "wireguard", "4.0.0", []byte("plugin release over HTTP"))
+	var refuse atomic.Bool
+	var keys []string
+	var keysMu sync.Mutex
+	fixture.legacy.mu.Lock()
+	fixture.legacy.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		prefix := "/api/v3/agent/plugin-releases/wireguard/4.0.0/"
+		if !strings.HasPrefix(r.URL.Path, prefix) {
+			return false
+		}
+		keysMu.Lock()
+		keys = append(keys, r.Header.Get("X-API-Key"))
+		keysMu.Unlock()
+		if refuse.Load() {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"agent_mtls_required"}`))
+			return true
+		}
+		if strings.HasSuffix(r.URL.Path, "/manifest") {
+			_, _ = w.Write(release.release.Manifest)
+		} else {
+			_, _ = w.Write(release.release.Artifact)
+		}
+		return true
+	}
+	fixture.legacy.mu.Unlock()
+	config := fixture.nodeConfig(t)
+	config.ApiConfig.PluginSupervisorEnabled = true
+	config.ApiConfig.PluginRoot = filepath.Join(t.TempDir(), "plugins")
+	config.ApiConfig.PluginOfficialPublicKey = base64.StdEncoding.EncodeToString(release.publicKey)
+	node := fixture.start(t, config)
+	controller := node.controllers[0]
+	client := controller.stream.client
+	require.Eventually(t, func() bool { return client.IsConnected() }, 5*time.Second, 10*time.Millisecond)
+	require.True(t, client.TransportStatus().Identity.Enrolled)
+	require.False(t, client.Negotiated(agentcontrol.CapabilityArtifacts))
+	assert.Equal(t, agentapi.PluginDownloadHTTP, client.PluginDownload())
+
+	install := func() (agentv1pb.ObservedPhase, string) {
+		operationID := control.SendOperation("plugin.install", func(sessionID, operationID string, revision uint64) []byte {
+			return e2eOperationEnvelope(operationID, operationID, sessionID, revision, "wireguard", "4.0.0", release.installConfig())
+		})
+		require.Eventually(t, func() bool {
+			phase, _ := observedPhase(control, operationID)
+			return phase == agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED || phase == agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED
+		}, 10*time.Second, 20*time.Millisecond)
+		return observedPhase(control, operationID)
+	}
+
+	// A Control that refuses the key names agent_mtls_required.
+	refuse.Store(true)
+	phase, message := install()
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED, phase)
+	assert.Contains(t, message, "agent_mtls_required")
+
+	// A 4.1.x Control serves the HTTP download with the key.
+	refuse.Store(false)
+	phase, message = install()
+	require.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED, phase, message)
+	assert.Empty(t, control.ArtifactCalls())
+	keysMu.Lock()
+	defer keysMu.Unlock()
+	require.NotEmpty(t, keys)
+	for _, key := range keys {
+		assert.Equal(t, control.APIKey, key)
+	}
 }

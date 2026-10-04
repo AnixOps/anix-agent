@@ -68,11 +68,12 @@ retrying `plugin_release_download_busy` and `Unavailable`, and cross-checks the
 `PluginRelease` Control describes them by (digests, sizes, signature,
 `ed25519`, publisher, key ID, plugin API version) against the descriptor; a
 certificate refusal (`agent_cert_*`) discards the certificate and enrolls
-again. Only an Agent that is not enrolled (or whose session runs on the API
-key) uses the HTTP download, authenticating both raw-body GETs with its
-existing `X-API-Key`; it refuses redirects and encoded or traversal paths. An
-Agent on a certificate session without `artifacts.v1` refuses the install
-rather than sending its key. Either way it enforces a 1 MiB manifest limit and
+again; the API key is never sent then. Without `artifacts.v1` on the session
+(an Agent not enrolled yet, or a Control 4.1.x that predates AgentArtifacts,
+since the v4.2 upgrade runs the new Agent first) the Agent uses the HTTP
+download, authenticating both raw-body GETs with its existing `X-API-Key`; it
+refuses redirects and encoded or traversal paths, and names a refusal with
+`agent_mtls_required` in the install error. Either way it enforces a 1 MiB manifest limit and
 64 MiB artifact limit, then verifies exact size, SHA-256, publisher, API
 version, trust-root key ID, and Ed25519 signature before installation.
 

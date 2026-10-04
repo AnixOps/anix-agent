@@ -28,15 +28,15 @@ import (
 type PluginDownload int
 
 const (
-	// PluginDownloadHTTP: the HTTP download with the node API key; the
-	// Agent is not enrolled, or its session authenticated with the key.
+	// PluginDownloadHTTP: the HTTP download with the node API key. It is
+	// used whenever the session did not negotiate artifacts.v1: the Agent
+	// is not enrolled, or its Control predates AgentArtifacts (Control
+	// 4.1.x, which still accepts the key in preferred and optional; the
+	// v4.2 upgrade runs the new Agent first).
 	PluginDownloadHTTP PluginDownload = iota
-	// PluginDownloadArtifacts: AgentArtifacts, by the client certificate.
+	// PluginDownloadArtifacts: AgentArtifacts, by the client certificate;
+	// the API key is never sent then.
 	PluginDownloadArtifacts
-	// PluginDownloadUnavailable: the Agent authenticates with its client
-	// certificate, but the session did not negotiate artifacts.v1 (or the
-	// stream is down). An enrolled Agent does not send its API key.
-	PluginDownloadUnavailable
 )
 
 // Heartbeat metric keys of the plugin downloads.
@@ -60,29 +60,17 @@ type artifactCounters struct {
 	failures  atomic.Uint64
 }
 
-// PluginDownload tells how a plugin release can be downloaded now.
+// PluginDownload tells how a plugin release can be downloaded now:
+// AgentArtifacts when the session negotiated artifacts.v1 with the client
+// certificate, the HTTP download otherwise.
 func (c *Client) PluginDownload() PluginDownload {
 	c.mu.RLock()
-	ready, authentication := c.ready, c.authentication
 	negotiated := c.ready && agentcontrol.Negotiated(c.helloCapabilities, c.serverCapabilities, agentcontrol.CapabilityArtifacts)
 	c.mu.RUnlock()
-	advertised := c.dataPlane != nil && c.dataPlane.config.Artifacts
-	switch {
-	case negotiated && c.identity != nil && c.identity.certificate() != nil:
+	if negotiated && c.identity != nil && c.identity.certificate() != nil {
 		return PluginDownloadArtifacts
-	case !advertised:
-		// An Agent configured without the stream's data plane keeps the
-		// HTTP download.
-		return PluginDownloadHTTP
-	case c.identity == nil || c.identity.certificate() == nil:
-		return PluginDownloadHTTP
-	case ready && authentication == authenticationAPIKey:
-		// Control did not ask for the certificate (agent_control.mtls
-		// off): the session runs on the key anyway.
-		return PluginDownloadHTTP
-	default:
-		return PluginDownloadUnavailable
 	}
+	return PluginDownloadHTTP
 }
 
 // PluginArtifacts returns the AgentArtifacts client for the current

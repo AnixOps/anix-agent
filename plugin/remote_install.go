@@ -356,6 +356,13 @@ func (i *RemoteInstaller) fetch(ctx context.Context, pluginID, version, kind str
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		var refusal struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(body, &refusal) == nil && refusal.Code == "agent_mtls_required" {
+			return nil, fmt.Errorf("download plugin %s: Control refused the node API key (HTTP %d, agent_mtls_required: agent_control.mtls is required); the HTTP download needs a Control that still accepts the key, and AgentArtifacts (artifacts.v1) needs a Control that serves it to this enrolled Agent", kind, response.StatusCode)
+		}
 		return nil, fmt.Errorf("download plugin %s: unexpected HTTP status %d", kind, response.StatusCode)
 	}
 	if encoding := strings.TrimSpace(response.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {

@@ -359,9 +359,10 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 }
 
 // pluginInstaller downloads plugin releases from AgentArtifacts by the
-// client certificate when the session negotiated artifacts.v1, and over
-// HTTP with the node API key only while the Agent is not enrolled (or its
-// session runs on the key): an enrolled Agent does not send its key.
+// client certificate when the session negotiated artifacts.v1 (the API key
+// is never sent then), and over HTTP with the node API key otherwise: an
+// Agent that is not enrolled, or whose Control predates AgentArtifacts
+// (4.1.x; the v4.2 upgrade runs the new Agent before the new Control).
 func (c *Controller) pluginInstaller() (*plugin.RemoteInstaller, error) {
 	download := agentapi.PluginDownloadHTTP
 	if c.agentClient != nil {
@@ -374,8 +375,6 @@ func (c *Controller) pluginInstaller() (*plugin.RemoteInstaller, error) {
 			return nil, err
 		}
 		return plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{Supervisor: c.pluginSupervisor, Artifacts: artifacts})
-	case agentapi.PluginDownloadUnavailable:
-		return nil, fmt.Errorf("plugin release download unavailable: the Agent authenticates with its client certificate, but Control did not negotiate artifacts.v1 on this session; an enrolled Agent does not send the node API key (upgrade Control to serve AgentArtifacts)")
 	default:
 		return plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
 			Supervisor: c.pluginSupervisor,

@@ -321,7 +321,10 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
 - `artifacts.v1`（已注册、以客户端证书连接时）：插件包与清单通过 `AgentArtifacts`
   按内容地址下载，校验与 HTTP 下载相同（大小、SHA-256、Ed25519 签名、清单中的包摘要），
   并核对 `PluginRelease`；`plugin_release_download_busy` 与 `Unavailable` 会重试。
-  只有尚未注册的 Agent 才使用带 `X-API-Key` 的 HTTP 下载。
+  未协商 `artifacts.v1` 时（尚未注册，或 Control 4.1.x 尚无 AgentArtifacts；v4.2 升级
+  先升级 Agent）仍使用带 `X-API-Key` 的 HTTP 下载；若被 `agent_mtls_required` 拒绝，
+  安装错误中会明确说明。
+- 等待一次性注册凭据时每 5 秒检查一次凭据文件，写入后很快完成注册。
 - 错误码：`ConfigStatus.error_code`（`config_format_unsupported`、`config_hash_mismatch`、
   `config_invalid`、`config_apply_failed`）；`reports.v1` 携带 `transient_ack: "v1"`，
   `report_unavailable` 的批次保留并在 `retry_after_ms` 后重发。证书被拒
