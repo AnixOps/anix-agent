@@ -173,7 +173,7 @@ Every release publishes, next to `anix-agent-linux-64.zip` and
 Verify a package:
 
 ```bash
-printf '%s' 'MCowBQYDK2VwAyEAlvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM=' | base64 -d >official.der
+printf '%s' 'MCowBQYDK2VwAyEAjW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE=' | base64 -d >official.der
 base64 -d anix-agent-linux-64.zip.sig >anix-agent-linux-64.zip.sig.bin
 openssl pkeyutl -verify -pubin -keyform DER -inkey official.der -rawin \
   -in anix-agent-linux-64.zip -sigfile anix-agent-linux-64.zip.sig.bin
@@ -186,7 +186,7 @@ variables, Actions) before the first signed tag:
 | Secret | Value |
 |---|---|
 | `ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY` | The official release key, PEM (`openssl pkeyutl -sign -inkey` reads it) |
-| `ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY` | `lvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM=` |
+| `ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY` | `jW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE=` |
 
 Without them, or with another public key, the release job fails before
 publishing; pull requests and branch builds need no secret (they build and

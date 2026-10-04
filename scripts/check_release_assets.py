@@ -38,7 +38,7 @@ GOST_SHA256 = {
 }
 # plugins.official_public_key of anix-control (config/config.prod.yaml) and
 # OFFICIAL_PUBLIC_KEY of its install.sh.
-OFFICIAL_PUBLIC_KEY = "lvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM="
+OFFICIAL_PUBLIC_KEY = "jW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE="
 PACKAGES = ("anix-agent-linux-64.zip", "anix-agent-linux-arm64-v8a.zip")
 
 
