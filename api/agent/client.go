@@ -176,7 +176,10 @@ func NewClient(config Config) (*Client, error) {
 	default:
 		return nil, fmt.Errorf("unknown agent node kind %q", config.NodeKind)
 	}
-	if strings.TrimSpace(config.APIKey) == "" {
+	if strings.TrimSpace(config.APIKey) == "" && config.Identity == nil {
+		// Without an identity the API key is the only credential. With
+		// one, the Agent may enroll with a one-time credential and never
+		// hold a node key (the O1 installer's configuration).
 		return nil, fmt.Errorf("agent API key is required")
 	}
 	if config.Heartbeat <= 0 {
@@ -409,6 +412,9 @@ func (c *Client) run() {
 		} else if wrongNode {
 			// Logged by the identity; reconnecting fast would only repeat
 			// the refusal.
+		} else if errors.Is(err, errAwaitingCertificate) {
+			// The identity logs its enrollment attempts.
+			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID}).Debug(err.Error())
 		} else if errors.Is(err, errSessionRecycled) {
 			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID}).
 				Info("Reconnecting the Agent control stream with the new client certificate")
@@ -654,8 +660,16 @@ func (s *sessionOperationState) close() {
 	}
 }
 
+// errAwaitingCertificate: a forward node, or an Agent without a node key,
+// has no client certificate yet; it opens no stream until it enrolled.
+var errAwaitingCertificate = errors.New("the agent has no client certificate yet and no other credential for the control stream; waiting for enrollment")
+
 func (c *Client) runSession() (bool, error) {
 	var connectedAt time.Time
+	if (c.config.NodeKind == agentcontrol.NodeKindForward || strings.TrimSpace(c.config.APIKey) == "") &&
+		(c.identity == nil || c.identity.certificate() == nil) {
+		return false, errAwaitingCertificate
+	}
 	dialCtx, dialCancel := context.WithTimeout(c.ctx, c.config.DialTimeout)
 	defer dialCancel()
 

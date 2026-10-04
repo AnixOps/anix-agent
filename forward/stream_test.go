@@ -48,7 +48,7 @@ func startStreamAgent(t *testing.T, control *agenttest.Control, root string, hos
 	node, err := StartNode(context.Background(), NodeConfig{
 		StateRoot: filepath.Join(root, "state"), Component: h.c,
 		Client: agentapi.Config{
-			Target: control.Address, NodeID: int(testNode.ID), APIKey: "forward-node-token",
+			Target: control.Address, NodeID: int(testNode.ID), // no node key: the one-time credential only (O1)
 			UseTLS: true, ServerName: control.ServerName, RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
 			Heartbeat: 200 * time.Millisecond, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond, DialTimeout: 2 * time.Second,
 			Identity: &agentapi.IdentityConfig{Dir: filepath.Join(root, "pki"), Enroll: true, EnrollCredentialFile: credential, Cluster: control.Cluster},

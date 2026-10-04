@@ -202,7 +202,10 @@ func validateProductionForwardNode(api ApiConfig) error {
 	require(validProductionHostPort(api.GRPCHost), "GRPCHost must be a non-placeholder host:port")
 	require(nonPlaceholder(api.GRPCServerName), "GRPCServerName is required and must not be a placeholder")
 	require(api.NodeID > 0, "NodeID must be positive")
-	require(nonPlaceholderSecret(api.Key), "ApiKey (the forward node's token) is required and must not be a placeholder")
+	// No ApiKey: a forward node enrolls with its token or a one-time
+	// credential (AgentIdentity.EnrollCredentialFile, which the Agent
+	// removes after use) and then presents its certificate only.
+	require(api.Key == "" || nonPlaceholderSecret(api.Key), "ApiKey, when set, must not be a placeholder")
 	if len(problems) > 0 {
 		return fmt.Errorf("production forward node configuration is not ready: %s", strings.Join(problems, "; "))
 	}

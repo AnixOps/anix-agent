@@ -74,6 +74,16 @@ func identityRoots() ([]string, map[string][]agentcontrol.AgentNode) {
 			nodes[root] = append(nodes[root], agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(api.NodeID)}) // #nosec G115 -- node IDs are uint32 on the wire.
 		}
 	}
+	if loaded.Forward.ForwardNodeOnly() {
+		// A forward node's identity (forward-<id>).
+		api := loaded.Forward.ForwardNode
+		root := api.AgentIdentity.Dir()
+		if !seen[root] {
+			seen[root] = true
+			roots = append(roots, root)
+		}
+		nodes[root] = append(nodes[root], agentcontrol.AgentNode{Kind: agentcontrol.NodeKindForward, ID: uint32(api.NodeID)}) // #nosec G115 -- node IDs are uint32 on the wire.
+	}
 	if len(roots) == 0 {
 		roots = []string{conf.DefaultAgentIdentityCertDir}
 	}

@@ -50,11 +50,16 @@ type ApiConfig struct {
 	PluginRoot              string `json:"PluginRoot"`
 	PluginSocketDir         string `json:"PluginSocketDir"`
 	PluginOfficialPublicKey string `json:"PluginOfficialPublicKey"`
-	NodeID                  int    `json:"NodeID"`
-	NodeType                string `json:"NodeType"`
-	Key                     string `json:"ApiKey"`
-	Timeout                 int    `json:"Timeout"`
-	RuleListPath            string `json:"RuleListPath"`
+	// AgentNode names the node the Agent speaks for, as Control's
+	// identities do: "proxy-<id>" or "forward-<id>" (the O1 installer
+	// writes it). A forward node's entry runs the forward component on its
+	// own stream (ForwardConfig); NodeID, when set, must match.
+	AgentNode    string `json:"AgentNode"`
+	NodeID       int    `json:"NodeID"`
+	NodeType     string `json:"NodeType"`
+	Key          string `json:"ApiKey"`
+	Timeout      int    `json:"Timeout"`
+	RuleListPath string `json:"RuleListPath"`
 
 	// 鑷姩鍙戠幇鐩稿叧閰嶇疆
 	AuthKey           string `json:"AuthKey"`           // 鎺堟潈瀵嗛挜 (棣栨娉ㄥ唽浣跨敤)
