@@ -66,7 +66,15 @@ func TestCredentialOnlyProxyNodeWaitsForItsCredential(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(fixture.credential, credential, 0o600))
 	require.Eventually(t, controller.isStarted, 20*time.Second, 50*time.Millisecond)
-	assert.False(t, controller.stream.waitingForStream())
+	// A controller reports started inside the background start
+	// (nodeDataPlane.finishStart), which then still reports the snapshot
+	// and activates the data plane; the node stops "waiting for the stream"
+	// only when that start returns. waitingForStream is deliberately true
+	// until then: it keeps Node.Start from starting the controller on the
+	// legacy transports. So the node is started before it is no longer
+	// waiting, and the second is awaited, not read at the instant of the
+	// first.
+	require.Eventually(t, func() bool { return !controller.stream.waitingForStream() }, 20*time.Second, 10*time.Millisecond)
 	_, info := fixture.core.node()
 	require.NotNil(t, info)
 	assert.Empty(t, fixture.legacy.requests())

@@ -540,6 +540,22 @@
     `(y/N)`, which is its default.
     docs/INSTALL.md lists the paths per installer.
 
+- **`TestCredentialOnlyProxyNodeWaitsForItsCredential` no longer fails
+  intermittently** (seen on CI, `credential_only_test.go:69: Should be
+  false`). A test-only fix; the Agent's behaviour is unchanged.
+  - The test read `waitingForStream()` the instant `isStarted()` turned true,
+    but a controller reports started inside the background start
+    (`nodeDataPlane.finishStart`), which then still reports the snapshot and
+    activates the data plane, and the node stops "waiting for the stream"
+    only when that start returns. The flag staying set until then is what
+    keeps `Node.Start` from starting the controller on the legacy transports,
+    so it is kept. The test now waits for the flag to clear, and states the
+    ordering.
+  - Under `-race` with CPU burners on the same cores, 2 of 476 runs failed
+    before (both at that line) and 0 of 440 after; with the gap widened by a
+    150 ms pause in the background start, 24 of 24 failed before and 0 of 24
+    after.
+
 ## 3.1.0-alpha.2 - 2026-07-18
 
 ### Added
