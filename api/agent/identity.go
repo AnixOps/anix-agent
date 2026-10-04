@@ -123,6 +123,9 @@ type identityManager struct {
 	changed   chan struct{}
 	// onEnrolled runs after an enrollment installed a new identity.
 	onEnrolled func()
+	// onRejected runs after Control refused the certificate and it was
+	// discarded, with Control's code (agent_cert_revoked, ...).
+	onRejected func(code string)
 }
 
 func newIdentityManager(client *Client, config IdentityConfig) (*identityManager, error) {
@@ -257,15 +260,19 @@ func (m *identityManager) discardLocked() {
 // revoked, expired, or not of this cluster. The identity is dropped and the
 // next session enrolls again (with the API key when Control still allows
 // it).
-func (m *identityManager) rejected(identity *pki.Identity, reason string) {
+func (m *identityManager) rejected(identity *pki.Identity, reason, code string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if identity == nil || m.current != identity {
 		return
 	}
-	log.WithFields(m.fields()).WithFields(log.Fields{"serial": identity.Serial, "reason": reason}).
+	log.WithFields(m.fields()).WithFields(log.Fields{"serial": identity.Serial, "reason": reason, "error_code": code}).
 		Warn("Control refused the agent certificate; discarding it and enrolling again")
 	m.discardLocked()
+	if hook := m.onRejected; hook != nil {
+		// Outside the lock: the hook may call back into the client.
+		go hook(code)
+	}
 }
 
 // wrongNode logs, at most once per wrongNodeLogInterval, that Control
@@ -666,7 +673,7 @@ func (m *identityManager) renew(ctx context.Context, identity *pki.Identity) {
 	}
 	switch reason, action := certificateRefusal(err); action {
 	case certificateReenroll:
-		m.rejected(identity, reason)
+		m.rejected(identity, reason, refusalCode(err))
 		return
 	case certificateWrongNode:
 		m.wrongNode(err)

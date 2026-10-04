@@ -190,7 +190,7 @@ func (a *PluginArtifacts) call(ctx context.Context, kind string, address *agentv
 			c.artifacts.failures.Add(1)
 			switch reason, action := certificateRefusal(err); action {
 			case certificateReenroll:
-				c.identity.rejected(a.identity, reason)
+				c.identity.rejected(a.identity, reason, refusalCode(err))
 			case certificateWrongNode:
 				c.identity.wrongNode(err)
 			}

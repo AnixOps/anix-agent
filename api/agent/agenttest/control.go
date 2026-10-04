@@ -140,8 +140,9 @@ type Control struct {
 	refuseCertificate string
 	refusedSerials    map[string]bool
 
-	// Forwarding (forward.v1): forward.go.
+	// Forwarding (forward.v1): forward.go; link certificates: link.go.
 	forward forwardState
+	link    linkState
 }
 
 // userChange is one row of the subscriber change log.

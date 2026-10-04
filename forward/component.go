@@ -76,10 +76,14 @@ type Options struct {
 	AgentVersion string
 	// Host is the rest of NodeCapabilities; ProbeHost reads it.
 	Host HostInfo
-	// LinkCertificates tells whether the node has its forward link
-	// certificate (H28). Without it gost carries RAW links only, and a hop
-	// with an encrypted link is reported with a hop error that says so.
+	// LinkCertificates tells whether the gost driver was built with the
+	// node's forward link certificate (H28). Without it gost carries RAW
+	// links only, and a hop with an encrypted link is reported with a hop
+	// error that says so.
 	LinkCertificates bool
+	// Links keeps the link certificate (IssueLinkCertificate,
+	// GetLinkTrustBundle); nil leaves the files to someone else.
+	Links *LinkOptions
 	// Dial probes upstreams (TCP connect); nil uses net.Dialer.
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
 
@@ -135,6 +139,9 @@ type Component struct {
 	reportWake    chan struct{}
 	reconcileWake chan struct{}
 	probes        chan struct{}
+
+	// Forward link certificates (linkcert.go).
+	links linkState
 }
 
 // New answers a component. Start it before the Agent connects to Control.
@@ -192,6 +199,7 @@ func New(opts Options) (*Component, error) {
 		reportWake:    make(chan struct{}, 1),
 		reconcileWake: make(chan struct{}, 1),
 		probes:        make(chan struct{}, maxProbes),
+		links:         linkState{wake: make(chan struct{}, 1)},
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	return c, nil
@@ -220,6 +228,11 @@ func (c *Component) Start(ctx context.Context) error {
 		c.mu.Lock()
 		c.desired, c.applied = state, applied
 		c.mu.Unlock()
+	}
+	if c.opts.Links != nil {
+		c.startLinks()
+	}
+	if state != nil {
 		c.logger.WithFields(log.Fields{"generation": state.GetGeneration(), "hops": len(state.GetHops())}).
 			Info("Re-applying the persisted forwarding state before connecting to Control")
 		c.applyMu.Lock()
@@ -259,6 +272,17 @@ func (c *Component) ForwardSession(negotiated bool) {
 	c.mu.Unlock()
 	if negotiated {
 		wake(c.reportWake)
+	}
+	if c.opts.Links != nil {
+		// A HelloAck that lists forward.v1: Control issues link
+		// certificates to the node now.
+		c.links.mu.Lock()
+		c.links.negotiated = negotiated
+		if negotiated {
+			c.links.issueAt = time.Time{}
+		}
+		c.links.mu.Unlock()
+		wake(c.links.wake)
 	}
 }
 
@@ -405,12 +429,12 @@ func hopErrorsFor(state *forwardv1.NodeForwardState, skip map[driver.HopKey]bool
 // gost link fails for want of the link certificate (H28).
 func (c *Component) hopErrorProto(state *forwardv1.NodeForwardState, he *driver.HopError) *forwardv1.HopError {
 	out := he.ToProto()
-	if c.opts.LinkCertificates || he.Engine != forwardv1.Engine_ENGINE_GOST || !errors.Is(he, driver.ErrUnsupported) {
+	if c.linksAvailable() || he.Engine != forwardv1.Engine_ENGINE_GOST || !errors.Is(he, driver.ErrUnsupported) {
 		return out
 	}
 	for _, hop := range state.GetHops() {
 		if driver.KeyOf(hop) == he.Key && encryptedLink(hop) {
-			out.Message = truncate(out.Message+"; encrypted gost links need the node's forward link certificate, which this Agent does not provision until Control issues link certificates (H28)", wire.MaxTextBytes)
+			out.Message = truncate(out.Message+"; encrypted gost links need the node's forward link certificate, which Control's link CA issues once the node negotiated forward.v1 (H28); until then gost carries RAW links only", wire.MaxTextBytes)
 			break
 		}
 	}

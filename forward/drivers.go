@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
@@ -61,6 +62,9 @@ type GostSettings struct {
 	// defaults under Dir/tls; while the files are missing gost carries RAW
 	// links only.
 	LinkCert, LinkKey, LinkCA string
+	// ManualLinkCertificates leaves the link files to the operator: the
+	// Agent does not ask Control for them (H28).
+	ManualLinkCertificates bool
 }
 
 // Drivers is what BuildDrivers found on the host: everything Options needs
@@ -71,6 +75,9 @@ type Drivers struct {
 	Retired          *Retired
 	Sources          map[forwardv1.Engine]leastconn.Source
 	LinkCertificates bool
+	// Links keeps the gost driver's link certificate from Control (H28);
+	// nil without gost.
+	Links *LinkOptions
 }
 
 // BuildDrivers probes the host once (nftables.Probe, gost.Probe), at start,
@@ -155,14 +162,43 @@ func BuildDrivers(ctx context.Context, settings Settings) (*Drivers, error) {
 		if cfg.Version == "" {
 			unavailable(forwardv1.Engine_ENGINE_GOST, cfg.Unavailable)
 		} else {
-			d, err := gost.New(cfg, gost.WithRunner(runner), gost.WithSupervisor(sup), gost.WithRetiredCounters(out.Retired.Add))
+			// The probe drops the link paths while the files are missing;
+			// the component switches them on once the link certificate
+			// arrives (H28).
+			withLinks := cfg
+			withLinks.LinkCert, withLinks.LinkKey, withLinks.LinkCA = base.LinkCert, base.LinkKey, base.LinkCA
+			withoutLinks := cfg
+			withoutLinks.LinkCert, withoutLinks.LinkKey, withoutLinks.LinkCA = "", "", ""
+			build := func(links bool) (*gost.Driver, error) {
+				c := withoutLinks
+				if links {
+					c = withLinks
+				}
+				return gost.New(c, gost.WithRunner(runner), gost.WithSupervisor(sup), gost.WithRetiredCounters(out.Retired.Add))
+			}
+			out.LinkCertificates = cfg.LinkCert != ""
+			d, err := newGostDriver(out.LinkCertificates, build)
 			if err != nil {
 				return nil, fmt.Errorf("forward: gost driver: %w", err)
 			}
 			if err := out.Registry.Register(d); err != nil {
 				return nil, err
 			}
-			out.LinkCertificates = cfg.LinkCert != ""
+			if !settings.Gost.ManualLinkCertificates && base.LinkCert != "" {
+				out.Links = &LinkOptions{
+					Dir:        filepath.Dir(base.LinkCert),
+					Group:      gost.DefaultUser,
+					SetEnabled: d.setLinks,
+					Reload: func(ctx context.Context) error {
+						st, err := sup.Status(ctx)
+						if err != nil || !st.Running {
+							// gost reads the files when it starts.
+							return err
+						}
+						return sup.Reload(ctx)
+					},
+				}
+			}
 		}
 	}
 	checkIPForwarding(logger)

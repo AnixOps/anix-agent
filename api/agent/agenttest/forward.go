@@ -88,6 +88,7 @@ func (c *Control) offersLocked(name string, forward bool) bool {
 // without forward.v1 clears them) and answers the session's heartbeat.
 func (c *Control) recordForwardHelloLocked(current *session, hello *agentv1pb.Hello) uint32 {
 	c.forward.capabilities = nil
+	c.link.helloForward = current.negotiated[agentcontrol.CapabilityForward]
 	if current.negotiated[agentcontrol.CapabilityForward] {
 		caps, _, _ := wire.NodeCapabilitiesFromHello(hello.GetCapabilities(), c.node().String())
 		c.forward.capabilities = caps

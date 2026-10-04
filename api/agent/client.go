@@ -1288,6 +1288,16 @@ func (c *Client) sessionCapabilities(presented bool) []*agentv1pb.Capability {
 		if capability.Name == agentcontrol.CapabilityArtifacts && !presented {
 			continue
 		}
+		if capability.Name == agentcontrol.CapabilityForward && c.dataPlane != nil && c.dataPlane.config.Forward != nil {
+			// The node's capabilities as they are now: a link certificate
+			// that arrived since adds the encrypted link securities.
+			if current, err := c.dataPlane.config.Forward.HelloCapability(); err == nil {
+				capability = current
+			} else {
+				log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID, "error": err}).
+					Warn("Could not refresh the node's forwarding capabilities; listing the previous ones")
+			}
+		}
 		capabilities = append(capabilities, capability)
 	}
 	return capabilities
@@ -1428,7 +1438,7 @@ func (c *Client) streamFailure(stream agentv1pb.AgentControlService_ControlStrea
 		case certificateReenroll:
 			// Control refused the certificate itself: drop it and enroll
 			// again.
-			c.identity.rejected(session.identity, reason)
+			c.identity.rejected(session.identity, reason, refusalCode(err))
 		case certificateWrongNode:
 			// A configuration error: keep the certificate, retry slowly.
 			c.identity.wrongNode(err)
