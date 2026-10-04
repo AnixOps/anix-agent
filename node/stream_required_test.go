@@ -248,6 +248,11 @@ func TestMaintenanceWebSocketStopsWhenALaterSessionNegotiatesMaintenance(t *test
 	fixture.control.DropSessions()
 	client := controller.stream.client
 	require.Eventually(t, func() bool { return client.Negotiated(agentcontrol.CapabilityMaintenance) }, 5*time.Second, 10*time.Millisecond)
+	// Negotiated turns true when the client records the session; the data
+	// plane's mode, which retireLegacySync reads, follows a moment later.
+	// The monitor is called once (its periodic run is a PullInterval away),
+	// so it must not run before the controller sees maintenance.v1.
+	require.Eventually(t, controller.streamCarriesMaintenance, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, controller.nodeInfoMonitor())
 	require.Eventually(t, func() bool {
 		controller.syncMu.Lock()
