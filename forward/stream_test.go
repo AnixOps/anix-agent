@@ -12,6 +12,7 @@ import (
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/api/agent/agenttest"
 	agentstate "github.com/AnixOps/anix-agent/v4/api/agent/state"
+	"github.com/AnixOps/anix-agent/v4/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
@@ -39,6 +40,13 @@ func newForwardControl(t *testing.T, serves ...string) *agenttest.Control {
 // then the client; root keeps the state and the identity across restarts.
 func startStreamAgent(t *testing.T, control *agenttest.Control, root string, host *fake.Host, mutate ...func(*Options)) *streamAgent {
 	t.Helper()
+	return startUpgradableStreamAgent(t, control, root, host, nil, mutate...)
+}
+
+// startUpgradableStreamAgent is startStreamAgent with an agent.upgrade
+// handler (nil: none).
+func startUpgradableStreamAgent(t *testing.T, control *agenttest.Control, root string, host *fake.Host, upgrader *upgrade.Agent, mutate ...func(*Options)) *streamAgent {
+	t.Helper()
 	h := &harness{t: t, host: host, dial: newDialer(), sent: &sender{}, dir: filepath.Join(root, "forward")}
 	h.start(mutate...)
 	credential := filepath.Join(root, "enroll.token")
@@ -49,7 +57,7 @@ func startStreamAgent(t *testing.T, control *agenttest.Control, root string, hos
 		}
 	}
 	node, err := StartNode(context.Background(), NodeConfig{
-		StateRoot: filepath.Join(root, "state"), Component: h.c,
+		StateRoot: filepath.Join(root, "state"), Component: h.c, Upgrader: upgrader,
 		Client: agentapi.Config{
 			Target: control.Address, NodeID: int(testNode.ID), // no node key: the one-time credential only (O1)
 			UseTLS: true, ServerName: control.ServerName, RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
@@ -314,4 +322,55 @@ func TestForwardNodeRunsDiagnosticChecks(t *testing.T) {
 		!strings.Contains(refused.GetMessage(), "managed by the forward component") {
 		t.Fatalf("restart: %v", refused)
 	}
+}
+
+func TestForwardNodeAnswersAgentUpgrades(t *testing.T) {
+	control := newForwardControl(t, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward,
+		agentcontrol.CapabilityUpgrade)
+	root := t.TempDir()
+	upgrader := &upgrade.Agent{
+		Dir: filepath.Join(root, "upgrade"), LibDir: filepath.Join(root, "lib"), Version: "v4.2.0",
+		UpdaterActive: func(context.Context) bool { return true },
+	}
+	agent := startUpgradableStreamAgent(t, control, root, fake.NewHost(nil), upgrader)
+	eventually(t, "the upgrade.v1 session", func() bool { return agent.client.Negotiated(agentcontrol.CapabilityUpgrade) })
+
+	request := func(target string) []byte {
+		payload, _ := json.Marshal(agentcontrol.UpgradeRequest{
+			Schema: agentcontrol.UpgradeSchemaV1, CampaignID: "c-1", Action: agentcontrol.UpgradeActionRollback, TargetVersion: target,
+		})
+		return payload
+	}
+	// The release it runs: current (also the replay after the restart).
+	id := control.SendOperation(agentcontrol.OperationKindAgentUpgrade, func(string, string, uint64) []byte { return request("v4.2.0") })
+	eventually(t, "the current answer", func() bool {
+		for _, observed := range control.ObservedStates() {
+			if observed.GetOperationId() == id && observed.GetPhase() == agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED {
+				var state agentcontrol.UpgradeState
+				return json.Unmarshal(observed.GetStateJson(), &state) == nil && state.Phase == agentcontrol.UpgradePhaseCurrent
+			}
+		}
+		return false
+	})
+	// A request that does not parse is refused before the acknowledgement.
+	refused := control.SendOperation(agentcontrol.OperationKindAgentUpgrade, func(string, string, uint64) []byte { return []byte(`{"schema":"x"}`) })
+	eventually(t, "the refusal", func() bool {
+		for _, ack := range control.OperationAcks() {
+			if ack.GetOperationId() == refused {
+				return !ack.GetAccepted() && strings.HasPrefix(ack.GetError(), agentcontrol.UpgradeErrorInvalidRequest+": ")
+			}
+		}
+		return false
+	})
+	// Without the kept release, a rollback fails with its code.
+	failed := control.SendOperation(agentcontrol.OperationKindAgentUpgrade, func(string, string, uint64) []byte { return request("v4.1.0") })
+	eventually(t, "the rollback failure", func() bool {
+		for _, observed := range control.ObservedStates() {
+			if observed.GetOperationId() == failed && observed.GetPhase() == agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED {
+				var state agentcontrol.UpgradeState
+				return json.Unmarshal(observed.GetStateJson(), &state) == nil && state.ErrorCode == agentcontrol.UpgradeErrorNoPrevious
+			}
+		}
+		return false
+	})
 }

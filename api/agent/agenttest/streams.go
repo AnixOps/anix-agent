@@ -447,6 +447,13 @@ func (c *Control) ObservedStates() []*agentv1pb.ObservedState {
 	return append([]*agentv1pb.ObservedState(nil), c.operations.observed...)
 }
 
+// OperationAcks returns every OperationAck received.
+func (c *Control) OperationAcks() []*agentv1pb.OperationAck {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1pb.OperationAck(nil), c.operations.acks...)
+}
+
 func (c *Control) recordOperationAck(ack *agentv1pb.OperationAck) {
 	c.mu.Lock()
 	c.operations.acks = append(c.operations.acks, proto.Clone(ack).(*agentv1pb.OperationAck))

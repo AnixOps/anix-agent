@@ -21,6 +21,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/diagnostic"
 	"github.com/AnixOps/anix-agent/v4/forward"
 	"github.com/AnixOps/anix-agent/v4/plugin"
+	"github.com/AnixOps/anix-agent/v4/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
@@ -69,6 +70,13 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		}
 	}
 
+	// Control-pushed upgrades (upgrade.v1): listed only when the
+	// privileged updater is installed.
+	controller.upgrader = agentUpgrader()
+	if dataPlaneConfig != nil && controller.upgrader != nil {
+		dataPlaneConfig.Upgrade = controller.upgrader.Available(context.Background())
+	}
+
 	capabilities := agentCapabilities(core, supervisor != nil)
 	controller.diagnostics = nil
 	if dataPlane != nil && dataPlane.forward != nil {
@@ -97,6 +105,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		KeepaliveTime: keepaliveTime,
 		RootCAs:       agentControlRootCAs,
 		Handler:       agentapi.OperationHandlerFunc(controller.handleAgentOperation),
+		Admit:         controller.admitAgentOperation,
 		MetricsProvider: func(ctx context.Context) (map[string]float64, error) {
 			if supervisor == nil {
 				return nil, nil
@@ -174,6 +183,19 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 // when Control serves it.
 func dataPlaneEnabled(apiConfig conf.ApiConfig) bool {
 	return apiConfig.AgentControlEnabled && apiConfig.AgentStream.DataPlaneMode() == conf.AgentStreamDataPlaneAuto
+}
+
+// agentUpgrader answers the process's agent.upgrade handler (tests
+// replace it; nil turns upgrades off).
+var agentUpgrader = func() *upgrade.Agent { return upgrade.Shared(panel.Version) }
+
+// admitAgentOperation refuses an agent.upgrade before its acknowledgement
+// when it does not parse or another upgrade runs.
+func (c *Controller) admitAgentOperation(operation *agentv1pb.DesiredOperation) error {
+	if c.upgrader == nil {
+		return nil
+	}
+	return c.upgrader.Admit(operation)
 }
 
 // agentControlRootCAs verifies Control's TLS certificate; nil uses the
@@ -356,6 +378,11 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 			return nil, err
 		}
 		return c.pluginSupervisor.Handle(ctx, operation.Kind, envelope)
+	case agentcontrol.OperationKindAgentUpgrade:
+		if c.upgrader == nil {
+			return nil, fmt.Errorf("unsupported desired operation %q", operation.Kind)
+		}
+		return c.upgrader.Handle(ctx, operation)
 	case diagnostic.Operation:
 		if c.diagnostics == nil {
 			return nil, fmt.Errorf("unsupported desired operation %q", operation.Kind)

@@ -8,11 +8,13 @@ import (
 	"runtime"
 	"syscall"
 
+	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/AnixOps/anix-agent/v4/forward"
 	"github.com/AnixOps/anix-agent/v4/limiter"
 	"github.com/AnixOps/anix-agent/v4/node"
+	"github.com/AnixOps/anix-agent/v4/upgrade"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -107,6 +109,8 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	limiter.Init()
 	log.Info("Start AnixOps Agent...")
 	migrateLegacyPaths(c)
+	// The outcome of the last Control-pushed upgrade, which restarted us.
+	upgrade.Shared(panel.Version).LogLastResult()
 
 	// Forwarding (F3b): the drivers are probed and the persisted state is
 	// re-applied before any control stream connects.

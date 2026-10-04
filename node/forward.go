@@ -11,6 +11,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	"github.com/AnixOps/anix-agent/v4/forward"
+	"github.com/AnixOps/anix-agent/v4/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	log "github.com/sirupsen/logrus"
 )
@@ -124,6 +125,7 @@ func StartForward(cfg *conf.ForwardConfig, component *forward.Component) (*forwa
 	return forward.StartNode(context.Background(), forward.NodeConfig{
 		StateRoot: api.AgentStream.Dir(),
 		Component: component,
+		Upgrader:  upgrade.Shared(panel.Version),
 		Client: agentapi.Config{
 			Target: target, NodeID: api.NodeID, APIKey: api.Key, UseTLS: true, ServerName: serverName,
 			AgentVersion: panel.Version, InstanceID: fmt.Sprintf("%s-%d-forward-%d", hostname, os.Getpid(), api.NodeID),

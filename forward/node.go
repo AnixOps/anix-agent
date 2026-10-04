@@ -10,6 +10,7 @@ import (
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	agentstate "github.com/AnixOps/anix-agent/v4/api/agent/state"
 	"github.com/AnixOps/anix-agent/v4/diagnostic"
+	"github.com/AnixOps/anix-agent/v4/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
@@ -38,6 +39,9 @@ type NodeConfig struct {
 	// GostUnit is gost's systemd unit for the diagnostic tasks; empty is
 	// anixops-gost.service.
 	GostUnit string
+	// Upgrader runs Control-pushed upgrades (agent.upgrade, upgrade.v1,
+	// listed when its updater is installed); nil turns them off.
+	Upgrader *upgrade.Agent
 }
 
 // DefaultGostUnit is the unit the gost driver runs gost as.
@@ -98,12 +102,22 @@ func StartNode(ctx context.Context, config NodeConfig) (*Node, error) {
 	clientConfig.NodeKind = agentcontrol.NodeKindForward
 	clientConfig.DataPlane = &agentapi.DataPlaneConfig{State: store, Config: applier, Forward: config.Component, Diagnostics: true}
 	diagnostics := NodeDiagnostics(config.Component, config.GostUnit)
+	upgrader := config.Upgrader
+	if upgrader != nil {
+		clientConfig.DataPlane.Upgrade = upgrader.Available(ctx)
+		clientConfig.Admit = upgrader.Admit
+	}
 	clientConfig.Handler = agentapi.OperationHandlerFunc(func(ctx context.Context, operation *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 		switch operation.GetKind() {
 		case "agent.ping":
 			return json.Marshal(map[string]any{"node": node.String(), "time": time.Now().UnixMilli()})
 		case diagnostic.Operation:
 			return diagnostics.Handle(ctx, operation)
+		case agentcontrol.OperationKindAgentUpgrade:
+			if upgrader == nil {
+				return nil, fmt.Errorf("unsupported desired operation %q on a forward node", operation.GetKind())
+			}
+			return upgrader.Handle(ctx, operation)
 		default:
 			return nil, fmt.Errorf("unsupported desired operation %q on a forward node", operation.GetKind())
 		}

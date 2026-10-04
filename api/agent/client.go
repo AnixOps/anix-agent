@@ -84,6 +84,11 @@ type Config struct {
 	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
 	Handler          OperationHandler
+	// Admit optionally refuses a desired operation before it is
+	// acknowledged: a non-nil error is sent as OperationAck{accepted:
+	// false} with its text, and the operation is not run. It must not
+	// block (it runs on the receive loop).
+	Admit func(*agentv1pb.DesiredOperation) error
 	// MetricsProvider optionally contributes bounded scalar metrics to the
 	// Agent Control heartbeat. A provider failure is logged and does not block
 	// the control stream or suppress the built-in metrics.
@@ -956,6 +961,12 @@ func (c *Client) acceptOperation(stream agentv1pb.AgentControlService_ControlStr
 		})
 	}
 
+	if c.config.Admit != nil {
+		if err := c.config.Admit(operation); err != nil {
+			return c.sendOperationAck(stream, sessionID, operation, false, err.Error())
+		}
+	}
+
 	cloned := proto.Clone(operation).(*agentv1pb.DesiredOperation)
 	if operations.queue(cloned) {
 		if err := c.sendOperationAck(stream, sessionID, operation, true, ""); err != nil {
@@ -1062,6 +1073,8 @@ func (c *Client) executeOperation(parent context.Context, stream agentv1pb.Agent
 		defer deadlineCancel()
 	}
 	operationCtx = withOperationSession(operationCtx, sessionID)
+	hooks := &operationHooks{progress: c.progressSender(stream, sessionID, operation)}
+	operationCtx = withOperationHooks(operationCtx, hooks)
 	if err := operationCtx.Err(); err != nil {
 		operations.finish(operation)
 		message := err.Error()
@@ -1100,6 +1113,7 @@ func (c *Client) executeOperation(parent context.Context, stream agentv1pb.Agent
 	c.storeObservedRevision(operation.Revision)
 	c.rememberCompleted(terminal)
 	_ = c.sendObserved(stream, sessionID, terminal)
+	hooks.runAfter(terminal.Phase)
 }
 
 func (c *Client) completeCancelledOperation(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, operation *agentv1pb.DesiredOperation, message string) error {

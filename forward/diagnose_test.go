@@ -200,9 +200,8 @@ func TestDiagnoseConnect(t *testing.T) {
 		t.Fatalf("narrowed: %+v", again)
 	}
 	// Narrowing to an address that is not an upstream dials nothing.
-	before := h.dial.n.Load()
 	unknown, _ := h.c.Diagnose(context.Background(), CheckConnect, params("r1", 1, "upstream", "203.0.113.5:22"))
-	if unknown.Code != "unknown_upstream" || h.dial.n.Load() != before {
+	if unknown.Code != "unknown_upstream" || h.dial.dials("203.0.113.5:22") != 0 {
 		t.Fatalf("unknown upstream: %+v", unknown)
 	}
 

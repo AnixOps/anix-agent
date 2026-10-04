@@ -84,6 +84,8 @@ sudo sysctl --system
 | `/run/anixops-agent/plugins` | Plugin sockets (`PluginSocketDir` default; the unit's `RuntimeDirectory=anixops-agent`) |
 | `/var/lib/anixops-gost` | gost configuration and link certificates |
 | `/usr/lib/anixops-agent/gost` | The pinned gost of the release |
+| `/var/lib/anixops-agent/upgrade` | Control-pushed upgrades: the staged release, `request.json`, the updater's `result.json` |
+| `/usr/lib/anixops-agent/anix-agent.prev` | The binary kept for a rollback, with `anix-agent.prev.json` (version, SHA-256) |
 
 `PluginRoot` and `PluginSocketDir` now default as above when both are left
 out; a configured `PluginRoot` without `PluginSocketDir` keeps its sockets in
@@ -111,6 +113,50 @@ state in `/var/lib/anix-agent/stream` and plugin data in
   `anix-agent migrate-paths --chown anixops-agent` (the copies then belong
   to that user; `pki` refuses files owned by another user). `scripts/install.sh`
   runs `anix-agent migrate-paths` on every root install and upgrade.
+
+## Control-Pushed Upgrades (upgrade.v1)
+
+Control upgrades Agents in canary batches (5%, 25%, 100%, at least 30
+minutes each) and rolls a batch back when more than 5% of it fails (owner
+decision H19; anix-control `sdk/api/agent/v1/PROTOCOL.md`, "Agent
+upgrades"). An Agent never upgrades on its own.
+
+- **Who can.** The Agent lists `upgrade.v1` only when
+  `anixops-agent-updater.path` is active (`systemctl is-active`, which the
+  `anixops-agent` user may ask). Control's installer writes that path unit
+  and the root oneshot `anixops-agent-updater.service`; an Agent installed
+  before them is upgraded by re-running the installer.
+- **The Agent** (`agent.upgrade`, package `upgrade`) refuses the operation
+  before acknowledging it when it does not parse (`upgrade_invalid_request`)
+  or another upgrade is in progress (`upgrade_in_progress`); the same
+  upgrade offered through the host's other node identity joins the running
+  one and answers `handed_off` with it. On the target
+  release already it answers `SUCCEEDED` `current`, which is also the
+  answer to Control's replay after the restart. Otherwise it picks the
+  artifact of its architecture, reports `downloading`, fetches it into
+  `/var/lib/anixops-agent/upgrade` (at most its size), reports `verifying`
+  and checks the size, the SHA-256 and the Ed25519 signature with the
+  official release key compiled in (never a key Control sends); a mismatch
+  removes the download. It then writes `request.json` to a temporary file,
+  reports `SUCCEEDED` `handed_off`, and only then renames the request into
+  place, because the updater restarts it. A rollback needs
+  `anix-agent.prev.json` to name the target (`upgrade_no_previous_release`).
+- **The updater** runs `anix-agent upgrade apply --request
+  /var/lib/anixops-agent/upgrade/request.json` as root. It consumes the
+  request, copies the staged release into `/usr/lib/anixops-agent` and
+  verifies it again with the key of the installed binary, refuses a target
+  older than the installed release unless it is a rollback to the kept one
+  (`upgrade_downgrade_refused`), checks that the new binary's `version`
+  prints the target, keeps the installed binary as `anix-agent.prev`, swaps
+  the new one in with a rename and restarts `anix-agent.service`. The new
+  Agent must stay active with one main process for 30 seconds, or the kept
+  binary is reinstated and the Agent restarted again. The outcome goes to
+  `result.json`, which the next Agent logs once at start.
+- **gost keeps running.** The updater never restarts
+  `anixops-gost.service`. A `gost` in the release replaces
+  `/usr/lib/anixops-agent/gost` only when its SHA-256 is the pinned one
+  (`upgrade.PinnedGostSHA256`, the release workflow's pin), so gost starts it
+  next time.
 
 ## Release Signing
 
