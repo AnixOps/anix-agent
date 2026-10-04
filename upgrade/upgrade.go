@@ -47,7 +47,7 @@ import (
 // install.sh and ANIXOPS_OFFICIAL_PUBLIC_KEY of release.yml): base64 of the
 // raw Ed25519 public key. Release zips are signed with it; both halves
 // verify with it and with nothing else.
-const OfficialPublicKey = "lvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM="
+const OfficialPublicKey = "jW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE="
 
 // The installed layout (anix-control internal/agentinstall/install.sh).
 const (

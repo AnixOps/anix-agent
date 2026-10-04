@@ -467,6 +467,20 @@
     and `google.golang.org/protobuf` to v1.36.11, with matching
     `golang.org/x` updates.
 
+- **The official release signing key is replaced (4.2.0-rc.1).** The previous
+  key could not be recovered, so this release is signed with a new Ed25519
+  key: public root `jW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE=` (SHA-256
+  of the raw key `83fe4c1bed0bb2ed1b9f31ba873b799ead676835b6086a8c2bc2d272a96ae5de`).
+  The compiled-in `upgrade.OfficialPublicKey`, `ANIXOPS_OFFICIAL_PUBLIC_KEY`
+  of `release.yml`, `scripts/check_release_assets.py` and the verification
+  commands in `docs/INSTALL.md` use it. Releases up to 4.1 stay signed by
+  the old key and verify only against it. An Agent built before this release
+  cannot verify a package signed with the new key: update it with the 4.2
+  `agent-install.sh` release asset (verified against the new root pinned out
+  of band), not with the install script of an older Control. Nodes that
+  enable the plugin supervisor set `PluginOfficialPublicKey` themselves and
+  must change it to the new root before they take packages signed with it.
+
 ### Fixed
 
 - **A failed node reload no longer leaves the node without an inbound.**

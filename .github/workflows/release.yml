@@ -22,7 +22,7 @@ env:
   # The official AnixOps release key (anix-control plugins.official_public_key,
   # OFFICIAL_PUBLIC_KEY of its install.sh): base64 of the raw Ed25519 public
   # key. The signing secret must belong to it.
-  ANIXOPS_OFFICIAL_PUBLIC_KEY: 'lvbhRmhzVbSAbrw3vm0k7vYqpEu4/dF/ZqVbp2gS7uM='
+  ANIXOPS_OFFICIAL_PUBLIC_KEY: 'jW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE='
 
 jobs:
   tag-gate:
