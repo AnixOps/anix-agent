@@ -438,6 +438,13 @@
 - `github.com/godbus/dbus/v5` (BSD-2-Clause) is now a direct dependency,
   at the version already in the module graph.
 
+- **`Signing Key Check` workflow** (`.github/workflows/signing-key-check.yml`,
+  manual only). It signs a random message with the organization secret
+  `ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY`, verifies it with the public root and
+  compares that root with `ANIXOPS_OFFICIAL_PUBLIC_KEY` in `release.yml`,
+  printing only the public key id. Run it after rotating the release key and
+  before pushing a release tag.
+
 ### Changed
 
 - The Control SDK requirement moves to go_dev `e6ced8bb79ee`
