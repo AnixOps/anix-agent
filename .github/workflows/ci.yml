@@ -28,6 +28,7 @@ jobs:
           bash -n scripts/anix-agent.sh
           bash -n scripts/V2bX.sh
           bash -n scripts/test_install_migration.sh
+          bash -n scripts/test_manager_uninstall.sh
           bash -n plugin/nftablesforward/namespace_acceptance.sh
           bash -n plugin/nategress/namespace_acceptance.sh
           bash -n plugin/gostmesh/namespace_acceptance.sh
@@ -58,6 +59,9 @@ jobs:
 
       - name: Test installer migration and generated production config
         run: bash scripts/test_install_migration.sh
+
+      - name: Test the manager script uninstall (temporary root, fake systemctl)
+        run: bash scripts/test_manager_uninstall.sh
 
       - name: Run full Go test suite
         # Make CI robust if a go.work exists in the runner environment.

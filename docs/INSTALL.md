@@ -277,10 +277,11 @@ this repository's `scripts/anix-agent.sh`. Anything else of those names is
 left and listed as kept.
 
 This is the Agent binary's command. On a node Control's installer set up,
-`anix-agent` is the binary (`/usr/local/bin/anix-agent`). On a root install it
-is the manager script, whose own `uninstall` removes `anix-agent.service` and
-the program directory; run `/usr/local/anixops-agent/anix-agent uninstall` for
-the command described here.
+`anix-agent` is the binary (`/usr/local/bin/anix-agent`). On a root install
+`anix-agent` is the manager script, which has its own `uninstall [--purge]`
+(see "The manager script on a root install" below); run
+`/usr/local/anixops-agent/anix-agent uninstall` for the command described in
+the tables here.
 
 | Removed by `uninstall` | Installer |
 |---|---|
@@ -308,6 +309,37 @@ drivers create (the nftables table `inet anixops_fwd` and the tc root qdiscs
 `install.sh uninstall --purge` also removes the users and the forwarding
 objects (only when they carry the drivers' marks). The command does not
 reach Control: revoke the node's credentials there.
+
+### The manager script on a root install
+
+On a root install `sudo anix-agent uninstall [--purge]` runs
+`scripts/anix-agent.sh`. It asks no question (the menu entries 12 and 13 ask
+first), accepts only `--purge` (any other argument is ignored with a warning
+and the keep-everything behaviour applies), prints what it removed and what it
+kept, goes on past a path it cannot remove and exits non-zero in that case.
+Unlike the binary's command above, which removes the program directory as a
+whole (`data/` included), it keeps `data/` without `--purge`.
+
+| Removed in both modes |
+|---|
+| `anix-agent.service` (stopped and disabled) and the `V2bX.service` link (a V2bX unit backed up by the installer is put back, not started) |
+| `anixops-gost.service`, when the node was installed with `ANIXOPS_FORWARD=1` (stopped and disabled after the Agent, so the Agent cannot start it again) |
+| `/usr/local/anixops-agent` (binary, `.release-version`, `backups/`; `data/` stays unless `--purge`) |
+| `/usr/bin/anix-agent` (the manager script itself), `/usr/local/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links that point to it |
+| `/usr/lib/anixops-agent/gost` (the release's pinned gost), and that directory when it is empty |
+
+| Kept, removed by `--purge` |
+|---|
+| `/usr/local/anixops-agent/data` (the node's credentials, `credential.json` and `credential.json.enc`, including the ones migrated from V2bX) |
+| `/etc/anixops/agent` (and `/etc/anixops`, when empty) |
+| `/var/lib/anixops-agent` (identity, stream state, forwarding state, plugins) |
+| `/var/lib/anixops-gost` (gost's state directory) |
+| `/etc/sysctl.d/90-anixops-forward.conf` (forwarding stays on until the next boot) |
+
+Never removed: the user `anixops-gost`, the nftables table `inet anixops_fwd`
+and the tc qdiscs the forward drivers create, and `/usr/local/V2bX` and
+`/etc/V2bX`. The root installer writes no polkit rule (only Control's
+installer does), so the manager script touches none.
 
 ## Legacy V2bX_AnixOps Upgrade
 

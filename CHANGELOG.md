@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The root installer's `anix-agent uninstall` (the manager script,
+  `scripts/anix-agent.sh`) keeps the node's credentials and removes gost.**
+  The command `anix-agent uninstall` (#18) already followed the O1 layout, but
+  the manager script, which is the `anix-agent` command on a root install, still
+  did two things differently.
+  - It removed `/usr/local/anixops-agent` as a whole, so even without
+    `--purge` it deleted `data/` (`credential.json[.enc]`, including the
+    credentials migrated from V2bX). Without `--purge` it now removes the
+    program directory except `data/` and lists `data/` as kept.
+  - It left gost behind. A root install with `ANIXOPS_FORWARD=1` writes
+    `anixops-gost.service` (enabled), `/etc/sysctl.d/90-anixops-forward.conf`,
+    `/var/lib/anixops-gost` and `/var/lib/anixops-agent/forward`, and every
+    root install puts the release's pinned gost at
+    `/usr/lib/anixops-agent/gost`. In both modes it now stops and disables
+    `anixops-gost.service` (after the Agent), removes the unit and the gost
+    binary (and `/usr/lib/anixops-agent` when it is then empty), and resets
+    their failed state. `/var/lib/anixops-gost` and the sysctl drop-in stay
+    unless `--purge`, as in the Go command. The root installer writes no
+    polkit rule (only Control's installer does), so there is none to remove.
+  - `--purge` (which already existed) now matches the Go command: it also
+    removes `data/`, `/var/lib/anixops-agent` (identity and state),
+    `/var/lib/anixops-gost` and the sysctl drop-in, and `/etc/anixops` when
+    empty; before, it removed only the program and configuration directories
+    and left the identity, gost's state and the drop-in behind.
+  - It prints what it removed and what it kept (including the user
+    `anixops-gost`, the forward drivers' nftables table and tc qdiscs, and the
+    V2bX directories, none of which it removes), goes on past a path it
+    cannot remove and then exits non-zero. It still asks nothing on the
+    command line, and `uninstall [--purge]` and the menu entries 12 and 13 are
+    unchanged apart from their wording; an argument other than `--purge` is
+    still ignored, now with a warning.
+  - The binary's own command (`/usr/local/anixops-agent/anix-agent
+    uninstall`) is unchanged: it still removes `/usr/local/anixops-agent`
+    whole, `data/` included, without `--purge` (see docs/INSTALL.md).
+  - `scripts/test_manager_uninstall.sh` (a CI step) runs the uninstall against
+    a temporary root with a fake `systemctl`, `rc-service` and `id`, and fails
+    on any write outside it, any user removal and any nftables or tc call.
+    docs/INSTALL.md and docs/ANIX_AGENT_MIGRATION.md describe the behaviour.
+
 ## 4.2.0-rc.1 - 2026-10-04
 
 ### Added
