@@ -436,15 +436,24 @@ func hopErrorsFor(state *forwardv1.NodeForwardState, skip map[driver.HopKey]bool
 }
 
 // hopErrorProto converts a render hop error, saying why when an encrypted
-// gost link fails for want of the link certificate (H28).
+// gost or anixops link fails for want of the link certificate (H28).
 func (c *Component) hopErrorProto(state *forwardv1.NodeForwardState, he *driver.HopError) *forwardv1.HopError {
 	out := he.ToProto()
-	if c.linksAvailable() || he.Engine != forwardv1.Engine_ENGINE_GOST || !errors.Is(he, driver.ErrUnsupported) {
+	if c.linksAvailable() || !errors.Is(he, driver.ErrUnsupported) {
+		return out
+	}
+	var until string
+	switch he.Engine {
+	case forwardv1.Engine_ENGINE_GOST:
+		until = "encrypted gost links need the node's forward link certificate, which Control's link CA issues once the node negotiated forward.v1 (H28); until then gost carries RAW links only"
+	case forwardv1.Engine_ENGINE_ANIXOPS:
+		until = "the TLS_TCP, QUIC and AUTO carriers of the anixops engine need the node's forward link certificate, which Control's link CA issues once the node negotiated forward.v1 (H28); until then it carries RAW and PLAIN links only"
+	default:
 		return out
 	}
 	for _, hop := range state.GetHops() {
 		if driver.KeyOf(hop) == he.Key && encryptedLink(hop) {
-			out.Message = truncate(out.Message+"; encrypted gost links need the node's forward link certificate, which Control's link CA issues once the node negotiated forward.v1 (H28); until then gost carries RAW links only", wire.MaxTextBytes)
+			out.Message = truncate(out.Message+"; "+until, wire.MaxTextBytes)
 			break
 		}
 	}

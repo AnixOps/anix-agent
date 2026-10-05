@@ -3,7 +3,7 @@ module github.com/AnixOps/anix-agent/v4
 go 1.25.0
 
 require (
-	github.com/AnixOps/anix-control/sdk v0.0.0-20261004101053-49a3d9bca0b8
+	github.com/AnixOps/anix-control/sdk v0.0.0-20261005233602-a59a99d84be3
 	github.com/apernet/hysteria/core/v2 v2.6.4
 	github.com/apernet/hysteria/extras/v2 v2.6.4
 	github.com/beevik/ntp v1.4.4-0.20240716062501-06ef196b89ec
@@ -220,8 +220,8 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/prometheus-community/pro-bing v0.4.0 // indirect
-	github.com/quic-go/qpack v0.5.1 // indirect
-	github.com/quic-go/quic-go v0.56.0 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/refraction-networking/utls v1.8.1 // indirect
 	github.com/regfish/regfish-dnsapi-go v0.1.1 // indirect
 	github.com/riobard/go-bloom v0.0.0-20200614022211-cdc8013cb5b3 // indirect
@@ -340,3 +340,13 @@ require (
 replace github.com/sagernet/sing-box v1.13.0 => github.com/wyx2685/sing-box_mod v1.13.0-alpha.5.0.20251202212447-8d054dcd8bfe
 
 replace github.com/xtls/xray-core v1.251202.0 => github.com/wyx2685/xray-core v0.0.0-20251202200223-63db1dc9e9e2
+
+// The SDK requires quic-go 0.59.1 and qpack 0.6 (its QUIC relay library), and
+// the module graph carries those requirements into this module. Xray-core's
+// splithttp (upstream quic-go/http3), hysteria2 and sing-box (the apernet and
+// sagernet quic-go forks) compile only against quic-go 0.56 and qpack 0.5, and
+// nothing in this module imports the SDK's QUIC code (the anixops relay that
+// does is its own module, cmd/anixops-relay), so the two stay where they were.
+replace github.com/quic-go/quic-go => github.com/quic-go/quic-go v0.56.0
+
+replace github.com/quic-go/qpack => github.com/quic-go/qpack v0.5.1

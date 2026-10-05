@@ -39,11 +39,18 @@ SYSCTL_DIR="${SYSCTL_DIR:-/etc/sysctl.d}"
 # Forwarding (forward-sdk.md sections 6, 9 and 14): ANIXOPS_FORWARD=1
 # prepares the node for the Agent's forward component: gost's account and
 # directory, the anixops-gost unit, the sysctl drop-in, and the Agent in
-# gost's group.
+# gost's group. ANIXOPS_RELAY=1 (with ANIXOPS_FORWARD=1) adds the same for the
+# experimental anixops engine (anix-control anixops-protocol.md, H22): the
+# anixops-relay account and directory and the anixops-relay unit. The engine
+# stays off until Forward.AnixOps.Enable is set in the Agent's configuration.
 FORWARD="${ANIXOPS_FORWARD:-0}"
+RELAY="${ANIXOPS_RELAY:-0}"
 GOST_USER="anixops-gost"
 GOST_DIR="/var/lib/anixops-gost"
 GOST_BINARY="/usr/lib/anixops-agent/gost"
+RELAY_USER="anixops-relay"
+RELAY_DIR="/var/lib/anixops-relay"
+RELAY_BINARY="/usr/lib/anixops-agent/anixops-relay"
 FORWARD_STATE_DIR="/var/lib/anixops-agent/forward"
 OPENRC_INIT_DIR="${OPENRC_INIT_DIR:-/etc/init.d}"
 
@@ -560,6 +567,13 @@ install_files() {
         mv -f "${GOST_BINARY}.new" "${GOST_BINARY}"
     fi
 
+    # The anixops relay (H22, experimental), run by anixops-relay.service.
+    if [[ -f "${extract_dir}/anixops-relay" && ! -L "${extract_dir}/anixops-relay" ]]; then
+        mkdir -p "$(dirname "${RELAY_BINARY}")"
+        install -m 0755 "${extract_dir}/anixops-relay" "${RELAY_BINARY}.new"
+        mv -f "${RELAY_BINARY}.new" "${RELAY_BINARY}"
+    fi
+
     for f in geoip.dat geosite.dat; do
         if [[ -f "${extract_dir}/${f}" ]]; then
             install -m 0644 "${extract_dir}/${f}" "${CONFIG_DIR}/${f}"
@@ -623,12 +637,39 @@ setup_forward() {
     if [[ ! -x "${GOST_BINARY}" ]]; then
         warn "The pinned gost is not installed at ${GOST_BINARY}: the gost driver stays unavailable (nftables forwarding works)"
     fi
+    setup_relay
+}
+
+# setup_relay prepares the experimental anixops engine (ANIXOPS_RELAY=1):
+# the relay's own account and group anixops-relay, ${RELAY_DIR} and its tls/
+# owned by root with group anixops-relay (mode 0750: only the Agent writes,
+# only the relay reads), and anixops-relay.service from the Agent itself
+# (anixops.UnitFile), enabled; it starts once the driver wrote its
+# configuration. Setting Forward.AnixOps.Enable in the Agent's configuration
+# turns the engine on.
+setup_relay() {
+    [[ "${RELAY}" == "1" ]] || return 0
+    info "Preparing the experimental anixops relay (account, directory, unit) ..."
+    getent group "${RELAY_USER}" >/dev/null 2>&1 || groupadd --system "${RELAY_USER}"
+    if ! id "${RELAY_USER}" >/dev/null 2>&1; then
+        useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin -g "${RELAY_USER}" "${RELAY_USER}"
+    fi
+    install -d -m 0750 -o root -g "${RELAY_USER}" "${RELAY_DIR}" "${RELAY_DIR}/tls"
+    "${BIN_PATH}" forward relay-unit >"${SYSTEMD_UNIT_DIR}/anixops-relay.service"
+    systemctl daemon-reload
+    systemctl enable anixops-relay >/dev/null 2>&1 || true
+    if [[ ! -x "${RELAY_BINARY}" ]]; then
+        warn "The anixops relay is not installed at ${RELAY_BINARY}: the anixops driver stays unavailable (this release's package has none)"
+    fi
 }
 
 install_service() {
     local supplementary_groups=""
     if [[ "${FORWARD}" == "1" ]] && getent group "${GOST_USER}" >/dev/null 2>&1; then
         supplementary_groups="SupplementaryGroups=${GOST_USER}"
+        if [[ "${RELAY}" == "1" ]] && getent group "${RELAY_USER}" >/dev/null 2>&1; then
+            supplementary_groups="SupplementaryGroups=${GOST_USER} ${RELAY_USER}"
+        fi
     fi
     if [[ "${release}" == "alpine" ]]; then
         mkdir -p "${OPENRC_INIT_DIR}"
@@ -754,6 +795,9 @@ ${LEGACY_MANAGE_CMD_NAME} 命令继续作为兼容别名。
 环境变量（可选）:
   ANIXOPS_FORWARD=1  准备转发节点：gost 账户与目录、anixops-gost 单元、
                sysctl 转发配置（/etc/sysctl.d/90-anixops-forward.conf）
+  ANIXOPS_RELAY=1  与 ANIXOPS_FORWARD=1 一起使用：再准备实验性 anixops 引擎的
+               anixops-relay 账户与目录、anixops-relay 单元（引擎默认关闭，
+               需在 Agent 配置里设 Forward.AnixOps.Enable）
   REPO_OWNER   默认: AnixOps
   REPO_NAME    默认: anix-agent
   REPO_BRANCH  默认: dev_new

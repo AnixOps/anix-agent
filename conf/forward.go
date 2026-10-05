@@ -34,6 +34,8 @@ type ForwardConfig struct {
 	StateDir string                `json:"StateDir"`
 	Nftables ForwardNftablesConfig `json:"Nftables"`
 	Gost     ForwardGostConfig     `json:"Gost"`
+	// AnixOps configures the experimental anixops engine (off by default).
+	AnixOps ForwardAnixOpsConfig `json:"AnixOps"`
 }
 
 // DefaultForwardStateDir is the Agent's own forwarding state, not gost's
@@ -72,6 +74,25 @@ type ForwardGostConfig struct {
 	RuntimeDir string `json:"RuntimeDir"`
 	// ManualLinkCertificates leaves the link certificate files to the
 	// operator; by default the Agent gets them from Control's link CA (H28).
+	ManualLinkCertificates bool `json:"ManualLinkCertificates"`
+}
+
+// ForwardAnixOpsConfig configures the experimental anixops forwarding engine
+// (anix-control docs/architecture/anixops-protocol.md, H22): the Agent's
+// `anixops-relay`, run as anixops-relay.service. The engine is a v4.2
+// prototype whose wire format (ALPN anixops/0) may change without notice, and
+// it is off by default: this is the Agent's `forward.anixops_experimental`
+// switch, and Control needs its own before it plans anixops hops.
+type ForwardAnixOpsConfig struct {
+	// Enable registers the driver, so the node advertises the engine; without
+	// it the planner refuses the node for anixops hops.
+	Enable     bool   `json:"Enable"`
+	Binary     string `json:"Binary"`
+	Dir        string `json:"Dir"`
+	RuntimeDir string `json:"RuntimeDir"`
+	// ManualLinkCertificates leaves the relay's copy of the link certificate
+	// files to the operator; by default the Agent mirrors the files it gets
+	// from Control's link CA (H28) into the relay's directory.
 	ManualLinkCertificates bool `json:"ManualLinkCertificates"`
 }
 
@@ -172,6 +193,11 @@ func (f *ForwardConfig) Validate() error {
 		}
 	default:
 		return fmt.Errorf("Forward.NodeKind %q is not %q or %q", f.NodeKind, ForwardNodeKindProxy, ForwardNodeKindForward)
+	}
+	for what, p := range map[string]string{"Binary": f.AnixOps.Binary, "Dir": f.AnixOps.Dir, "RuntimeDir": f.AnixOps.RuntimeDir} {
+		if p != "" && !filepath.IsAbs(p) {
+			return fmt.Errorf("Forward.AnixOps.%s %q must be an absolute path", what, p)
+		}
 	}
 	for _, list := range [][]string{f.Nftables.LimitInterfaces, f.Nftables.MSSClampInterfaces} {
 		for _, name := range list {

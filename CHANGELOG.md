@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Added
+
+- **The experimental anixops engine, A3: the `anixops-relay` program, its unit
+  and the driver's wiring (off by default).** The Agent side of phase A3 of the
+  owner-approved H22 design (anix-control `docs/architecture/anixops-protocol.md`
+  sections 6.1, 6.2 and 6.8). `cmd/anixops-relay` is the relay process, a few lines around
+  the SDK's `relayd.Main`; the release zip carries it next to the Agent and gost
+  and `check_release_assets.py` requires it; `anix-agent forward relay-unit`
+  prints `anixops-relay.service` (user `anixops-relay`, `CAP_NET_BIND_SERVICE`
+  only, the gost unit's sandbox); `ANIXOPS_FORWARD=1 ANIXOPS_RELAY=1 install.sh`
+  creates its account, directories and unit, and the Go and shell `uninstall`
+  stop and remove it (its state directory stays unless `--purge`, its account
+  is reported). `Forward.AnixOps.Enable` (the Agent's `forward.anixops_experimental`,
+  default `false`) registers the driver, so the node advertises the engine;
+  without it the engine is listed as unavailable. The link certificate files go
+  to gost's directory as before and are mirrored to the relay's own
+  (`LinkOptions.Mirrors`: copied key and certificate first, kept in step, deleted
+  on revocation, the relay's driver switched and reloaded like gost's). Health
+  checks skip a QUIC-only upstream (the anixops QUIC carrier too), `forward
+  diagnose` knows the relay's sockets and process, and the sysctl drop-in raises
+  `net.core.rmem_max` and `wmem_max` to 7500000 for QUIC.
+  **Pin and modules:** this takes the SDK of anix-control's A3 branch
+  (a pseudo-version of an unmerged commit; it moves again after that merges).
+  The SDK requires `quic-go` 0.59.1 and `qpack` 0.6, which break the xray,
+  hysteria2 and sing-box builds (their `quic-go` forks and xray's `http3` compile
+  only against `qpack` 0.5), so the Agent's module `replace`s `quic-go` and
+  `qpack` back to 0.56.0 and 0.5.1 (nothing in it imports the SDK's QUIC
+  library), and the relay, which needs 0.59.1, is a module of its own
+  (`cmd/anixops-relay/go.mod`) that CI and the release build separately. Not
+  done yet: the updater (`upgrade/apply.go`) does not stage a new
+  `anixops-relay` (a new binary arrives with the installer), and Control's own
+  installer (the O1 `install.sh`) does not set the relay up.
+
 ## 4.2.0-rc.2 - 2026-10-05
 
 ### Fixed

@@ -43,6 +43,10 @@ GOST_SERVICE_NAME="anixops-gost"
 GOST_USER="anixops-gost"
 GOST_DIR="/var/lib/anixops-gost"
 GOST_BINARY="/usr/lib/anixops-agent/gost"
+RELAY_SERVICE_NAME="anixops-relay"
+RELAY_USER="anixops-relay"
+RELAY_DIR="/var/lib/anixops-relay"
+RELAY_BINARY="/usr/lib/anixops-agent/anixops-relay"
 
 info() {
     echo -e "${green}$*${plain}"
@@ -625,6 +629,8 @@ uninstall_agent() {
     local forwarding="false"
     local gost_unit="${SYSTEMD_UNIT_DIR}/${GOST_SERVICE_NAME}.service"
     local gost_unit_present="false"
+    local relay_unit="${SYSTEMD_UNIT_DIR}/${RELAY_SERVICE_NAME}.service"
+    local relay_unit_present="false"
     local reset_units=("${SERVICE_NAME}.service")
     local alias_path item
 
@@ -642,7 +648,11 @@ uninstall_agent() {
         gost_unit_present="true"
         reset_units+=("${GOST_SERVICE_NAME}.service")
     fi
-    if [[ "${gost_unit_present}" == "true" || -e "${SYSCTL_DROPIN}" || -d "${GOST_DIR}" || -d "${STATE_ROOT}/forward" ]]; then
+    if ! is_alpine && [[ -e "${relay_unit}" || -L "${relay_unit}" ]]; then
+        relay_unit_present="true"
+        reset_units+=("${RELAY_SERVICE_NAME}.service")
+    fi
+    if [[ "${gost_unit_present}" == "true" || "${relay_unit_present}" == "true" || -e "${SYSCTL_DROPIN}" || -d "${GOST_DIR}" || -d "${RELAY_DIR}" || -d "${STATE_ROOT}/forward" ]]; then
         forwarding="true"
     fi
 
@@ -653,6 +663,9 @@ uninstall_agent() {
         # The Agent is stopped first, so that it cannot start gost again.
         systemctl disable --now "${GOST_SERVICE_NAME}.service" >/dev/null 2>&1 || true
     fi
+    if [[ "${relay_unit_present}" == "true" ]]; then
+        systemctl disable --now "${RELAY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
+    fi
     restore_legacy_service_definition
 
     if is_alpine; then
@@ -660,6 +673,7 @@ uninstall_agent() {
     else
         uninstall_remove "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service"
         uninstall_remove "${gost_unit}"
+        uninstall_remove "${relay_unit}"
         systemctl daemon-reload || true
         systemctl reset-failed "${reset_units[@]}" >/dev/null 2>&1 || true
     fi
@@ -679,6 +693,10 @@ uninstall_agent() {
     # only when nothing else is in it.
     uninstall_remove "${GOST_BINARY}"
     uninstall_remove "${GOST_BINARY}.new"
+    # The anixops relay (experimental) goes the same way, and the directory
+    # last.
+    uninstall_remove "${RELAY_BINARY}"
+    uninstall_remove "${RELAY_BINARY}.new"
     uninstall_remove_empty_dir "$(dirname "${GOST_BINARY}")"
 
     if [[ "${purge_config}" == "true" ]]; then
@@ -689,6 +707,7 @@ uninstall_agent() {
         fi
         uninstall_remove "${STATE_ROOT}"
         uninstall_remove "${GOST_DIR}"
+        uninstall_remove "${RELAY_DIR}"
         uninstall_remove "${SYSCTL_DROPIN}"
     else
         if [[ -e "${CONFIG_DIR}" ]]; then
@@ -700,6 +719,9 @@ uninstall_agent() {
         if [[ -e "${GOST_DIR}" ]]; then
             uninstall_keep "${GOST_DIR}：gost 状态目录，--purge 才会删除"
         fi
+        if [[ -e "${RELAY_DIR}" ]]; then
+            uninstall_keep "${RELAY_DIR}：anixops 中继状态目录，--purge 才会删除"
+        fi
         if [[ -e "${SYSCTL_DROPIN}" ]]; then
             uninstall_keep "${SYSCTL_DROPIN}：转发 sysctl 配置（到下次重启前转发仍然开启），--purge 才会删除"
         fi
@@ -708,6 +730,9 @@ uninstall_agent() {
     # Neither files nor units of the installer: they stay.
     if account_exists "${GOST_USER}"; then
         uninstall_keep "用户 ${GOST_USER}：不再需要时请用 userdel（和 groupdel）手动删除"
+    fi
+    if account_exists "${RELAY_USER}"; then
+        uninstall_keep "用户 ${RELAY_USER}：不再需要时请用 userdel（和 groupdel）手动删除"
     fi
     if [[ "${forwarding}" == "true" ]]; then
         uninstall_keep "nftables 表 inet anixops_fwd 和 tc 根 qdisc af00: 中转发驱动创建的规则：留在内核中，直到重启或手动删除"

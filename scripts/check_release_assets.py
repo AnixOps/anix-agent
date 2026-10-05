@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Release prerequisites of the AnixOps Agent packages (H20, O1 installer).
 
-Each linux release zip carries the Agent and the pinned gost v3 release
+Each linux release zip carries the Agent, the anixops relay of the experimental
+anixops engine (`anixops-relay`, a regular executable at the root of the zip,
+built from this repository's cmd/anixops-relay module) and the pinned gost v3 release
 (`gost`, a regular executable file at the root of the zip, checked by
 SHA-256), and the release publishes SHA256SUMS and a detached signature
 (`<asset>.sig`: base64 of the raw Ed25519 signature by the official AnixOps
@@ -64,6 +66,7 @@ def check_zip(path: Path, gost_sha256: str) -> None:
         raise CheckError("--gost-sha256 must be a lowercase SHA-256")
     with zipfile.ZipFile(path) as archive:
         regular_member(archive, "anix-agent")
+        regular_member(archive, "anixops-relay")
         regular_member(archive, "gost")
         digest = hashlib.sha256(archive.read("gost")).hexdigest()
     if digest != gost_sha256:
@@ -76,6 +79,8 @@ def check_workflow(path: Path) -> None:
         f"GOST_VERSION: '{GOST_VERSION}'": "the pinned gost version",
         f"ANIXOPS_OFFICIAL_PUBLIC_KEY: '{OFFICIAL_PUBLIC_KEY}'": "the official release key",
         "install -m 0755 \"${stage}/gost\" build_assets/gost": "gost bundled in the package",
+        "-o ../../build_assets/anixops-relay": "the anixops relay built into the package",
+        "cd cmd/anixops-relay": "the anixops relay's own module",
         "sha256sum --check --strict": "the gost checksum checks",
         "scripts/check_release_assets.py zip": "the package check in the build",
         "secrets.ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY": "the signing key secret",
@@ -112,14 +117,17 @@ def self_test() -> None:
     executable = stat.S_IFREG | 0o755
     with tempfile.TemporaryDirectory() as tmp:
         good = Path(tmp) / "good.zip"
-        make_zip(good, {"anix-agent": (b"agent", executable), "gost": (gost, executable)})
+        make_zip(good, {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable), "gost": (gost, executable)})
         check_zip(good, digest)
         cases = {
-            "no gost": {"anix-agent": (b"agent", executable)},
-            "other gost": {"anix-agent": (b"agent", executable), "gost": (b"other", executable)},
-            "gost link": {"anix-agent": (b"agent", executable), "gost": (b"target", stat.S_IFLNK | 0o777)},
-            "gost not executable": {"anix-agent": (b"agent", executable), "gost": (gost, stat.S_IFREG | 0o644)},
-            "no agent": {"gost": (gost, executable)},
+            "no gost": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable)},
+            "other gost": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable), "gost": (b"other", executable)},
+            "gost link": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable), "gost": (b"target", stat.S_IFLNK | 0o777)},
+            "gost not executable": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable), "gost": (gost, stat.S_IFREG | 0o644)},
+            "no agent": {"anixops-relay": (b"relay", executable), "gost": (gost, executable)},
+            "no relay": {"anix-agent": (b"agent", executable), "gost": (gost, executable)},
+            "relay link": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", stat.S_IFLNK | 0o777), "gost": (gost, executable)},
+            "relay not executable": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", stat.S_IFREG | 0o644), "gost": (gost, executable)},
         }
         for name, members in cases.items():
             bad = Path(tmp) / "bad.zip"

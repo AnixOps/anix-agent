@@ -61,6 +61,9 @@ const (
 	AgentUnit = "anix-agent.service"
 	// GostUnit is gost's unit, which nothing here restarts.
 	GostUnit = "anixops-gost.service"
+	// RelayUnit is the experimental anixops relay's unit, which nothing here
+	// restarts either.
+	RelayUnit = "anixops-relay.service"
 
 	// RequestFile is the hand-off from the Agent to the updater.
 	RequestFile = "request.json"

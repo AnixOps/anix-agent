@@ -46,7 +46,13 @@ import (
 //     its link certificate the gost driver is rebuilt with or without the
 //     link securities, the state applied again and the session restarted,
 //     so Control plans with the node's new capabilities;
-//   - on agent_cert_revoked the link key and certificate are deleted.
+//   - on agent_cert_revoked the link key and certificate are deleted;
+//   - a driver that cannot read gost's directory (the anixops relay, which
+//     runs as its own user, anix-control anixops-protocol.md section 6.2) gets
+//     a copy of every file in a directory of its own, a LinkMirror: the same
+//     modes and rules, its own group, copied key and certificate first, kept
+//     in step at every change and at start, deleted with the original, and
+//     its driver reloaded and rebuilt like gost's.
 //
 // A reload re-creates gost's services and so restarts their counters, but
 // the driver records reloads only inside Apply (a follow-up of the gost
@@ -85,6 +91,22 @@ type LinkOptions struct {
 	SetEnabled func(enabled bool) error
 	// Reload makes a running gost read the files again.
 	Reload func(ctx context.Context) error
+	// Mirrors are the other drivers that read the link files, each from a
+	// directory of its own.
+	Mirrors []LinkMirror
+}
+
+// LinkMirror is the copy of the link files one more driver reads (the
+// anixops relay's): Dir is its directory (0750, group Group, files 0640),
+// SetEnabled switches the driver with or without the certificate, Reload
+// makes it read the files again, and Enabled says whether the driver was
+// built with the certificate at start.
+type LinkMirror struct {
+	Dir        string
+	Group      string
+	Enabled    bool
+	SetEnabled func(enabled bool) error
+	Reload     func(ctx context.Context) error
 }
 
 // LinkClient is what the link certificates need of the control stream
@@ -109,6 +131,9 @@ type linkState struct {
 	bundleWait time.Duration
 	gid        int
 	wake       chan struct{}
+	// mirrorGIDs and mirrorEnabled follow Options.Links.Mirrors.
+	mirrorGIDs    []int
+	mirrorEnabled []bool
 }
 
 // AttachLinkClient gives the link certificates the client to call; the
@@ -130,10 +155,15 @@ func (c *Component) IdentityRejected(code string) {
 	if c.opts.Links == nil || code != agentcontrol.ErrorCodeCertRevoked {
 		return
 	}
-	dir := c.opts.Links.Dir
-	for _, name := range []string{linkKeyFile, linkCertFile} {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			c.logger.WithError(err).Warn("Could not delete the link certificate after the agent certificate was revoked")
+	dirs := []string{c.opts.Links.Dir}
+	for _, m := range c.opts.Links.Mirrors {
+		dirs = append(dirs, m.Dir)
+	}
+	for _, dir := range dirs {
+		for _, name := range []string{linkKeyFile, linkCertFile} {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				c.logger.WithError(err).Warn("Could not delete the link certificate after the agent certificate was revoked")
+			}
 		}
 	}
 	c.links.mu.Lock()
@@ -156,15 +186,12 @@ func (c *Component) linksAvailable() bool {
 // startLinks reads what the directory holds and starts the loop.
 func (c *Component) startLinks() {
 	l := c.opts.Links
-	c.links.gid = -1
-	if l.Group != "" {
-		if g, err := user.LookupGroup(l.Group); err == nil {
-			if gid, err := strconv.Atoi(g.Gid); err == nil {
-				c.links.gid = gid
-			}
-		} else {
-			c.logger.WithError(err).WithField("group", l.Group).Warn("gost's group is missing; gost cannot read the link certificate (the installer creates it)")
-		}
+	c.links.gid = c.lookupGID(l.Group)
+	c.links.mirrorGIDs = make([]int, len(l.Mirrors))
+	c.links.mirrorEnabled = make([]bool, len(l.Mirrors))
+	for i, m := range l.Mirrors {
+		c.links.mirrorGIDs[i] = c.lookupGID(m.Group)
+		c.links.mirrorEnabled[i] = m.Enabled
 	}
 	if cert, err := readCertificate(filepath.Join(l.Dir, linkCertFile)); err == nil && c.opts.Now().Before(cert.NotAfter) {
 		c.links.notAfter = cert.NotAfter
@@ -175,6 +202,24 @@ func (c *Component) startLinks() {
 	go func() { defer c.wg.Done(); c.runLinks() }()
 	// The files may have expired or appeared while the Agent was down.
 	c.linksChanged(c.ctx)
+}
+
+// lookupGID answers the group id of a driver's group, -1 for none (tests) or
+// a group the installer did not create.
+func (c *Component) lookupGID(group string) int {
+	if group == "" {
+		return -1
+	}
+	g, err := user.LookupGroup(group)
+	if err != nil {
+		c.logger.WithError(err).WithField("group", group).Warn("A forward driver's group is missing; the driver cannot read the link certificate (the installer creates it)")
+		return -1
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return -1
+	}
+	return gid
 }
 
 func (c *Component) runLinks() {
@@ -347,30 +392,47 @@ func (c *Component) refreshBundle(ctx context.Context, client LinkClient, now ti
 	return true
 }
 
-// linksChanged reloads gost after the files changed, and rebuilds the gost
+// linksChanged reloads the drivers after the files changed, and rebuilds a
 // driver when the node gained or lost a usable link certificate.
 func (c *Component) linksChanged(ctx context.Context) {
 	l := c.opts.Links
 	now := c.opts.Now()
-	_, keyErr := os.Stat(filepath.Join(l.Dir, linkKeyFile))
-	_, bundleErr := os.Stat(filepath.Join(l.Dir, linkBundleFile))
-	cert, certErr := readCertificate(filepath.Join(l.Dir, linkCertFile))
-	usable := keyErr == nil && bundleErr == nil && certErr == nil && now.Before(cert.NotAfter)
+	c.syncMirrors()
+	usable := linksUsable(l.Dir, now)
 	c.links.mu.Lock()
 	switched := usable != c.links.enabled
 	client := c.links.client
 	c.links.mu.Unlock()
 	if switched && l.SetEnabled != nil {
 		if err := l.SetEnabled(usable); err != nil {
-			c.logger.WithError(err).Error("Could not switch the gost driver's link securities")
+			c.logger.WithError(err).Error("Could not switch a forward driver's link securities")
 			return
 		}
 	}
 	c.links.mu.Lock()
 	c.links.enabled = usable
 	c.links.mu.Unlock()
+	for i, m := range l.Mirrors {
+		mirrorUsable := linksUsable(m.Dir, now)
+		c.links.mu.Lock()
+		was := c.links.mirrorEnabled[i]
+		c.links.mu.Unlock()
+		if mirrorUsable == was {
+			continue
+		}
+		if m.SetEnabled != nil {
+			if err := m.SetEnabled(mirrorUsable); err != nil {
+				c.logger.WithError(err).Error("Could not switch a forward driver's link securities")
+				return
+			}
+		}
+		c.links.mu.Lock()
+		c.links.mirrorEnabled[i] = mirrorUsable
+		c.links.mu.Unlock()
+		switched = true
+	}
 	if switched {
-		c.logger.WithField("link_certificate", usable).Info("The gost driver's encrypted links follow the link certificate; applying the state again")
+		c.logger.WithField("link_certificate", usable).Info("The forward drivers' encrypted links follow the link certificate; applying the state again")
 		c.reapply(ctx)
 		if client != nil {
 			// Control replans with the node's new link securities.
@@ -380,7 +442,60 @@ func (c *Component) linksChanged(ctx context.Context) {
 	}
 	if l.Reload != nil {
 		if err := l.Reload(ctx); err != nil {
-			c.logger.WithError(err).Warn("Could not reload gost after the link certificate changed")
+			c.logger.WithError(err).Warn("Could not reload a forward driver after the link certificate changed")
+		}
+	}
+	for _, m := range l.Mirrors {
+		if m.Reload != nil {
+			if err := m.Reload(ctx); err != nil {
+				c.logger.WithError(err).Warn("Could not reload a forward driver after the link certificate changed")
+			}
+		}
+	}
+}
+
+// linksUsable tells whether dir holds a link key, a trust bundle and a link
+// certificate that has not expired.
+func linksUsable(dir string, now time.Time) bool {
+	_, keyErr := os.Stat(filepath.Join(dir, linkKeyFile))
+	_, bundleErr := os.Stat(filepath.Join(dir, linkBundleFile))
+	cert, certErr := readCertificate(filepath.Join(dir, linkCertFile))
+	return keyErr == nil && bundleErr == nil && certErr == nil && now.Before(cert.NotAfter)
+}
+
+// syncMirrors makes every mirror hold what the primary directory holds: the
+// key and the certificate first, then the bundle, a file only when its bytes
+// differ; a key or certificate the primary lacks is removed from the mirror.
+func (c *Component) syncMirrors() {
+	l := c.opts.Links
+	for i, m := range l.Mirrors {
+		gid := -1
+		c.links.mu.Lock()
+		if i < len(c.links.mirrorGIDs) {
+			gid = c.links.mirrorGIDs[i]
+		}
+		c.links.mu.Unlock()
+		for _, name := range []string{linkKeyFile, linkCertFile, linkBundleFile} {
+			data, err := os.ReadFile(filepath.Join(l.Dir, name)) // #nosec G304 -- our own directory
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) && name != linkBundleFile {
+					if rerr := os.Remove(filepath.Join(m.Dir, name)); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+						c.logger.WithError(rerr).Warn("Could not delete a forward link file of a driver's copy")
+					}
+				}
+				continue
+			}
+			if old, err := os.ReadFile(filepath.Join(m.Dir, name)); err == nil && bytes.Equal(old, data) { // #nosec G304 -- our own directory
+				continue
+			}
+			if err := ensureDir(m.Dir, gid); err != nil {
+				c.logger.WithError(err).WithField("dir", m.Dir).Warn("Could not prepare a forward driver's link directory")
+				break
+			}
+			if err := writeFileIn(m.Dir, gid, name, data); err != nil {
+				c.logger.WithError(err).WithField("dir", m.Dir).Warn("Could not copy a forward link file for a driver")
+				break
+			}
 		}
 	}
 }
@@ -395,23 +510,29 @@ func (c *Component) reapply(ctx context.Context) {
 	}
 }
 
-func (c *Component) ensureLinkDir() error {
-	dir := c.opts.Links.Dir
+func (c *Component) ensureLinkDir() error { return ensureDir(c.opts.Links.Dir, c.links.gid) }
+
+// writeLinkFile writes one file atomically, 0640 with gost's group.
+func (c *Component) writeLinkFile(name string, data []byte) error {
+	return writeFileIn(c.opts.Links.Dir, c.links.gid, name, data)
+}
+
+// ensureDir makes dir, mode 0750 with the group gid (when it is known).
+func ensureDir(dir string, gid int) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	if err := os.Chmod(dir, 0o750); err != nil {
 		return err
 	}
-	if c.links.gid >= 0 {
-		return os.Chown(dir, -1, c.links.gid)
+	if gid >= 0 {
+		return os.Chown(dir, -1, gid)
 	}
 	return nil
 }
 
-// writeLinkFile writes one file atomically, 0640 with gost's group.
-func (c *Component) writeLinkFile(name string, data []byte) error {
-	dir := c.opts.Links.Dir
+// writeFileIn writes one file of dir atomically, 0640 with the group gid.
+func writeFileIn(dir string, gid int, name string, data []byte) error {
 	tmp, err := os.CreateTemp(dir, "."+name+"-*")
 	if err != nil {
 		return err
@@ -422,8 +543,8 @@ func (c *Component) writeLinkFile(name string, data []byte) error {
 		_ = tmp.Close()
 		return err
 	}
-	if c.links.gid >= 0 {
-		if err := tmp.Chown(-1, c.links.gid); err != nil {
+	if gid >= 0 {
+		if err := tmp.Chown(-1, gid); err != nil {
 			_ = tmp.Close()
 			return err
 		}

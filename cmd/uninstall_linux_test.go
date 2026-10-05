@@ -176,7 +176,7 @@ func TestUninstallRemovesTheO1Layout(t *testing.T) {
 		"disable --now anix-agent.service",
 		"disable --now anixops-gost.service",
 		"daemon-reload",
-		"reset-failed anixops-agent-updater.path anixops-agent-updater.service anix-agent.service anixops-gost.service",
+		"reset-failed anixops-agent-updater.path anixops-agent-updater.service anix-agent.service anixops-gost.service anixops-relay.service",
 	}, log.calls)
 
 	require.Contains(t, out, "/usr/lib/anixops-agent")
@@ -273,7 +273,7 @@ func TestUninstallRemovesTheRootLayout(t *testing.T) {
 		"disable --now anix-agent.service",
 		"disable --now anixops-gost.service",
 		"daemon-reload",
-		"reset-failed anixops-agent-updater.path anixops-agent-updater.service anix-agent.service anixops-gost.service",
+		"reset-failed anixops-agent-updater.path anixops-agent-updater.service anix-agent.service anixops-gost.service anixops-relay.service",
 	}, log.calls)
 }
 
@@ -370,4 +370,40 @@ func TestUninstallReportsWhatItCouldNotRemoveAndRemovesTheRest(t *testing.T) {
 	requirePresent(t, root, "/usr/lib/anixops-agent")
 	requireAbsent(t, root, "/etc/systemd/system/anix-agent.service", "/etc/systemd/system/anixops-agent-updater.path", "/usr/local/bin/anix-agent")
 	require.NotContains(t, out, "卸载成功")
+}
+
+// The experimental anixops relay (anixops-relay.service, its directory and
+// account, installed with the engine) is stopped after gost, its unit removed,
+// its state kept without --purge and its account reported, never removed.
+func TestUninstallRemovesTheAnixOpsRelay(t *testing.T) {
+	root, log := useUninstallRoot(t)
+	installO1(t, root)
+	writeTree(t, root, "/etc/systemd/system/anixops-relay.service", "[Unit]\n")
+	writeTree(t, root, "/usr/lib/anixops-agent/anixops-relay", "relay")
+	writeTree(t, root, "/var/lib/anixops-relay/relay.json", "{}")
+	writeTree(t, root, "/var/lib/anixops-relay/tls/link.crt", "cert")
+	writeTree(t, root, "/etc/passwd", "root:x:0:0:root:/root:/bin/bash\nanixops-agent:x:998:998::/var/lib/anixops-agent:/usr/sbin/nologin\nanixops-relay:x:996:996::/nonexistent:/usr/sbin/nologin\n")
+	writeBystanders(t, root)
+
+	out, err := uninstallCommandRun(t, "y\n", false)
+	require.NoError(t, err, out)
+	requireAbsent(t, root, "/etc/systemd/system/anixops-relay.service", "/usr/lib/anixops-agent")
+	requirePresent(t, root, "/var/lib/anixops-relay/relay.json", "/var/lib/anixops-relay/tls/link.crt")
+	requirePresent(t, root, bystanders...)
+	require.Equal(t, []string{
+		"disable --now anixops-agent-updater.path",
+		"disable --now anixops-agent-updater.service",
+		"disable --now anix-agent.service",
+		"disable --now anixops-gost.service",
+		"disable --now anixops-relay.service",
+		"daemon-reload",
+		"reset-failed anixops-agent-updater.path anixops-agent-updater.service anix-agent.service anixops-gost.service anixops-relay.service",
+	}, log.calls)
+	require.Contains(t, out, "/var/lib/anixops-relay")
+	require.Contains(t, out, "the users anixops-agent, anixops-relay")
+
+	out, err = uninstallCommandRun(t, "y\n", true)
+	require.NoError(t, err, out)
+	requireAbsent(t, root, "/var/lib/anixops-relay")
+	requirePresent(t, root, bystanders...)
 }
