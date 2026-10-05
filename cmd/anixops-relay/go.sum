@@ -1,5 +1,7 @@
 github.com/AnixOps/anix-control/sdk v0.0.0-20261005221112-f70fe0668071 h1:zWILYjmnRc0Fia8OOEouQoLhYO+DiJY0UYwX5tAuIGQ=
 github.com/AnixOps/anix-control/sdk v0.0.0-20261005221112-f70fe0668071/go.mod h1:zNGVSCbEz0+R/TvgtYlLpdyS9nFmTZxQgpsJ8+0lvLc=
+github.com/AnixOps/anix-control/sdk v0.0.0-20261005233602-a59a99d84be3 h1:6W9kHr8LH4wK4Nc/Qgw6xRbpgUkpv4QHFcd05VL2z2Q=
+github.com/AnixOps/anix-control/sdk v0.0.0-20261005233602-a59a99d84be3/go.mod h1:zNGVSCbEz0+R/TvgtYlLpdyS9nFmTZxQgpsJ8+0lvLc=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
