@@ -131,7 +131,13 @@ func (u *uninstaller) uninstall() error {
 
 	u.removeCommands()
 	u.removeTree(upgrade.DefaultLibDir)
-	u.removeTree(rootInstallDir)
+	if u.purge {
+		u.removeTree(rootInstallDir)
+	} else {
+		// data/ holds the root install's credentials (a migrated V2bX one
+		// included): it stays unless --purge, like the configuration.
+		u.removeTreeExcept(rootInstallDir, "data")
+	}
 
 	configDir := filepath.Dir(defaultConfigPath)
 	if u.purge {
@@ -146,6 +152,7 @@ func (u *uninstaller) uninstall() error {
 	} else {
 		u.keep(configDir+" and "+conf.DefaultStateRoot+": the configuration and the node's identity and state, for a later install (--purge removes them)",
 			u.exists(configDir) || u.exists(conf.DefaultStateRoot))
+		u.keep(rootInstallDir+"/data: the root install's credentials (--purge removes them)", u.exists(filepath.Join(rootInstallDir, "data")))
 		u.keep(gostStateDir+" and "+sysctlDropIn, u.exists(gostStateDir) || u.exists(sysctlDropIn))
 	}
 	// What is neither files nor units of the installers stays: the accounts
@@ -231,6 +238,44 @@ func (u *uninstaller) removeTree(logical string) {
 		return
 	}
 	if err := os.RemoveAll(u.path(logical)); err != nil {
+		u.errs = append(u.errs, fmt.Errorf("remove %s: %w", logical, err))
+		return
+	}
+	u.removed = append(u.removed, logical)
+}
+
+// removeTreeExcept removes the directory at logical but keeps its child
+// named keep (a directory), so the files the installer did not write and the
+// node's credentials survive. The directory itself stays when it is kept.
+func (u *uninstaller) removeTreeExcept(logical, keep string) {
+	info, err := os.Lstat(u.path(logical))
+	if err != nil {
+		return
+	}
+	if !info.IsDir() {
+		u.errs = append(u.errs, fmt.Errorf("%s is not a directory, not what the installer created; left in place", logical))
+		return
+	}
+	entries, err := os.ReadDir(u.path(logical))
+	if err != nil {
+		u.errs = append(u.errs, fmt.Errorf("read %s: %w", logical, err))
+		return
+	}
+	for _, entry := range entries {
+		if entry.Name() == keep {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(u.path(logical), entry.Name())); err != nil {
+			u.errs = append(u.errs, fmt.Errorf("remove %s: %w", filepath.Join(logical, entry.Name()), err))
+			return
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(u.path(logical), keep)); err == nil {
+		u.removed = append(u.removed, logical+" (except "+keep+"/)")
+		return
+	}
+	// Nothing to keep: the directory is empty now.
+	if err := os.Remove(u.path(logical)); err != nil {
 		u.errs = append(u.errs, fmt.Errorf("remove %s: %w", logical, err))
 		return
 	}

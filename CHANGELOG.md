@@ -43,6 +43,15 @@
     on any write outside it, any user removal and any nftables or tc call.
     docs/INSTALL.md and docs/ANIX_AGENT_MIGRATION.md describe the behaviour.
 
+- **`anix-agent uninstall` keeps the root install's `data/` without `--purge`.**
+  The binary's command removed `/usr/local/anixops-agent` whole, `data/` (the
+  credentials, a migrated V2bX one included) with it, so it disagreed with the
+  manager script (`scripts/anix-agent.sh`, #24) and with the O1 layout, which
+  keep the node's identity unless `--purge`. It now removes the program
+  directory except `data/`, and `--purge` removes `data/` too. `docs/INSTALL.md`
+  says so.
+
+
 ## 4.2.0-rc.1 - 2026-10-04
 
 ### Added

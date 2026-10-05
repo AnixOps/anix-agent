@@ -262,9 +262,12 @@ func TestUninstallRemovesTheRootLayout(t *testing.T) {
 
 	requireAbsent(t, root,
 		"/etc/systemd/system/anix-agent.service", "/etc/systemd/system/V2bX.service", "/etc/systemd/system/anixops-gost.service",
-		"/usr/local/anixops-agent", "/usr/bin/anix-agent", "/usr/lib/anixops-agent",
+		"/usr/local/anixops-agent/anix-agent", "/usr/local/anixops-agent/.release-version", "/usr/local/anixops-agent/backups",
+		"/usr/bin/anix-agent", "/usr/lib/anixops-agent",
 		"/usr/local/bin/anix-agent", "/usr/bin/v2bx-anixops", "/usr/local/bin/v2bx-anixops", "/usr/bin/V2bX", "/usr/local/bin/V2bX")
-	requirePresent(t, root, "/etc/anixops/agent/config.json", "/var/lib/anixops-agent/credential.json.enc")
+	// data/ holds the root install's credentials: it stays without --purge.
+	requirePresent(t, root, "/etc/anixops/agent/config.json", "/var/lib/anixops-agent/credential.json.enc",
+		"/usr/local/anixops-agent/data/credential.json")
 	requirePresent(t, root, bystanders...)
 	require.Equal(t, []string{
 		"disable --now anix-agent.service",
@@ -272,6 +275,22 @@ func TestUninstallRemovesTheRootLayout(t *testing.T) {
 		"daemon-reload",
 		"reset-failed anixops-agent-updater.path anixops-agent-updater.service anix-agent.service anixops-gost.service",
 	}, log.calls)
+}
+
+// --purge removes the root install's data/ (its credentials) with the rest.
+func TestUninstallPurgeRemovesTheRootInstallsData(t *testing.T) {
+	root, _ := useUninstallRoot(t)
+	writeTree(t, root, "/etc/systemd/system/anix-agent.service", "[Service]\nUser=root\n")
+	for _, name := range []string{"anix-agent", "backups/anix-agent.1", "data/credential.json"} {
+		writeTree(t, root, "/usr/local/anixops-agent/"+name, name)
+	}
+	writeBystanders(t, root)
+
+	out, err := uninstallCommandRun(t, "y\n", true)
+	require.NoError(t, err, out)
+
+	requireAbsent(t, root, "/usr/local/anixops-agent")
+	requirePresent(t, root, bystanders...)
 }
 
 // The manager script's markers must stay in scripts/anix-agent.sh: they are
