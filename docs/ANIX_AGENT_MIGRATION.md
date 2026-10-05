@@ -53,7 +53,7 @@ credential files may contain API keys, certificates, or registration secrets.
 Use an exact release tag:
 
 ```bash
-export VERSION=v4.2.0-rc.1
+export VERSION=v4.2.0-rc.2
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
