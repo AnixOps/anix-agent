@@ -21,10 +21,12 @@ import (
 //   - the O1 installer of AnixOps Control (anix-control
 //     internal/agentinstall/install.sh): the Agent as the user anixops-agent
 //     from /usr/lib/anixops-agent, with the updater units, the polkit rule
-//     and, for a forward node, anixops-gost.service;
+//     and, for a forward node, anixops-gost.service (and, with the
+//     experimental anixops engine, anixops-relay.service);
 //   - scripts/install.sh, the root layout: /usr/local/anixops-agent, the
 //     manager script /usr/bin/anix-agent with its compatibility links, and
-//     anixops-gost.service when ANIXOPS_FORWARD=1.
+//     anixops-gost.service when ANIXOPS_FORWARD=1 (anixops-relay.service
+//     too, when the release ships the relay).
 //
 // Every path is removed only when it is provably the installer's: a unit,
 // directory or rule by its product-specific name, a link only when it points
@@ -48,11 +50,13 @@ const (
 	// rootInstallDir is the root installer's program directory.
 	rootInstallDir = "/usr/local/anixops-agent"
 
-	gostStateDir = "/var/lib/anixops-gost"
-	sysctlDropIn = "/etc/sysctl.d/90-anixops-forward.conf"
+	gostStateDir  = "/var/lib/anixops-gost"
+	relayStateDir = "/var/lib/anixops-relay"
+	sysctlDropIn  = "/etc/sysctl.d/90-anixops-forward.conf"
 
 	agentAccount = "anixops-agent"
 	gostAccount  = "anixops-gost"
+	relayAccount = "anixops-relay"
 )
 
 // legacyCommandLinks are the root installer's compatibility links to the
@@ -64,8 +68,9 @@ var legacyCommandLinks = []string{
 
 // uninstallUnits are the units the installers write, in the order they are
 // stopped: the updater first, so that nothing replaces the Agent meanwhile,
-// then the Agent, so that it cannot apply its state again, then gost.
-var uninstallUnits = []string{upgrade.UpdaterPathUnit, updaterServiceUnit, upgrade.AgentUnit, upgrade.GostUnit}
+// then the Agent, so that it cannot apply its state again, then gost and the
+// anixops relay.
+var uninstallUnits = []string{upgrade.UpdaterPathUnit, updaterServiceUnit, upgrade.AgentUnit, upgrade.GostUnit, upgrade.RelayUnit}
 
 // errNoSystemctl is the host systemctl runner's answer on a host without
 // systemd: there is nothing to stop.
@@ -117,8 +122,8 @@ func (u *uninstaller) ctl(args ...string) error {
 // also removes the configuration and the state, which are kept otherwise so
 // that a later install finds the node's identity.
 func (u *uninstaller) uninstall() error {
-	forwarding := u.exists(filepath.Join(systemdUnitDir, upgrade.GostUnit)) || u.exists(sysctlDropIn) ||
-		u.exists(filepath.Join(conf.DefaultStateRoot, "forward")) || u.exists(gostStateDir)
+	forwarding := u.exists(filepath.Join(systemdUnitDir, upgrade.GostUnit)) || u.exists(filepath.Join(systemdUnitDir, upgrade.RelayUnit)) ||
+		u.exists(sysctlDropIn) || u.exists(filepath.Join(conf.DefaultStateRoot, "forward")) || u.exists(gostStateDir) || u.exists(relayStateDir)
 
 	u.removeUnits()
 	u.removeFile(polkitRule)
@@ -148,17 +153,19 @@ func (u *uninstaller) uninstall() error {
 		}
 		u.removeTree(conf.DefaultStateRoot)
 		u.removeTree(gostStateDir)
+		u.removeTree(relayStateDir)
 		u.removeFile(sysctlDropIn)
 	} else {
 		u.keep(configDir+" and "+conf.DefaultStateRoot+": the configuration and the node's identity and state, for a later install (--purge removes them)",
 			u.exists(configDir) || u.exists(conf.DefaultStateRoot))
 		u.keep(rootInstallDir+"/data: the root install's credentials (--purge removes them)", u.exists(filepath.Join(rootInstallDir, "data")))
 		u.keep(gostStateDir+" and "+sysctlDropIn, u.exists(gostStateDir) || u.exists(sysctlDropIn))
+		u.keep(relayStateDir+": the anixops relay's state directory (--purge removes it)", u.exists(relayStateDir))
 	}
 	// What is neither files nor units of the installers stays: the accounts
 	// and the kernel objects the forward drivers created at run time.
 	var accounts []string
-	for _, name := range []string{agentAccount, gostAccount} {
+	for _, name := range []string{agentAccount, gostAccount, relayAccount} {
 		if u.hasAccount(name) {
 			accounts = append(accounts, name)
 		}

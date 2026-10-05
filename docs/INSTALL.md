@@ -70,7 +70,37 @@ anix-agent forward sysctl-dropin | sudo tee /etc/sysctl.d/90-anixops-forward.con
 sudo sysctl --system
 ```
 
-`anix-agent forward gost-unit` prints `anixops-gost.service`.
+`anix-agent forward gost-unit` prints `anixops-gost.service`. The drop-in also
+raises `net.core.rmem_max` and `net.core.wmem_max` to 7500000, the UDP socket
+buffer QUIC links (gost's and the anixops relay's) ask for.
+
+### The experimental anixops engine
+
+The anixops engine (anix-control `docs/architecture/anixops-protocol.md`, H22)
+is a v4.2 **prototype, off by default**: its wire format (ALPN `anixops/0`) may
+change without notice until v4.3. Both sides need their switch: Control's
+`forward.anixops_experimental`, and the Agent's `Forward.AnixOps.Enable`:
+
+```json
+"Forward": { "Enable": true, "AnixOps": { "Enable": true } }
+```
+
+It runs in its own process, `anixops-relay` (shipped in the release zip, installed as
+`/usr/lib/anixops-agent/anixops-relay`), under its own unit
+`anixops-relay.service` (user `anixops-relay`, `CAP_NET_BIND_SERVICE` only), so
+restarting or upgrading the Agent keeps forwarding. The Agent controls it over
+`/run/anixops-relay/control.sock` and keeps the relay's own copy of the link
+certificate files (`/var/lib/anixops-relay/tls`, group `anixops-relay`) next to
+gost's; `Forward.AnixOps.ManualLinkCertificates` leaves that copy to you.
+
+The root installer prepares it with `ANIXOPS_FORWARD=1 ANIXOPS_RELAY=1`; by
+hand, create the user and group `anixops-relay`, the directories above
+(`root:anixops-relay`, mode 0750), install the binary, and
+`anix-agent forward relay-unit | sudo tee /etc/systemd/system/anixops-relay.service`.
+AnixOps Control's own installer does not set the relay up yet. Without the
+binary or the unit the engine is reported unavailable (with the reason), and
+without the link certificate only the `PLAIN` carrier is offered. PROXY protocol
+v2 and the relay's metrics socket are not implemented.
 
 ## File System Layout
 
@@ -84,6 +114,8 @@ sudo sysctl --system
 | `/run/anixops-agent/plugins` | Plugin sockets (`PluginSocketDir` default; the unit's `RuntimeDirectory=anixops-agent`) |
 | `/var/lib/anixops-gost` | gost configuration and link certificates |
 | `/usr/lib/anixops-agent/gost` | The pinned gost of the release |
+| `/var/lib/anixops-relay` | The anixops relay's configuration, state and link certificates (experimental) |
+| `/usr/lib/anixops-agent/anixops-relay` | The anixops relay of the release (experimental) |
 | `/var/lib/anixops-agent/upgrade` | Control-pushed upgrades: the staged release, `request.json`, the updater's `result.json` |
 | `/usr/lib/anixops-agent/anix-agent.prev` | The binary kept for a rollback, with `anix-agent.prev.json` (version, SHA-256) |
 
@@ -299,10 +331,11 @@ the node enrolled:
 | `/etc/anixops/agent` (and `/etc/anixops`, when empty) |
 | `/var/lib/anixops-agent` (identity, stream state, forwarding state, plugins, staged upgrades) |
 | `/var/lib/anixops-gost` |
+| `/var/lib/anixops-relay` (when the anixops engine was set up) |
 | `/etc/sysctl.d/90-anixops-forward.conf` (forwarding stays on until the next boot) |
 
 Not removed even with `--purge`, because the installer did not write them:
-the users `anixops-agent` and `anixops-gost`, the kernel objects the forward
+the users `anixops-agent`, `anixops-gost` and `anixops-relay`, the kernel objects the forward
 drivers create (the nftables table `inet anixops_fwd` and the tc root qdiscs
 `af00:`), and the directories of earlier releases (`/var/lib/anix-agent`,
 `/var/lib/anixops/plugins`). The command lists what it kept. AnixOps Control's
@@ -324,9 +357,10 @@ V2bX one included) without `--purge`.
 |---|
 | `anix-agent.service` (stopped and disabled) and the `V2bX.service` link (a V2bX unit backed up by the installer is put back, not started) |
 | `anixops-gost.service`, when the node was installed with `ANIXOPS_FORWARD=1` (stopped and disabled after the Agent, so the Agent cannot start it again) |
+| `anixops-relay.service`, when the node was installed with `ANIXOPS_RELAY=1` (stopped and disabled after gost) |
 | `/usr/local/anixops-agent` (binary, `.release-version`, `backups/`; `data/` stays unless `--purge`) |
 | `/usr/bin/anix-agent` (the manager script itself), `/usr/local/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links that point to it |
-| `/usr/lib/anixops-agent/gost` (the release's pinned gost), and that directory when it is empty |
+| `/usr/lib/anixops-agent/gost` (the release's pinned gost) and `anixops-relay` (the release's relay), and that directory when it is empty |
 
 | Kept, removed by `--purge` |
 |---|
@@ -334,9 +368,10 @@ V2bX one included) without `--purge`.
 | `/etc/anixops/agent` (and `/etc/anixops`, when empty) |
 | `/var/lib/anixops-agent` (identity, stream state, forwarding state, plugins) |
 | `/var/lib/anixops-gost` (gost's state directory) |
+| `/var/lib/anixops-relay` (the anixops relay's state directory) |
 | `/etc/sysctl.d/90-anixops-forward.conf` (forwarding stays on until the next boot) |
 
-Never removed: the user `anixops-gost`, the nftables table `inet anixops_fwd`
+Never removed: the users `anixops-gost` and `anixops-relay`, the nftables table `inet anixops_fwd`
 and the tc qdiscs the forward drivers create, and `/usr/local/V2bX` and
 `/etc/V2bX`. The root installer writes no polkit rule (only Control's
 installer does), so the manager script touches none.

@@ -40,6 +40,19 @@ import (
 // is not implemented). Passive failures (a real connection's failed dial)
 // are not counted: neither engine exposes them.
 
+// udpOnly tells whether the link's listener holds a UDP port only, so that a
+// TCP connect says nothing about it: gost's QUIC link and the anixops QUIC
+// carrier (AUTO listens on TCP too).
+func udpOnly(t *forwardv1.LinkTransport) bool {
+	switch t.GetSecurity() {
+	case forwardv1.LinkSecurity_LINK_SECURITY_QUIC:
+		return true
+	case forwardv1.LinkSecurity_LINK_SECURITY_ANIXOPS:
+		return t.GetCarrier() == forwardv1.AnixOpsCarrier_ANIXOPS_CARRIER_QUIC
+	}
+	return false
+}
+
 // upstreamKey is one upstream of one hop.
 type upstreamKey struct {
 	route   string
@@ -100,7 +113,7 @@ func (c *Component) plans() []hopPlan {
 			p.upstreams = append(p.upstreams, plannedUpstream{
 				up:       driver.Upstream{Address: u.GetAddress(), Port: u.GetPort(), Weight: max(u.GetWeight(), 1)},
 				priority: u.GetPriority(),
-				checked:  checks && u.GetEgress().GetSecurity() != forwardv1.LinkSecurity_LINK_SECURITY_QUIC,
+				checked:  checks && !udpOnly(u.GetEgress()),
 			})
 		}
 		out = append(out, p)

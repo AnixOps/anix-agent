@@ -43,6 +43,10 @@ func NewForwardComponent(cfg *conf.ForwardConfig, nodes []conf.NodeConfig) (*for
 			Disable: cfg.Gost.Disable, Binary: cfg.Gost.Binary, Dir: cfg.Gost.Dir, RuntimeDir: cfg.Gost.RuntimeDir,
 			ManualLinkCertificates: cfg.Gost.ManualLinkCertificates,
 		},
+		AnixOps: forward.AnixOpsSettings{
+			Enable: cfg.AnixOps.Enable, Binary: cfg.AnixOps.Binary, Dir: cfg.AnixOps.Dir, RuntimeDir: cfg.AnixOps.RuntimeDir,
+			ManualLinkCertificates: cfg.AnixOps.ManualLinkCertificates,
+		},
 	})
 	if err != nil {
 		return nil, 0, err

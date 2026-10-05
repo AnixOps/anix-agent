@@ -79,6 +79,11 @@ jobs:
       - name: Verify WireGuard relay and peer limit contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
 
+      - name: Vet and build the anixops relay module
+        # cmd/anixops-relay is a module of its own: its QUIC library is not the
+        # one xray, hysteria2 and sing-box build against in the Agent's module.
+        run: (cd cmd/anixops-relay && GOWORK=off go vet ./... && GOWORK=off go build -o /dev/null .)
+
       - name: Set up protoc
         uses: arduino/setup-protoc@v3
         with:

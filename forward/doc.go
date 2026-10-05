@@ -1,7 +1,8 @@
 // Package forward is the Agent's forward component (forward-sdk.md sections
 // 6 to 8, F3b): it runs Control's routes on the node with the drivers of
 // github.com/AnixOps/anix-control/sdk/forward/driver (nftables in the
-// kernel, gost as anixops-gost.service), keeps the applied state across
+// kernel, gost as anixops-gost.service, and the experimental anixops relay
+// as anixops-relay.service when the Agent enables it), keeps the applied state across
 // restarts, checks the upstreams and fails over, and reports counters,
 // health and hop errors.
 //
@@ -23,8 +24,9 @@
 // # Start
 //
 // BuildDrivers probes the host once (nftables.Probe: nft, CAP_NET_ADMIN and
-// the kernel features; gost.Probe: the pinned gost, ss and the unit) and
-// registers the engines the host can run; the others are listed
+// the kernel features; gost.Probe: the pinned gost, ss and the unit;
+// anixops.Probe, only with Forward.AnixOps.Enable: the relay binary and its
+// unit) and registers the engines the host can run; the others are listed
 // unavailable in the Hello, and their hops come back as hop errors. Start
 // re-applies the persisted state before the Agent connects to Control.
 //

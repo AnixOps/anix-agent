@@ -192,3 +192,91 @@ func TestLinkCertificateNotNegotiated(t *testing.T) {
 		t.Fatalf("%d link certificates without forward.v1", n)
 	}
 }
+
+// A driver that cannot read gost's directory (the anixops relay) gets a copy of
+// every link file in a directory of its own, kept in step with the original:
+// switched on with the certificate, reloaded at every change, deleted with it.
+func TestLinkCertificateMirror(t *testing.T) {
+	previous := linkTick
+	linkTick = 50 * time.Millisecond
+	t.Cleanup(func() { linkTick = previous })
+
+	control := newForwardControl(t, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
+	root := t.TempDir()
+	dir := filepath.Join(root, "gost", "tls")
+	mirrorDir := filepath.Join(root, "relay", "tls")
+	gost, relay := &linkRecorder{}, &linkRecorder{}
+	options := func(o *Options) {
+		o.Links = gost.options(dir)
+		m := relay.options(mirrorDir)
+		o.Links.Mirrors = []LinkMirror{{Dir: mirrorDir, SetEnabled: m.SetEnabled, Reload: m.Reload}}
+	}
+	agent := startStreamAgent(t, control, root, fake.NewHost(nil), options)
+	eventually(t, "the forward.v1 session", func() bool { return agent.client.Negotiated(agentcontrol.CapabilityForward) })
+	eventually(t, "the link certificate", func() bool { return len(control.LinkCertificates()) == 1 })
+	eventually(t, "both drivers switched to encrypted links", func() bool {
+		g, r := gost.switches(), relay.switches()
+		return len(g) == 1 && g[0] && len(r) == 1 && r[0]
+	})
+
+	same := func() bool {
+		for _, name := range []string{linkKeyFile, linkCertFile, linkBundleFile} {
+			a, errA := os.ReadFile(filepath.Join(dir, name))
+			b, errB := os.ReadFile(filepath.Join(mirrorDir, name))
+			if errA != nil || errB != nil || string(a) != string(b) {
+				return false
+			}
+		}
+		return true
+	}
+	if !same() {
+		t.Fatal("the mirror does not hold what the original holds")
+	}
+	for _, name := range []string{linkKeyFile, linkCertFile, linkBundleFile} {
+		if info, err := os.Stat(filepath.Join(mirrorDir, name)); err != nil || info.Mode().Perm() != 0o640 {
+			t.Fatalf("mirror %s: %v, %v", name, info, err)
+		}
+	}
+	if info, err := os.Stat(mirrorDir); err != nil || info.Mode().Perm() != 0o750 {
+		t.Fatalf("mirror directory: %v, %v", info, err)
+	}
+
+	// A renewal: the original and the copy move together, and both drivers
+	// reload without being rebuilt.
+	reloads := relay.reloads.Load()
+	agent.h.c.links.mu.Lock()
+	agent.h.c.links.renewAt = time.Now().Add(-time.Second)
+	agent.h.c.links.mu.Unlock()
+	eventually(t, "the renewed link certificate", func() bool { return len(control.LinkCertificates()) == 2 })
+	eventually(t, "the mirror reloaded for the renewal", func() bool { return relay.reloads.Load() > reloads })
+	if !same() {
+		t.Fatal("the mirror lags behind the renewed files")
+	}
+	if len(relay.switches()) != 1 {
+		t.Fatalf("switches %v: a renewal must only reload", relay.switches())
+	}
+
+	// A mirror that lost its files is brought back to the original at the
+	// next change.
+	if err := os.Remove(filepath.Join(mirrorDir, linkBundleFile)); err != nil {
+		t.Fatal(err)
+	}
+	agent.h.c.linksChanged(context.Background())
+	if !same() {
+		t.Fatal("a missing mirror file was not restored")
+	}
+
+	// Revocation deletes the key and the certificate everywhere and switches
+	// both drivers back.
+	control.RefuseCertificates(agentcontrol.ErrorCodeCertRevoked)
+	control.DropSessions()
+	eventually(t, "the mirror's key and certificate deleted", func() bool {
+		_, keyErr := os.Stat(filepath.Join(mirrorDir, linkKeyFile))
+		_, certErr := os.Stat(filepath.Join(mirrorDir, linkCertFile))
+		return os.IsNotExist(keyErr) && os.IsNotExist(certErr)
+	})
+	eventually(t, "both drivers back to RAW links", func() bool {
+		g, r := gost.switches(), relay.switches()
+		return len(g) == 2 && !g[1] && len(r) == 2 && !r[1]
+	})
+}

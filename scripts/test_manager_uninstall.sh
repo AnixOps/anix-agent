@@ -28,7 +28,7 @@ path_variables=(
     INSTALL_DIR BIN_PATH CONFIG_DIR MIGRATION_DIR
     LEGACY_INSTALL_DIR LEGACY_CONFIG_DIR
     SYSTEMD_UNIT_DIR OPENRC_INIT_DIR SYSCTL_DROPIN USR_BIN_DIR USR_LOCAL_BIN_DIR
-    STATE_ROOT GOST_DIR GOST_BINARY
+    STATE_ROOT GOST_DIR GOST_BINARY RELAY_DIR RELAY_BINARY
 )
 
 # The variables are the manager script's, which the cases source.
@@ -49,6 +49,8 @@ use_root() {
     STATE_ROOT="${root}/var/lib/anixops-agent"
     GOST_DIR="${root}/var/lib/anixops-gost"
     GOST_BINARY="${root}/usr/lib/anixops-agent/gost"
+    RELAY_DIR="${root}/var/lib/anixops-relay"
+    RELAY_BINARY="${root}/usr/lib/anixops-agent/anixops-relay"
     case_root="${root}"
     : >"${systemctl_log}"
     rm -f "${violations}"
@@ -117,7 +119,8 @@ rc-update() { printf 'rc-update %s\n' "$*" >>"${rc_log}"; }
 alpine=false
 is_alpine() { [[ "${alpine}" == "true" ]]; }
 gost_account=true
-id() { [[ "$1" == "anixops-gost" && "${gost_account}" == "true" ]]; }
+relay_account=false
+id() { [[ "$1" == "anixops-gost" && "${gost_account}" == "true" ]] || [[ "$1" == "anixops-relay" && "${relay_account}" == "true" ]]; }
 
 put() { # put <path> [content]: a file with its parents
     command mkdir -p "$(dirname "$1")"
@@ -177,6 +180,15 @@ populate() {
         put "${GOST_DIR}/tls/link.pem"
         put "${STATE_ROOT}/forward/state.json"
     fi
+}
+
+# populate_relay adds what ANIXOPS_RELAY=1 writes (the experimental anixops
+# engine): the relay's unit, binary, and its state directory with the link files.
+populate_relay() {
+    put "${SYSTEMD_UNIT_DIR}/anixops-relay.service" "[Service]"
+    put "${RELAY_BINARY}"
+    put "${RELAY_DIR}/relay.json"
+    put "${RELAY_DIR}/tls/link.pem"
 }
 
 # bystanders are files the installer did not write and uninstall must leave.
@@ -421,6 +433,33 @@ systemctl_calls() { cat "${systemctl_log}"; }
     present "${stuck}"
     absent "${SYSTEMD_UNIT_DIR}/anix-agent.service" "${SYSTEMD_UNIT_DIR}/anixops-gost.service" "${GOST_BINARY}" "${INSTALL_DIR}/anix-agent"
     present "${INSTALL_DIR}/data/credential.json.enc"
+    no_violations
+)
+
+# K: the experimental anixops relay (ANIXOPS_RELAY=1): its unit is stopped after
+# gost's and removed with its binary, its state directory stays unless --purge,
+# and its account is reported, never removed.
+(
+    # shellcheck source=scripts/anix-agent.sh
+    source "${manager}"
+    use_root "${test_root}/k"
+    relay_account=true
+    populate forward
+    populate_relay
+    bystanders
+    out="$(uninstall_agent 2>&1)"
+    assert_program_removed
+    absent "${SYSTEMD_UNIT_DIR}/anixops-relay.service" "${RELAY_BINARY}"
+    present "${RELAY_DIR}/relay.json" "${RELAY_DIR}/tls/link.pem" "${GOST_DIR}/gost.json"
+    assert_bystanders
+    expected=$'stop anix-agent\ndisable anix-agent\ndisable --now anixops-gost.service\ndisable --now anixops-relay.service\ndaemon-reload\ndaemon-reload\nreset-failed anix-agent.service anixops-gost.service anixops-relay.service'
+    [[ "$(systemctl_calls)" == "${expected}" ]] || fail "systemctl calls: $(systemctl_calls)"
+    for line in "${SYSTEMD_UNIT_DIR}/anixops-relay.service" "${RELAY_BINARY}" "${RELAY_DIR}：" "用户 anixops-relay"; do
+        grep -Fq -- "${line}" <<<"${out}" || fail "report lacks: ${line}"$'\n'"${out}"
+    done
+    : >"${systemctl_log}"
+    uninstall_agent --purge >/dev/null 2>&1
+    absent "${RELAY_DIR}" "${GOST_DIR}" "${SYSCTL_DROPIN}"
     no_violations
 )
 

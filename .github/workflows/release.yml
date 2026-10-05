@@ -105,6 +105,9 @@ jobs:
       - name: Verify WireGuard contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
 
+      - name: Vet and build the anixops relay module
+        run: (cd cmd/anixops-relay && GOWORK=off go vet ./... && GOWORK=off go build -o /dev/null .)
+
   build:
     name: build (${{ matrix.asset_name }})
     strategy:
@@ -153,6 +156,17 @@ jobs:
           mkdir -p build_assets
           GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath -ldflags "-X 'github.com/AnixOps/anix-agent/v4/cmd.version=$version' -s -w -buildid="
           ln -s anix-agent build_assets/V2bX
+
+      # The relay of the experimental anixops engine (anix-control H22): its
+      # own small program, `anixops-relay`, which the installer installs as
+      # /usr/lib/anixops-agent/anixops-relay for anixops-relay.service. It is
+      # a module of its own (cmd/anixops-relay/go.mod): its QUIC library
+      # (quic-go 0.59.1, from the SDK) is not the one xray, hysteria2 and
+      # sing-box build against in the Agent's module. It carries the release
+      # version.
+      - name: Build the anixops relay
+        run: |
+          (cd cmd/anixops-relay && go build -v -o ../../build_assets/anixops-relay -trimpath -ldflags "-X 'github.com/AnixOps/anix-control/sdk/forward/driver/anixops/relayd.Version=$version' -s -w -buildid=" .)
 
       - name: Prepare to release
         run: |
@@ -205,7 +219,7 @@ jobs:
             openssl dgst -$METHOD $FILE | sed 's/([^)]*)//g' >>$DGST
           done
 
-      - name: Check the package holds the Agent and the pinned gost
+      - name: Check the package holds the Agent, the anixops relay and the pinned gost
         run: python3 scripts/check_release_assets.py zip --zip "./anix-agent-${{ matrix.asset_name }}.zip" --gost-sha256 "${GOST_BINARY_SHA256}"
 
       - name: Upload files to Artifacts

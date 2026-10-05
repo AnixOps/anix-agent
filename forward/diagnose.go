@@ -223,6 +223,34 @@ func protocols(listen *forwardv1.Listen) []string {
 	return []string{"tcp"}
 }
 
+// hopProtocols answers the socket protocols a hop's listener holds: the
+// route's, except for an anixops carrier listener, whose sockets are the
+// carrier's (TCP for TLS_TCP and PLAIN, UDP for QUIC, both for AUTO).
+func hopProtocols(hop *forwardv1.NodeHop) []string {
+	if hop.GetEngine() == forwardv1.Engine_ENGINE_ANIXOPS && hop.GetIngress().GetSecurity() == forwardv1.LinkSecurity_LINK_SECURITY_ANIXOPS {
+		switch hop.GetIngress().GetCarrier() {
+		case forwardv1.AnixOpsCarrier_ANIXOPS_CARRIER_QUIC:
+			return []string{"udp"}
+		case forwardv1.AnixOpsCarrier_ANIXOPS_CARRIER_TLS_TCP, forwardv1.AnixOpsCarrier_ANIXOPS_CARRIER_PLAIN:
+			return []string{"tcp"}
+		}
+		return []string{"tcp", "udp"}
+	}
+	return protocols(hop.GetListen())
+}
+
+// socketProcess answers the process name whose sockets an engine's hops are,
+// or "" for an engine without sockets of its own (nftables).
+func socketProcess(engine forwardv1.Engine) string {
+	switch engine {
+	case forwardv1.Engine_ENGINE_GOST:
+		return "gost"
+	case forwardv1.Engine_ENGINE_ANIXOPS:
+		return "anixops-relay"
+	}
+	return ""
+}
+
 func listenTarget(listen *forwardv1.Listen) string {
 	address := listen.GetAddress()
 	if address == "" {
@@ -244,24 +272,25 @@ func (c *Component) hopError(hop *forwardv1.NodeHop) string {
 
 // checkListen: the hop's own listener holds its port. nftables has no
 // socket: the driver running the hop (its rules in inet anixops_fwd) is
-// the listener. gost's listener is a socket on the port.
+// the listener. gost's and the anixops relay's listeners are sockets on the
+// port (hopProtocols says which).
 func (c *Component) checkListen(ctx context.Context, hop *forwardv1.NodeHop, result *CheckResult) {
 	if message := c.hopError(hop); message != "" {
 		result.Status, result.Code, result.Message = VerdictFailed, "hop_error", message
 		return
 	}
 	target := listenTarget(hop.GetListen())
-	if hop.GetEngine() == forwardv1.Engine_ENGINE_GOST {
+	if process := socketProcess(hop.GetEngine()); process != "" {
 		socks, err := c.sockets(ctx, false)
 		if err != nil {
 			result.Status, result.Code, result.Message = VerdictInconclusive, "ss_unavailable", err.Error()
 			return
 		}
-		for _, proto := range protocols(hop.GetListen()) {
+		for _, proto := range hopProtocols(hop) {
 			item := CheckItem{Target: target, Protocol: proto, Status: VerdictFailed, Code: "not_listening", Message: "no socket is bound to the port"}
 			for _, s := range socks {
 				if s.matches(proto, hop.GetListen()) {
-					item = CheckItem{Target: target, Protocol: proto, Status: VerdictOK, Code: "listening", Message: "gost listens"}
+					item = CheckItem{Target: target, Protocol: proto, Status: VerdictOK, Code: "listening", Message: process + " listens"}
 					break
 				}
 			}
@@ -304,13 +333,13 @@ func (c *Component) checkPortConflict(ctx context.Context, hop *forwardv1.NodeHo
 	if err != nil {
 		result.Items = append(result.Items, CheckItem{Target: listenTarget(listen), Status: VerdictInconclusive, Code: "ss_unavailable", Message: err.Error()})
 	}
-	for _, proto := range protocols(listen) {
+	for _, proto := range hopProtocols(hop) {
 		for _, s := range socks {
 			if !s.matches(proto, listen) {
 				continue
 			}
-			if hop.GetEngine() == forwardv1.Engine_ENGINE_GOST && (s.process == "" || s.process == "gost") {
-				// gost's own socket (or one ss cannot name, which the gost
+			if own := socketProcess(hop.GetEngine()); own != "" && (s.process == "" || s.process == own) {
+				// The engine's own socket (or one ss cannot name, which its
 				// driver already refused to share on its apply).
 				continue
 			}
@@ -322,7 +351,7 @@ func (c *Component) checkPortConflict(ctx context.Context, hop *forwardv1.NodeHo
 				Message: fmt.Sprintf("%s listens on %s port %d", who, proto, port)})
 		}
 	}
-	rules, err := c.foreignNATRules(ctx, port, protocols(listen))
+	rules, err := c.foreignNATRules(ctx, port, hopProtocols(hop))
 	if err != nil {
 		result.Items = append(result.Items, CheckItem{Target: listenTarget(listen), Status: VerdictInconclusive, Code: "nft_unavailable", Message: err.Error()})
 	}
