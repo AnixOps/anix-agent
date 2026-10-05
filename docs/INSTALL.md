@@ -288,7 +288,7 @@ the tables here.
 | `anixops-agent-updater.path`, `anixops-agent-updater.service`, `anix-agent.service`, `anixops-gost.service` (disabled and stopped in that order), and the `V2bX.service` link to `anix-agent.service` | both |
 | `/etc/polkit-1/rules.d/50-anixops-agent.rules` | Control |
 | `/usr/lib/anixops-agent` (the Agent, `gost`, `anix-agent.prev`, `anix-agent.prev.json`) and the `/usr/local/bin/anix-agent` link | Control (`gost` also: root) |
-| `/usr/local/anixops-agent` (binary, backups, `data/`), `/usr/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links | root |
+| `/usr/local/anixops-agent` (binary, backups; `data/` only with `--purge`), `/usr/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links | root |
 
 Without `--purge` the configuration and the node's identity and state stay,
 with gost's directory and the sysctl drop-in, so that installing again finds
@@ -317,8 +317,8 @@ On a root install `sudo anix-agent uninstall [--purge]` runs
 first), accepts only `--purge` (any other argument is ignored with a warning
 and the keep-everything behaviour applies), prints what it removed and what it
 kept, goes on past a path it cannot remove and exits non-zero in that case.
-Unlike the binary's command above, which removes the program directory as a
-whole (`data/` included), it keeps `data/` without `--purge`.
+Like the binary's command above, it keeps `data/` (the credentials, a migrated
+V2bX one included) without `--purge`.
 
 | Removed in both modes |
 |---|
