@@ -1,0 +1,52 @@
+name: Signing Key Check
+
+# Proves, without releasing anything, that the organization secrets
+# ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY and ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY
+# are a working Ed25519 pair and match the official root pinned in
+# release.yml (ANIXOPS_OFFICIAL_PUBLIC_KEY). It signs a random message with
+# the private key, verifies it with the public root, and prints only the
+# public key id (the first 16 hex characters of the SHA-256 of the raw public
+# key). Run it before pushing a release tag and after rotating the key.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signing-key-check:
+    name: Signing Key Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Sign and verify with the official key pair
+        env:
+          ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY: ${{ secrets.ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY }}
+          ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY: ${{ secrets.ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY}" ]] || { echo "ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY is not available to this repository" >&2; exit 1; }
+          [[ -n "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" ]] || { echo "ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY is not available to this repository" >&2; exit 1; }
+          work="$(mktemp -d)"
+          trap 'rm -rf "${work}"' EXIT
+          chmod 0700 "${work}"
+          pinned_root="$(sed -n "s/^[[:space:]]*ANIXOPS_OFFICIAL_PUBLIC_KEY:[[:space:]]*'\([^']*\)'.*/\1/p" .github/workflows/release.yml)"
+          [[ -n "${pinned_root}" ]] || { echo ".github/workflows/release.yml does not pin the official root" >&2; exit 1; }
+          [[ "${pinned_root}" == "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" ]] || { echo "the public-key secret does not equal ANIXOPS_OFFICIAL_PUBLIC_KEY in .github/workflows/release.yml" >&2; exit 1; }
+          [[ "$(printf '%s' "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" | base64 -d | wc -c | tr -d ' ')" == 32 ]] || { echo "the public-key secret is not a raw 32-byte key" >&2; exit 1; }
+          printf '%s\n' "${ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY}" >"${work}/key.pem"
+          chmod 0600 "${work}/key.pem"
+          { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s' "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" | base64 -d; } >"${work}/root.der"
+          derived="$(openssl pkey -in "${work}/key.pem" -pubout -outform DER 2>/dev/null | tail -c 32 | base64 | tr -d '\n')"
+          unset ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY
+          [[ "${derived}" == "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" ]] || { echo "the private key does not belong to the public-key secret" >&2; exit 1; }
+          head -c 64 /dev/urandom >"${work}/message"
+          openssl pkeyutl -sign -inkey "${work}/key.pem" -rawin -in "${work}/message" -out "${work}/message.sig"
+          openssl pkeyutl -verify -pubin -keyform DER -inkey "${work}/root.der" -rawin -in "${work}/message" -sigfile "${work}/message.sig" >/dev/null
+          key_id="$(printf '%s' "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" | base64 -d | sha256sum | cut -c1-16)"
+          echo "Signing key check passed: the secrets are a working pair and match release.yml (public key id ${key_id})."
