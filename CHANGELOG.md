@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 4.2.0-rc.2 - 2026-10-05
+
 ### Fixed
 
 - **The root installer's `anix-agent uninstall` (the manager script,

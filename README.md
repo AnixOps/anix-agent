@@ -25,10 +25,11 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 4.2.0-rc.1 范围
+## 4.2.0-rc.2 范围
 
-`v4.2.0-rc.1` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
-4.2.0-rc.1 使用同一版本号（H25），是 v4.2 转发与 Agent 控制面的首个候选版本：
+`v4.2.0-rc.2` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+4.2.0-rc.2 使用同一版本号（H25），是 v4.2 转发与 Agent 控制面的第二个候选版本
+（相对 rc.1：`uninstall` 在不带 `--purge` 时保留 `data/`，根安装的管理脚本同样移除 gost）：
 
 - Agent 控制流（AG-1 至 AG-5b）：A2 协商、mTLS 身份（Control 4.2 默认 `required`）、
   配置与用户下发、流上报告与包报告、维护事件、alive 列表和插件制品；
@@ -39,7 +40,7 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 4.2.0-rc.1 发布范围）
+## 历史 v4 Alpha 运行时预览（非 4.2.0-rc.2 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
@@ -109,7 +110,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v4.2.0-rc.1
+export VERSION=v4.2.0-rc.2
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
