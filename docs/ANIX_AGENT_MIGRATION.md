@@ -117,11 +117,15 @@ sudo systemctl enable --now V2bX.service
 sudo systemctl status V2bX.service --no-pager
 ```
 
-Default uninstall preserves `/etc/anixops/agent` and restores a backed-up
-legacy service definition when available. It never deletes `/etc/V2bX` or
+Default uninstall preserves `/etc/anixops/agent`, the node credentials in
+`/usr/local/anixops-agent/data` (including the ones migrated from V2bX) and the
+node's state in `/var/lib/anixops-agent`, and restores a backed-up legacy
+service definition when available. It never deletes `/etc/V2bX` or
 `/usr/local/V2bX`. Use the independently backed-up binary and configuration if
 the legacy service had a nonstandard layout.
 
 Do not use `anix-agent uninstall --purge` until the migration is accepted. The
 `--purge` option removes the new configuration directory, including migration
-metadata, but still does not remove the two legacy directories.
+metadata, the migrated credentials in `/usr/local/anixops-agent/data` and the
+state in `/var/lib/anixops-agent`, but still does not remove the two legacy
+directories.
