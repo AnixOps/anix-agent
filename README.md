@@ -25,22 +25,30 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 4.2.0-rc.2 范围
+## 4.2.0-rc.3 范围
 
-`v4.2.0-rc.2` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
-4.2.0-rc.2 使用同一版本号（H25），是 v4.2 转发与 Agent 控制面的第二个候选版本
-（相对 rc.1：`uninstall` 在不带 `--purge` 时保留 `data/`，根安装的管理脚本同样移除 gost）：
+`v4.2.0-rc.3` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+4.2.0-rc.3 使用同一版本号（H25），是 v4.2 转发与 Agent 控制面的第三个候选版本
+（相对 rc.2：新增默认关闭的实验性 anixops 转发引擎；gost 驱动写出的 `gost.json`
+跟随其目录的属组，以自己的用户运行的 gost 才能读取）：
 
 - Agent 控制流（AG-1 至 AG-5b）：A2 协商、mTLS 身份（Control 4.2 默认 `required`）、
   配置与用户下发、流上报告与包报告、维护事件、alive 列表和插件制品；
 - 转发组件（F3b）：执行 Control 下发的 `forward.v1` 计划（nftables 与 gost 驱动）；
+- 实验性 anixops 引擎（H22 A3，**默认关闭**，线格式在 v4.3 之前可能变化）：独立的
+  `anixops-relay` 程序与 `anixops-relay.service`，随发布的 zip 一起提供；Agent 侧开关为
+  `Forward.AnixOps.Enable`，Control 侧开关为 `forward.anixops_experimental`，两边都开才生效；
+  `ANIXOPS_FORWARD=1 ANIXOPS_RELAY=1` 的安装脚本会创建它的账号、目录和单元；
+  转发的 sysctl drop-in 把 `net.core.rmem_max` 与 `wmem_max` 提到 7500000（QUIC 用）；
+  Control 推送的升级与 Control 自带的 O1 安装器**不会**暂存或安装新的 `anixops-relay`；
 - O1 安装布局、`agent.diagnostic` 诊断与转发检查、Control 推送的分阶段升级（`upgrade.v1`）；
 - `machine-telemetry` 可选上报 systemd 服务表（H24：只报单元、状态、CPU 与内存，只保留最新）；
-- 节点重载失败时恢复原配置；仅转发计划变化时不再重载代理入站。
+- 节点重载失败时恢复原配置；仅转发计划变化时不再重载代理入站；
+- `uninstall` 在不带 `--purge` 时保留 `data/`，根安装的管理脚本同样移除 gost 与 relay。
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 4.2.0-rc.2 发布范围）
+## 历史 v4 Alpha 运行时预览（非 4.2.0-rc.3 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
@@ -110,7 +118,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v4.2.0-rc.2
+export VERSION=v4.2.0-rc.3
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh

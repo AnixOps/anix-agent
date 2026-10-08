@@ -73,7 +73,7 @@ type GostSettings struct {
 // Agent's anixops-relay, run as anixops-relay.service. It is a v4.2
 // prototype, off by default.
 type AnixOpsSettings struct {
-	// Enable registers the driver (forward.anixops_experimental); without
+	// Enable registers the driver (Forward.AnixOps.Enable); without
 	// it the engine is listed as unavailable and the planner refuses the
 	// node for anixops hops.
 	Enable bool

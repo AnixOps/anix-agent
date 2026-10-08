@@ -81,7 +81,7 @@ type ForwardGostConfig struct {
 // (anix-control docs/architecture/anixops-protocol.md, H22): the Agent's
 // `anixops-relay`, run as anixops-relay.service. The engine is a v4.2
 // prototype whose wire format (ALPN anixops/0) may change without notice, and
-// it is off by default: this is the Agent's `forward.anixops_experimental`
+// it is off by default: this is the Agent's `Forward.AnixOps.Enable`
 // switch, and Control needs its own before it plans anixops hops.
 type ForwardAnixOpsConfig struct {
 	// Enable registers the driver, so the node advertises the engine; without
