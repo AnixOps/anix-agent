@@ -189,6 +189,10 @@ upgrades"). An Agent never upgrades on its own.
   `/usr/lib/anixops-agent/gost` only when its SHA-256 is the pinned one
   (`upgrade.PinnedGostSHA256`, the release workflow's pin), so gost starts it
   next time.
+- **The relay is not staged.** The updater unpacks only `anix-agent` and `gost`:
+  a new `anixops-relay` in a release arrives with the installer (or by hand),
+  and the updater never restarts `anixops-relay.service` either, so a running
+  relay keeps forwarding through an Agent update.
 
 ## Release Signing
 
@@ -197,6 +201,8 @@ Every release publishes, next to `anix-agent-linux-64.zip` and
 
 - the pinned gost v3 release (H20; 3.2.6, archive and binary checked by
   SHA-256, the pin anix-control's CI uses) as `gost` inside each zip;
+- the experimental anixops relay as `anixops-relay` inside each zip (the
+  release's own build, built from `cmd/anixops-relay`);
 - `SHA256SUMS` of both packages;
 - `<asset>.sig` for each package and for `SHA256SUMS`: base64 of the raw
   Ed25519 signature by the official AnixOps release key over the file's
@@ -236,7 +242,7 @@ upgrade such a node by running its install command from Control again.
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
 
 ```bash
-export VERSION=v4.2.0-rc.2
+export VERSION=v4.2.0-rc.3
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -286,7 +292,7 @@ the wizard reports success. Never paste API keys into public logs or support tic
 Install an exact stable or prerelease tag with the same command:
 
 ```bash
-sudo anix-agent update v4.2.0-rc.2
+sudo anix-agent update v4.2.0-rc.3
 sudo anix-agent status
 ```
 
@@ -317,9 +323,9 @@ the tables here.
 
 | Removed by `uninstall` | Installer |
 |---|---|
-| `anixops-agent-updater.path`, `anixops-agent-updater.service`, `anix-agent.service`, `anixops-gost.service` (disabled and stopped in that order), and the `V2bX.service` link to `anix-agent.service` | both |
+| `anixops-agent-updater.path`, `anixops-agent-updater.service`, `anix-agent.service`, `anixops-gost.service`, `anixops-relay.service` (disabled and stopped in that order), and the `V2bX.service` link to `anix-agent.service` | both |
 | `/etc/polkit-1/rules.d/50-anixops-agent.rules` | Control |
-| `/usr/lib/anixops-agent` (the Agent, `gost`, `anix-agent.prev`, `anix-agent.prev.json`) and the `/usr/local/bin/anix-agent` link | Control (`gost` also: root) |
+| `/usr/lib/anixops-agent` (the Agent, `gost`, `anixops-relay`, `anix-agent.prev`, `anix-agent.prev.json`) and the `/usr/local/bin/anix-agent` link | Control (`gost` and `anixops-relay` also: root) |
 | `/usr/local/anixops-agent` (binary, backups; `data/` only with `--purge`), `/usr/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links | root |
 
 Without `--purge` the configuration and the node's identity and state stay,

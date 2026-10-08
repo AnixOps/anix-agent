@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 4.2.0-rc.3 - 2026-10-08
+
+Upgrade the Agent before Control, as for every 4.2 candidate. The Agent and Control
+share the version number (H25).
+
+### Fixed
+
+- **A gost that runs as its own user can read the configuration the Agent writes.**
+  The Agent now pins an anix-control SDK that includes the gost driver's fix: `gost.json`
+  (mode 0640) takes the group of its directory (best effort), instead of the group of the
+  writing process. On a root install that was root, and on the O1 installer
+  `anixops-agent`, so `anixops-gost.service` (user `anixops-gost`) could probably not read it.
+  The fix is in the SDK, and the older pins in rc.1 and rc.2 lack it. The driver's
+  `state.json` (mode 0600) stays private to the Agent.
+
 ### Added
 
 - **The experimental anixops engine, A3: the `anixops-relay` program, its unit
@@ -14,24 +29,25 @@
   only, the gost unit's sandbox); `ANIXOPS_FORWARD=1 ANIXOPS_RELAY=1 install.sh`
   creates its account, directories and unit, and the Go and shell `uninstall`
   stop and remove it (its state directory stays unless `--purge`, its account
-  is reported). `Forward.AnixOps.Enable` (the Agent's `forward.anixops_experimental`,
-  default `false`) registers the driver, so the node advertises the engine;
-  without it the engine is listed as unavailable. The link certificate files go
+  is reported). `Forward.AnixOps.Enable` (default `false`; Control's own switch is
+  `forward.anixops_experimental`) registers the driver, so the node advertises
+  the engine; without it the engine is listed as unavailable. The link certificate files go
   to gost's directory as before and are mirrored to the relay's own
   (`LinkOptions.Mirrors`: copied key and certificate first, kept in step, deleted
   on revocation, the relay's driver switched and reloaded like gost's). Health
   checks skip a QUIC-only upstream (the anixops QUIC carrier too), `forward
   diagnose` knows the relay's sockets and process, and the sysctl drop-in raises
   `net.core.rmem_max` and `wmem_max` to 7500000 for QUIC.
-  **Pin and modules:** this takes the SDK of anix-control's A3 branch
-  (a pseudo-version of an unmerged commit; it moves again after that merges).
-  The SDK requires `quic-go` 0.59.1 and `qpack` 0.6, which break the xray,
+  **Pin and modules:** this takes the SDK of anix-control's A3 work (the merged
+  go_dev commit). The SDK requires `quic-go` 0.59.1 and `qpack` 0.6, which break the xray,
   hysteria2 and sing-box builds (their `quic-go` forks and xray's `http3` compile
   only against `qpack` 0.5), so the Agent's module `replace`s `quic-go` and
-  `qpack` back to 0.56.0 and 0.5.1 (nothing in it imports the SDK's QUIC
-  library), and the relay, which needs 0.59.1, is a module of its own
-  (`cmd/anixops-relay/go.mod`) that CI and the release build separately. Not
-  done yet: the updater (`upgrade/apply.go`) does not stage a new
+  `qpack` back to 0.56.0 and 0.5.1. The Agent still links the SDK's driver
+  package, whose link-certificate helper (`relay/link`) imports `quic-go`; that
+  compiles and is tested against 0.56.0, while the relay's own QUIC transport
+  (`sdk/forward/relay`, which needs 0.59.1) is built only in the separate relay
+  module (`cmd/anixops-relay/go.mod`), which CI and the release build separately.
+  Not done yet: the updater (`upgrade/apply.go`) does not stage a new
   `anixops-relay` (a new binary arrives with the installer), and Control's own
   installer (the O1 `install.sh`) does not set the relay up.
 
