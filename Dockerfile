@@ -1,5 +1,5 @@
 # Build go
-FROM golang:1.25.0-alpine AS builder
+FROM golang:1.26.9-alpine AS builder
 ARG VERSION=v4.2.0-rc.3
 WORKDIR /app
 COPY . .
