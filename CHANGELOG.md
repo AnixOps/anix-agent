@@ -2,7 +2,25 @@
 
 ## Unreleased
 
-## 4.2.0-rc.3 - 2026-10-08
+## 4.2.0-rc.4 - 2026-10-09
+
+Upgrade the Agent before Control, as for every 4.2 candidate. The Agent and Control
+share the version number (H25). rc.4 replaces rc.3 on the Agent side: the features are
+the same, and the changes are the toolchain and the dependencies below.
+
+### Security
+
+- **The Agent and `anixops-relay` build with Go 1.26.9 and `golang.org/x/net` v0.60.0.**
+  rc.3 was built with Go 1.25 and x/net v0.58.0. govulncheck reported 73 advisories in
+  the Agent binary and 61 in the relay binary for rc.3. With the Go 1.26.9 toolchain and
+  x/net v0.60.0 it reports 11 in the Agent and 1 in the relay. The remaining findings are
+  not fixed in this release. Go 1.25 no longer receives security fixes.
+
+### Changed
+
+- **The anix-control SDK pin moves to go_dev `d8684dc2`** in both modules. That commit
+  declares Go 1.26.0 and x/net v0.60.0 for the SDK. Its source differs from the rc.3 pin
+  only in a doc comment. The Agent's own code is unchanged.
 
 Upgrade the Agent before Control, as for every 4.2 candidate. The Agent and Control
 share the version number (H25).

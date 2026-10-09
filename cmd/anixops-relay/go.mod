@@ -4,7 +4,7 @@ go 1.26.0
 
 toolchain go1.26.9
 
-require github.com/AnixOps/anix-control/sdk v0.0.0-20261006184019-db0462e4df38
+require github.com/AnixOps/anix-control/sdk v0.0.0-20261009114255-d8684dc26220
 
 require (
 	github.com/quic-go/quic-go v0.59.1 // indirect
