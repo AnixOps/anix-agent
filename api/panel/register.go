@@ -15,7 +15,7 @@ import (
 // 确保 utils 被使用
 var _ = utils.Redact
 
-var Version = "4.2.0-rc.3"
+var Version = "4.2.0-rc.4"
 
 // ========== 请求/响应结构 ==========
 
