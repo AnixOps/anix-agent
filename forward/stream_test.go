@@ -145,6 +145,15 @@ func TestForwardNodeOnTheStream(t *testing.T) {
 		}
 		return false
 	})
+	// Stop after revision 11 is stored: a stop mid-apply restarts at revision 10.
+	eventually(t, "ConfigStatus of revision 11", func() bool {
+		for _, s := range control.ConfigStatuses() {
+			if s.GetConfigRevision() == 11 && s.GetApplied() {
+				return true
+			}
+		}
+		return false
+	})
 	if refused := control.ForwardRefusals(); len(refused) != 0 {
 		t.Fatalf("Control refused forward reports: %v", refused)
 	}
