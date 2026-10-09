@@ -11,10 +11,16 @@ the same, and the changes are the toolchain and the dependencies below.
 ### Security
 
 - **The Agent and `anixops-relay` build with Go 1.26.9 and `golang.org/x/net` v0.60.0.**
-  rc.3 was built with Go 1.25 and x/net v0.58.0. govulncheck reported 73 advisories in
-  the Agent binary and 61 in the relay binary for rc.3. With the Go 1.26.9 toolchain and
-  x/net v0.60.0 it reports 11 in the Agent and 1 in the relay. The remaining findings are
-  not fixed in this release. Go 1.25 no longer receives security fixes.
+  rc.3 was built with Go 1.25 and x/net v0.58.0, and govulncheck reported 73 advisories
+  in its Agent binary and 61 in its relay binary (binary mode). Go 1.25 no longer
+  receives security fixes. This release also moves `github.com/cloudflare/circl` to
+  v1.6.3 and `github.com/refraction-networking/utls` to v1.8.2, which fix GO-2026-4550
+  and GO-2026-4512. govulncheck in source mode, which counts only the advisories the code
+  can reach, reports 4 for the Agent: GO-2026-5809 and GO-2026-5288 in
+  `github.com/apernet/hysteria/core/v2` v2.6.4, and GO-2026-5676 and GO-2025-4233 in
+  `github.com/quic-go/quic-go` v0.56.0. These four are not fixed in this release. The
+  Agent pins `quic-go` to 0.56.0 and `qpack` to 0.5.1, because the xray, hysteria2 and
+  sing-box builds compile only against those versions. The relay reports none in source mode.
 
 ### Changed
 
