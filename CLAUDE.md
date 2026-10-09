@@ -49,7 +49,7 @@ V2bX AnixOps 是一个代理服务节点后端程序，支持多内核（Xray、
 
 | 类别 | 技术 | 版本/说明 |
 |------|------|----------|
-| 语言 | Go | 1.25 (需 GOEXPERIMENT=jsonv2) |
+| 语言 | Go | 1.26.9 (需 GOEXPERIMENT=jsonv2) |
 | 代理内核 | Xray | v1.251202.0 |
 | 代理内核 | Sing-box | v1.13.0 |
 | 代理内核 | Hysteria2 | v2.6.4 |
