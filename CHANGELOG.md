@@ -17,6 +17,14 @@
   0.59.0-sing-box-mod.2, `sing-quic` 0.6.5 and `sing` 0.8.0-beta.10. The only code change
   is in `core/hy2`, for the Salamander wrapper that hysteria 2.9 renamed.
 
+### Tooling
+
+- **CI:** every Linux job runs on `ubuntu-24.04` instead of `ubuntu-latest`, which GitHub moves
+  to Ubuntu 26.04 from 2026-10-19 to 2026-11-19. During the rollout the label can resolve to
+  either image from run to run, and a tag build uses the workflow files of the tagged commit, so
+  the pin has to be on `dev_new` before the 4.2.0 tag. It is the same change as anix-control
+  #274; macOS and Windows are not used.
+
 ## 4.2.0-rc.4 - 2026-10-09
 
 Upgrade the Agent before Control, as for every 4.2 candidate. The Agent and Control
