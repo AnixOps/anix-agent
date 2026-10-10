@@ -27,7 +27,7 @@ env:
 jobs:
   tag-gate:
     name: validate release tag
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       is_release_tag: ${{ steps.check.outputs.is_release_tag }}
     steps:
@@ -52,7 +52,7 @@ jobs:
 
   test:
     name: release prerequisite tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
@@ -121,7 +121,7 @@ jobs:
             goarch: arm64
             asset_name: linux-arm64-v8a
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: test
     env:
       GOOS: ${{ matrix.goos }}
@@ -232,7 +232,7 @@ jobs:
 
   wireguard-relay-integration:
     name: privileged WireGuard relay acceptance (${{ matrix.tunnel_type }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [test, tag-gate]
     if: ${{ github.event_name == 'workflow_dispatch' || needs.tag-gate.outputs.is_release_tag == 'true' }}
     strategy:
@@ -290,7 +290,7 @@ jobs:
 
   nftables-forward-integration:
     name: privileged nftables Forward acceptance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [test, tag-gate]
     if: ${{ github.event_name == 'workflow_dispatch' || needs.tag-gate.outputs.is_release_tag == 'true' }}
     steps:
@@ -328,7 +328,7 @@ jobs:
 
   forward-component-integration:
     name: privileged nftables Forward component acceptance (F3b)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [test, tag-gate]
     if: ${{ github.event_name == 'workflow_dispatch' || needs.tag-gate.outputs.is_release_tag == 'true' }}
     steps:
@@ -353,7 +353,7 @@ jobs:
 
   nat-egress-integration:
     name: privileged NAT egress acceptance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [test, tag-gate]
     if: ${{ github.event_name == 'workflow_dispatch' || needs.tag-gate.outputs.is_release_tag == 'true' }}
     steps:
@@ -391,7 +391,7 @@ jobs:
 
   gost-mesh-integration:
     name: privileged GOST Mesh acceptance (${{ matrix.transport }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: [test, tag-gate]
     if: ${{ github.event_name == 'workflow_dispatch' || needs.tag-gate.outputs.is_release_tag == 'true' }}
@@ -451,7 +451,7 @@ jobs:
   release:
     if: needs.tag-gate.outputs.is_release_tag == 'true'
     needs: [build, tag-gate, wireguard-relay-integration, nftables-forward-integration, forward-component-integration, nat-egress-integration, gost-mesh-integration]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
