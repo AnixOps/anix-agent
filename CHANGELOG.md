@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+## 4.2.0 - 2026-10-10
+
+Upgrade the Agent before Control, as for every 4.2 candidate. The Agent and Control
+share the version number (H25).
+
+### Highlights of the 4.2 line
+
+This is the first stable 4.2 release. It rolls up 4.2.0-rc.1 to rc.4. The sections below
+carry every change: rc.1, rc.2 and rc.4 (the rc.4 section also holds the changes of rc.3,
+which has no section of its own). Relative to rc.4, the Agent's Go source, its modules and the
+anix-control SDK pin (go_dev `d8684dc2`) are unchanged apart from the version string in
+`cmd/version.go`, `api/panel/register.go` and the Dockerfile. The other changes are the
+documentation, this file and the CI runner pin listed under Tooling.
+
+- **The Agent control stream on the anix-control SDK (AG-1 to AG-5b).** The Agent negotiates
+  capabilities with Control (A2), enrolls and renews an mTLS identity, and sends no API key
+  once it is enrolled. It takes its configuration (`config.v1`), users (`users.v1`), alive
+  list (`alive.v1`) and plugin artifacts (`artifacts.v1`) from the stream, reports traffic,
+  online IPs, logs, status and package reports on it (`reports.v1`, `package-reports.v1`)
+  through a durable spool, and drains the maintenance outbox on it (`maintenance.v1`). An
+  enrolled Agent whose Control serves these makes no request to a legacy channel under
+  `agent_control.mtls: required`, Control 4.2's default. `AgentStream.DataPlane: "off"` keeps
+  every node on the legacy transports.
+- **Forwarding.** The forward component runs Control's `forward.v1` plans with the nftables
+  and gost drivers (F3b). `agent.diagnostic` runs Control's diagnostic tasks, with the
+  forward checks `forward.listen`, `forward.port_conflict`, `forward.connect` and
+  `forward.udp_probe` (F3c).
+- **Control-pushed staged upgrades (`upgrade.v1`, `agent.upgrade`; O4).** Control decides the
+  batches and an Agent never upgrades on its own. The Agent verifies the artifact (size,
+  SHA-256, Ed25519 signature) and hands it to the root updater, which keeps the previous
+  binary and reinstates it when the new Agent does not stay active for 30 s.
+- **The O1 installer layout.** Control's `/install.sh` runs the Agent as the user
+  `anixops-agent` in a systemd sandbox, from a credential-only configuration (no `ApiKey`,
+  `"Cores": []`). Each linux package carries the pinned gost 3.2.6, and the release publishes
+  `SHA256SUMS` and `.sig` files. `anix-agent uninstall` matches both installers' layouts.
+- **The experimental anixops engine (A3), off by default.** The `anixops-relay` program and
+  `anixops-relay.service`, enabled by `Forward.AnixOps.Enable` on the Agent and
+  `forward.anixops_experimental` on Control. The updater does not stage a new
+  `anixops-relay` and Control's own installer does not set it up.
+- **The official release signing key is replaced** (rc.1). An Agent built before 4.2.0-rc.1
+  cannot verify a package signed with the new key: update it with the 4.2 `agent-install.sh`
+  release asset, verified against the new root pinned out of band. See the rc.1 section.
+- **`machine-telemetry` reports the systemd services table** of its node when enabled (rc.1).
+- **Fixed during the candidates.** A failed node reload restores the previous
+  node, and a configuration revision that leaves the proxy node unchanged no longer reloads
+  its inbound (rc.1). The alive list from the stream is no longer lost or raced while a node
+  starts (rc.1). `uninstall` keeps `data/` without `--purge`, and the root manager script
+  removes gost (rc.2). A gost that runs as its own user can read `gost.json` (rc.3, in the
+  rc.4 section).
+- **Toolchain and dependencies (rc.4).** The Agent and `anixops-relay` build with Go 1.26.9
+  and `golang.org/x/net` v0.60.0, with `github.com/cloudflare/circl` v1.6.3 and
+  `github.com/refraction-networking/utls` v1.8.2.
+
+### Known Gaps
+
+- govulncheck in source mode reported 4 reachable advisories for the Agent at rc.4:
+  GO-2026-5809 and GO-2026-5288 in `github.com/apernet/hysteria/core/v2` v2.6.4, and
+  GO-2026-5676 and GO-2025-4233 in `github.com/quic-go/quic-go` v0.56.0. The dependencies
+  have not moved since, so they are not fixed in this release. The Agent pins `quic-go` to
+  0.56.0 and `qpack` to 0.5.1, because the xray, hysteria2 and sing-box builds compile only
+  against those versions. The relay reported none in source mode.
+
 ### Tooling
 
 - **CI:** every Linux job runs on `ubuntu-24.04` instead of `ubuntu-latest`, which GitHub moves
