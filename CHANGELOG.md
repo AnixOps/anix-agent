@@ -57,12 +57,28 @@ documentation, this file and the CI runner pin listed under Tooling.
 
 ### Known Gaps
 
-- govulncheck in source mode reported 4 reachable advisories for the Agent at rc.4:
-  GO-2026-5809 and GO-2026-5288 in `github.com/apernet/hysteria/core/v2` v2.6.4, and
-  GO-2026-5676 and GO-2025-4233 in `github.com/quic-go/quic-go` v0.56.0. The dependencies
-  have not moved since, so they are not fixed in this release. The Agent pins `quic-go` to
-  0.56.0 and `qpack` to 0.5.1, because the xray, hysteria2 and sing-box builds compile only
-  against those versions. The relay reported none in source mode.
+- **Four advisories are reachable in the Agent binary, and are not fixed in 4.2.0.** govulncheck
+  reports them when the Agent is scanned with the build tags the release uses (`sing xray
+  hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor`); a scan without
+  the tags reports none, because the protocol code is behind them. `anixops-relay` reports none.
+  The exposure depends on the node's configuration:
+  - GO-2026-5809, `github.com/apernet/hysteria/core/v2` v2.6.4 (fixed in v2.9.2): a UDP ACL
+    bypass by an authenticated user. Reachable on a node that runs a Hysteria2 inbound.
+  - GO-2026-5288, the same module: memory exhaustion from QUIC sniffing. Needs `sniff.enable` in
+    the Hysteria2 configuration. The advisory database lists no fixed version yet; the fix is in
+    v2.9.2.
+  - GO-2026-5676 and GO-2025-4233, `github.com/quic-go/quic-go` v0.56.0 (fixed in v0.59.1 and
+    v0.57.0): QPACK header and trailer expansion. Reachable only through the xray XHTTP inbound
+    when its ALPN is exactly `h3`.
+- **Why they are not fixed here.** The Agent pins `quic-go` to 0.56.0 and `qpack` to 0.5.1,
+  because the xray, hysteria2 and sing-box builds compile only against those versions. Moving
+  Hysteria2 to 2.9.x drops the pins and also moves `sing`, `sing-quic` and the sagernet `quic-go`
+  fork. The candidate (anix-agent#34) builds and passes the unit tests, but no test sends traffic
+  through Hysteria2, XHTTP over HTTP/3 or TUIC, so it is held for a staging smoke of those and goes
+  into a patch release after it passes. govulncheck does not see the sagernet `quic-go` fork, so
+  its copy of the QPACK fix is not tracked by this list.
+- **Until then:** do not enable `sniff.enable` on a Hysteria2 inbound, and do not offer an XHTTP
+  inbound with ALPN `h3` to untrusted clients, unless you accept those advisories.
 
 ### Tooling
 
