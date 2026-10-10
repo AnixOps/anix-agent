@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Security
+
+- **hysteria moves to 2.9.3 and the Agent's `quic-go` and `qpack` pins are lifted
+  (0.56.0 and 0.5.1 give way to 0.59.1 and 0.6.0).** In source mode with the release
+  build tags, govulncheck reported four reachable advisories in rc.4 and now reports one.
+  Cleared: GO-2026-5809 (hysteria `core/v2`, UDP ACL bypass, fixed in 2.9.2), and
+  GO-2026-5676 and GO-2025-4233 (`quic-go` HTTP/3 QPACK expansion, fixed in 0.59.1 and
+  0.57.0). GO-2026-5288 (hysteria QUIC sniffing OOM) is still listed with "Fixed in: N/A":
+  the Go vulnerability database maps it to `core/v2` and records no fixed version, but
+  the fix (a 256 KiB cap on QUIC crypto frames in `extras/v2/sniff`) is in `extras/v2`
+  2.9.2 and later, which this change carries. It matters only when the hysteria2 config
+  enables `sniff`. `qpack` 0.6 pulls the sing-box side along: `sagernet/quic-go`
+  0.59.0-sing-box-mod.2, `sing-quic` 0.6.5 and `sing` 0.8.0-beta.10. The only code change
+  is in `core/hy2`, for the Salamander wrapper that hysteria 2.9 renamed.
+
 ## 4.2.0-rc.4 - 2026-10-09
 
 Upgrade the Agent before Control, as for every 4.2 candidate. The Agent and Control

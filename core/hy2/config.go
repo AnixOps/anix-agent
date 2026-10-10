@@ -141,11 +141,7 @@ func (n *Hysteria2node) getConn(info *panel.NodeInfo, config *conf.Options) (net
 	case "", "plain":
 		return conn, nil
 	case "salamander":
-		ob, err := obfs.NewSalamanderObfuscator([]byte(info.Hysteria2.ObfsPassword))
-		if err != nil {
-			return nil, err
-		}
-		return obfs.WrapPacketConn(conn, ob), nil
+		return obfs.WrapPacketConnSalamander(conn, []byte(info.Hysteria2.ObfsPassword))
 	default:
 		return nil, fmt.Errorf("unsupported obfuscation type")
 	}
