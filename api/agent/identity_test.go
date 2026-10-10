@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,46 @@ func startClient(t *testing.T, client *Client) {
 	t.Cleanup(func() { _ = client.Close() })
 }
 
+// waitIssued waits until Control has issued n certificates and returns their
+// serials.
+//
+// Ready only says that a control stream is open. Under preferred mode the
+// first session can authenticate with the node API key while the enrollment
+// is still running (it may be the identity's maintenance loop that runs it,
+// which keeps the session's own attempt from starting), so Control has not
+// issued, or recorded, the certificate yet.
+func waitIssued(t *testing.T, fake *fakeControl, n int) []string {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, _, _, issued := fake.records()
+		return len(issued) >= n
+	}, 10*time.Second, 10*time.Millisecond, "Control did not issue %d certificate(s)", n)
+	_, _, _, issued := fake.records()
+	require.Len(t, issued, n)
+	return issued
+}
+
+// waitEnrolled waits until the Agent has installed and stored its
+// certificate.
+func waitEnrolled(t *testing.T, client *Client) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		status := client.TransportStatus()
+		return status.Identity != nil && status.Identity.Enrolled
+	}, 10*time.Second, 10*time.Millisecond, "the Agent did not enroll")
+}
+
+// waitCertificateSession waits until the Agent has a control stream open that
+// authenticates with its client certificate. An Agent that enrolls over an
+// open API key session reconnects with the certificate when it is installed.
+func waitCertificateSession(t *testing.T, client *Client) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		status := client.TransportStatus()
+		return status.Connected && status.Authentication == "certificate"
+	}, 10*time.Second, 10*time.Millisecond, "the Agent did not connect with its certificate")
+}
+
 func certificateSessions(streams []fakeStreamAuth) (accepted []fakeStreamAuth) {
 	for _, stream := range streams {
 		if stream.accepted && stream.certificateSerial != "" {
@@ -51,6 +92,9 @@ func TestIdentityEnrollsWithAPIKeyThenConnectsWithCertificate(t *testing.T) {
 	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, client)
 	waitReady(t, client)
+	// Ready can be the API key session that is open while the enrollment
+	// runs; the certificate session follows it.
+	waitCertificateSession(t, client)
 
 	status := client.TransportStatus()
 	assert.Equal(t, "certificate", status.Authentication)
@@ -64,11 +108,22 @@ func TestIdentityEnrollsWithAPIKeyThenConnectsWithCertificate(t *testing.T) {
 	assert.True(t, enrolls[0].apiKey, "the first enrollment bootstraps with the node API key")
 	assert.Equal(t, agentcontrol.NodeKindProxy, enrolls[0].nodeKind)
 	assert.Equal(t, codes.OK, enrolls[0].err)
+	require.NotEmpty(t, issued)
 	require.NotEmpty(t, streams)
+	// A session opened before the certificate was installed carries the API
+	// key; from the first certificate session on, the Agent presents the
+	// certificate on every stream and never sends the key again.
+	presented := false
 	for _, stream := range streams {
+		if stream.certificateSerial == "" && !presented {
+			assert.True(t, stream.apiKey, "a session before the enrollment authenticates with the node API key")
+			continue
+		}
+		presented = true
 		assert.False(t, stream.apiKey, "an enrolled Agent never sends the API key on the stream")
 		assert.Equal(t, issued[0], stream.certificateSerial)
 	}
+	require.True(t, presented, "a session presented the certificate")
 
 	dir := filepath.Join(root, "proxy-12")
 	assertPrivate(t, dir, 0o700)
@@ -95,7 +150,11 @@ func TestIdentityLoadsStoredCertificateAfterRestart(t *testing.T) {
 	first := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, first)
 	waitReady(t, first)
+	// Ready can come before the enrollment is stored: wait for it, or the
+	// restart finds no identity to load.
+	waitEnrolled(t, first)
 	require.NoError(t, first.Close())
+	_, _, firstStreams, _ := fake.records()
 
 	// Control now requires mTLS; the restarted Agent needs no API key.
 	fake.setMode(fakeModeRequired)
@@ -105,7 +164,10 @@ func TestIdentityLoadsStoredCertificateAfterRestart(t *testing.T) {
 	assert.Equal(t, "certificate", second.TransportStatus().Authentication)
 	enrolls, _, streams, _ := fake.records()
 	assert.Len(t, enrolls, 1, "the stored identity is reused, not enrolled again")
-	for _, stream := range streams {
+	// The first Agent's sessions may include one on the API key, from before
+	// its enrollment; the restarted Agent's sessions do not.
+	require.Greater(t, len(streams), len(firstStreams), "the restarted Agent opened a stream")
+	for _, stream := range streams[len(firstStreams):] {
 		assert.False(t, stream.apiKey)
 	}
 }
@@ -118,8 +180,8 @@ func TestIdentityRenewsAtControlsRenewalTime(t *testing.T) {
 	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, client)
 	waitReady(t, client)
-	_, _, _, issued := fake.records()
-	require.Len(t, issued, 1)
+	// Ready can come before the enrollment: wait for the certificate.
+	issued := waitIssued(t, fake, 1)
 	fake.setLifetime(time.Hour)
 
 	require.Eventually(t, func() bool {
@@ -161,8 +223,8 @@ func TestIdentityRevokedCertificateIsDiscardedAndEnrolledAgain(t *testing.T) {
 	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, client)
 	waitReady(t, client)
-	_, _, _, issued := fake.records()
-	require.Len(t, issued, 1)
+	// Ready can come before the enrollment: wait for the certificate.
+	issued := waitIssued(t, fake, 1)
 
 	// Revoked while the stream is open: Control ends it at the next
 	// heartbeat; the Agent drops the certificate and enrolls again with the
@@ -262,8 +324,12 @@ func TestIdentityRequiredModeEnrollsWithCredentialAndNeverSendsTheAPIKey(t *test
 			assert.Equal(t, issued[0], stream.certificateSerial)
 		}
 	}
-	_, err := os.Stat(credentialFile)
-	assert.True(t, errors.Is(err, os.ErrNotExist), "the used one-time credential is removed")
+	// The enrollment removes the credential after it installed the
+	// certificate, which the next session may already present.
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(credentialFile)
+		return errors.Is(err, os.ErrNotExist)
+	}, 5*time.Second, 10*time.Millisecond, "the used one-time credential is removed")
 }
 
 func TestIdentityEnrollsWithAPIKeyAgainAfterControlLeavesRequiredMode(t *testing.T) {
@@ -299,6 +365,11 @@ func TestIdentityKeepsAPIKeyWhenControlHasNoEnrollment(t *testing.T) {
 	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, client)
 	waitReady(t, client)
+	// Ready can come before the enrollment attempt has failed: wait for it.
+	require.Eventually(t, func() bool {
+		status := client.TransportStatus()
+		return status.Identity != nil && strings.Contains(status.Identity.LastError, "does not serve AgentEnrollment")
+	}, 10*time.Second, 10*time.Millisecond)
 
 	status := client.TransportStatus()
 	assert.Equal(t, "api-key", status.Authentication)
@@ -326,6 +397,11 @@ func TestIdentityKeepsAPIKeyWhenControlCannotEnroll(t *testing.T) {
 	client := fake.client(t, &IdentityConfig{Dir: t.TempDir(), Enroll: true})
 	startClient(t, client)
 	waitReady(t, client)
+	// Ready can come before the enrollment attempt has failed: wait for it.
+	require.Eventually(t, func() bool {
+		status := client.TransportStatus()
+		return status.Identity != nil && strings.Contains(status.Identity.LastError, "cannot enroll agents now")
+	}, 10*time.Second, 10*time.Millisecond)
 	status := client.TransportStatus()
 	assert.Equal(t, "api-key", status.Authentication)
 	require.NotNil(t, status.Deprecation)
