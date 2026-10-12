@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	mathrand "math/rand"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -892,24 +893,58 @@ func (c *Client) dialOptions(session *sessionCredentials) []grpc.DialOption {
 
 // tlsConfig verifies Control's server certificate.
 func (c *Client) tlsConfig() *tls.Config {
+	return controlTLSConfig(c.config.ServerName, c.config.RootCAs)
+}
+
+// controlTLSConfig verifies Control's server certificate for serverName
+// against roots, the system roots when nil.
+func controlTLSConfig(serverName string, roots *x509.CertPool) *tls.Config {
 	return &tls.Config{
-		ServerName: c.config.ServerName,
+		ServerName: serverName,
 		MinVersion: tls.VersionTLS12,
-		RootCAs:    c.config.RootCAs,
+		RootCAs:    roots,
 	}
 }
 
 // dialIdentity connects to AgentEnrollment over TLS, presenting certificate
 // when set (Renew) and none otherwise (Enroll).
 func (c *Client) dialIdentity(ctx context.Context, certificate *tls.Certificate) (*grpc.ClientConn, error) {
-	dialCtx, cancel := context.WithTimeout(ctx, c.config.DialTimeout)
+	return dialEnrollment(ctx, enrollmentTarget{
+		Target: c.config.Target, ServerName: c.config.ServerName, RootCAs: c.config.RootCAs,
+		DialContext: c.config.DialContext, DialTimeout: c.config.DialTimeout,
+	}, certificate)
+}
+
+// enrollmentTarget is where AgentEnrollment is dialled: the running
+// Agent's control target, or the target of `anix-agent join`.
+type enrollmentTarget struct {
+	Target     string
+	ServerName string
+	// RootCAs verifies Control's certificate; nil uses the system roots.
+	RootCAs     *x509.CertPool
+	DialContext DialContextFunc
+	DialTimeout time.Duration
+}
+
+// dialEnrollment connects to AgentEnrollment, always over TLS verified for
+// the target's server name: a bootstrap credential is never sent in the
+// clear. It presents certificate when set (Renew) and none otherwise
+// (Enroll, Join). A failed dial names the last connection error (refused,
+// TLS verification) instead of only the timeout.
+func dialEnrollment(ctx context.Context, target enrollmentTarget, certificate *tls.Certificate) (*grpc.ClientConn, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, target.DialTimeout)
 	defer cancel()
-	tlsConfig := c.tlsConfig()
+	tlsConfig := controlTLSConfig(target.ServerName, target.RootCAs)
 	if certificate != nil {
 		tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return certificate, nil }
 	}
-	return c.config.DialContext(dialCtx, c.config.Target,
+	dial := target.DialContext
+	if dial == nil {
+		dial = grpc.DialContext
+	}
+	return dial(dialCtx, target.Target,
 		grpc.WithBlock(),
+		grpc.WithReturnConnectionError(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxControlMessageBytes)),
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
 	)
@@ -1588,6 +1623,13 @@ func cloneStringMap(input map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+// InstanceID names one Agent process in Control's enrollment records and
+// sessions: the host name, the process ID and what the process speaks for
+// (a node ID, "forward-<id>", "join").
+func InstanceID(hostname, subject string) string {
+	return fmt.Sprintf("%s-%d-%s", hostname, os.Getpid(), subject)
 }
 
 func newID(prefix string) string {

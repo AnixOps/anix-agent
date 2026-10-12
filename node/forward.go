@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,7 +133,7 @@ func StartForward(cfg *conf.ForwardConfig, component *forward.Component) (*forwa
 		Upgrader:  upgrade.Shared(panel.Version),
 		Client: agentapi.Config{
 			Target: target, NodeID: api.NodeID, APIKey: api.Key, UseTLS: true, ServerName: serverName,
-			AgentVersion: panel.Version, InstanceID: fmt.Sprintf("%s-%d-forward-%d", hostname, os.Getpid(), api.NodeID),
+			AgentVersion: panel.Version, InstanceID: agentapi.InstanceID(hostname, "forward-"+strconv.Itoa(api.NodeID)),
 			KeepaliveTime: time.Duration(api.GRPCKeepalive) * time.Second, RootCAs: agentControlRootCAs,
 			Labels: map[string]string{"node_kind": agentcontrol.NodeKindForward},
 			Identity: &agentapi.IdentityConfig{

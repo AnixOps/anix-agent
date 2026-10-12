@@ -528,3 +528,39 @@ func assertPrivate(t *testing.T, path string, mode os.FileMode) {
 	require.NoError(t, err)
 	assert.Equal(t, mode, info.Mode().Perm(), path)
 }
+
+func TestReadCredentialFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(content string, mode os.FileMode) string {
+		file, err := os.CreateTemp(dir, "credential-*")
+		require.NoError(t, err)
+		_, err = file.WriteString(content)
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+		require.NoError(t, os.Chmod(file.Name(), mode))
+		return file.Name()
+	}
+	prefixes := []string{agentcontrol.JoinTokenPrefix, agentcontrol.EnrollmentCredentialPrefix}
+
+	credential, err := ReadCredentialFile(write("  anixjoin_abc\n", 0o600), prefixes...)
+	require.NoError(t, err)
+	assert.Equal(t, "anixjoin_abc", credential)
+	credential, err = ReadCredentialFile(write("anixagt_abc", 0o400), prefixes...)
+	require.NoError(t, err)
+	assert.Equal(t, "anixagt_abc", credential)
+	credential, err = ReadCredentialFile(write("\n", 0o600), prefixes...)
+	require.NoError(t, err)
+	assert.Empty(t, credential)
+
+	_, err = ReadCredentialFile(write("anixjoin_abc", 0o640), prefixes...)
+	assert.ErrorContains(t, err, "chmod 600")
+	_, err = ReadCredentialFile(write("anixjoin_abc", 0o600), agentcontrol.EnrollmentCredentialPrefix)
+	assert.ErrorContains(t, err, "does not hold an anixagt_ enrollment credential")
+	_, err = ReadCredentialFile(filepath.Join(dir, "missing"), prefixes...)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	// The read stops at the size limit.
+	credential, err = ReadCredentialFile(write("anixjoin_"+strings.Repeat("a", 2*maxCredentialFileBytes), 0o600), prefixes...)
+	require.NoError(t, err)
+	assert.Len(t, credential, maxCredentialFileBytes)
+}
