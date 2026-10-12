@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"time"
 
@@ -30,6 +31,8 @@ var command = &cobra.Command{
 	  anix-agent -c config.json           Run with specified config file
 	  anix-agent server -c config.json    Run with specified config file
 	  anix-agent server                   Run with default config file
+	  anix-agent join --control <url> --grpc <host:port> --token-file <file>
+	                                      Join this machine to Control as a node
 	  anix-agent version                  Show version information`,
 	// 直接运行 anix-agent 或 anix-agent -c xxx 时执行 server 命令
 	RunE: serverHandle,
@@ -66,7 +69,9 @@ func Run() error {
 	}
 
 	err := command.Execute()
-	if err != nil {
+	var exit *exitError
+	if err != nil && !errors.As(err, &exit) {
+		// A command with its own exit status printed its error.
 		log.WithField("err", err).Error("Execute command failed")
 	}
 	return err
