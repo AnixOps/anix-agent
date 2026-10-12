@@ -45,6 +45,9 @@ const (
 	BootstrapNodeAPIKey           = "node-api-key"
 	BootstrapEnrollmentCredential = "enrollment-credential"
 	BootstrapRenewal              = "renewal"
+	// BootstrapJoinToken: `anix-agent join` with a node group's anixjoin_
+	// join token (AgentEnrollment.Join).
+	BootstrapJoinToken = "join-token"
 )
 
 // clockSkew tolerates a node clock slightly behind Control's when an issued
@@ -80,8 +83,8 @@ type Identity struct {
 	// issued; RenewedAt when the current one replaced an earlier one.
 	EnrolledAt time.Time
 	RenewedAt  time.Time
-	// Bootstrap is how the enrollment started: BootstrapNodeAPIKey or
-	// BootstrapEnrollmentCredential.
+	// Bootstrap is how the enrollment started: BootstrapNodeAPIKey,
+	// BootstrapEnrollmentCredential or BootstrapJoinToken.
 	Bootstrap string
 }
 
@@ -112,8 +115,23 @@ func GenerateKey() (*ecdsa.PrivateKey, error) {
 // public key and issues the identity of the authenticated node; the subject
 // names the node for readability.
 func NewCSR(key crypto.Signer, node agentcontrol.AgentNode) ([]byte, error) {
+	return newCSR(key, node.String())
+}
+
+// JoinCSRCommonName is the subject of the CSR of a machine that is not a
+// node yet (`anix-agent join`).
+const JoinCSRCommonName = "anixops-agent"
+
+// NewJoinCSR is NewCSR for a machine that joins a node group: Control
+// ignores the subject and issues the identity of the node it creates (or
+// the machine's earlier node), so the subject names no node.
+func NewJoinCSR(key crypto.Signer) ([]byte, error) {
+	return newCSR(key, JoinCSRCommonName)
+}
+
+func newCSR(key crypto.Signer, commonName string) ([]byte, error) {
 	return x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject: pkix.Name{CommonName: node.String()},
+		Subject: pkix.Name{CommonName: commonName},
 	}, key)
 }
 

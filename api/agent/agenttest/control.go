@@ -143,6 +143,8 @@ type Control struct {
 	// Forwarding (forward.v1): forward.go; link certificates: link.go.
 	forward forwardState
 	link    linkState
+	// Join and the Enroll calls: join.go.
+	join joinState
 }
 
 // userChange is one row of the subscriber change log.
@@ -211,6 +213,9 @@ func New(t testing.TB, mode string, serves ...string) *Control {
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: control.ServerName}, DNSNames: []string{control.ServerName},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		// Also valid for the listener's address, so a client may verify
+		// the target's host (`anix-agent join` does).
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
 	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, serverCACert, &serverKey.PublicKey, serverCAKey)
 	must(t, err)
@@ -885,6 +890,11 @@ func (c *Control) RefuseCertificates(errorCode string) {
 }
 
 func (c *Control) issue(csrDER []byte) (*agentv1pb.AgentCertificate, error) {
+	return c.issueFor(csrDER, c.node())
+}
+
+// issueFor issues node's certificate for the key of csrDER.
+func (c *Control) issueFor(csrDER []byte, node agentcontrol.AgentNode) (*agentv1pb.AgentCertificate, error) {
 	request, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil || request.CheckSignature() != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid CSR")
@@ -895,7 +905,7 @@ func (c *Control) issue(csrDER []byte) (*agentv1pb.AgentCertificate, error) {
 	serial := new(big.Int).SetBytes(serialBytes)
 	now := time.Now()
 	notAfter := now.Add(7 * 24 * time.Hour)
-	identity, err := agentcontrol.NewAgentIdentity(c.Cluster, c.node())
+	identity, err := agentcontrol.NewAgentIdentity(c.Cluster, node)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -922,18 +932,27 @@ func (c *Control) issue(csrDER []byte) (*agentv1pb.AgentCertificate, error) {
 }
 
 // Enroll implements AgentEnrollment.Enroll: a one-time credential in every
-// mode but off, the node API key in optional and preferred.
+// mode but off, the node API key in optional and preferred. A credential
+// names its node, so x-node-id and x-node-kind are optional with one (the
+// node they name must be the credential's); the API key needs them.
 func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequest) (*agentv1pb.EnrollAgentResponse, error) {
 	mode := c.Mode()
 	if mode == ModeOff {
 		return nil, status.Error(codes.FailedPrecondition, "agent enrollment needs the built-in CA")
 	}
-	if metadataValue(ctx, agentcontrol.MetadataNodeID) != strconv.FormatUint(uint64(c.NodeID), 10) {
+	nodeID := metadataValue(ctx, agentcontrol.MetadataNodeID)
+	if nodeID == "" && request.EnrollmentCredential == "" {
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "an enrollment credential or x-node-id and x-api-key are required")
+	}
+	if nodeID != "" && nodeID != strconv.FormatUint(uint64(c.NodeID), 10) {
 		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
 	}
-	if kind := metadataValue(ctx, agentcontrol.MetadataNodeKind); (kind == "" && c.node().Kind != agentcontrol.NodeKindProxy) || (kind != "" && kind != c.node().Kind) {
+	if kind := metadataValue(ctx, agentcontrol.MetadataNodeKind); nodeID != "" && ((kind == "" && c.node().Kind != agentcontrol.NodeKindProxy) || (kind != "" && kind != c.node().Kind)) {
 		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected: another node kind")
 	}
+	c.mu.Lock()
+	c.join.enrolls = append(c.join.enrolls, EnrollCall{NodeID: nodeID, NodeKind: metadataValue(ctx, agentcontrol.MetadataNodeKind), Credential: request.EnrollmentCredential != ""})
+	c.mu.Unlock()
 	if credential := request.EnrollmentCredential; credential != "" {
 		c.mu.Lock()
 		used, known := c.credentials[credential]
