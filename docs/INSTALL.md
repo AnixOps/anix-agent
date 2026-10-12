@@ -103,11 +103,30 @@ anix-agent join --control https://<control> --grpc <grpc host:port> --token-file
   usual. `anix-agent identity --json` lists it with `"bootstrap": "join-token"`.
   The token file is removed once the identity is stored.
 - **A machine that is a node already.** When `--pki-dir` holds an identity
-  that loads and has not expired, the join does not contact Control: it prints
-  that node (the one enrolled last), so re-running the installer upgrades in
-  place. `--reset` ignores the identities on the machine, without removing them,
-  and asks Control for a new node (never the machine's earlier one), which gets
-  a directory of its own.
+  that loads and has not expired, the join takes the one enrolled last and asks
+  Control whether it still accepts it: it presents the certificate on
+  `AgentEnrollment.GetTrustBundle`, which needs a valid agent certificate and
+  refuses revoked ones.
+  - Control accepts it: the join does not use the token and prints that node
+    (`created` false, `approval` `unknown`), so re-running the installer
+    upgrades in place.
+  - Control refuses it (`agent_cert_revoked`, `agent_cert_expired`,
+    `agent_cert_invalid`, `agent_cert_wrong_cluster`, `agent_cert_wrong_node`,
+    or `Unauthenticated`/`PermissionDenied` without a code; deleting a node
+    revokes its certificates): the join goes ahead with the token as if the
+    machine had no identity. The refused identity's directory stays; a new node
+    gets its own, and a rejoin of the same node replaces the certificate in it.
+  - Control cannot be reached (network, TLS): the join exits 4 and changes
+    nothing.
+
+  `--reset` skips the check, ignores the identities on the machine, without
+  removing them, and asks Control for a new node (never the machine's earlier
+  one), which gets a directory of its own.
+- **Run it as the service user.** The identity store accepts only files owned by
+  the user that reads them, so an identity written by `sudo anix-agent join` (as
+  root) is refused by the service running as `anixops-agent`. The installer runs
+  the join as `anixops-agent`; by hand, use `sudo -u anixops-agent anix-agent join ...`
+  (or `chown -R anixops-agent:` the node's directory afterwards).
 
 With `--json` it prints one JSON object on stdout:
 
@@ -127,11 +146,11 @@ one line. Errors go to stderr, with Control's error code (`join_rejected`,
 
 | Status | Meaning |
 |---|---|
-| 0 | Joined, or the machine already holds an identity |
+| 0 | Joined, or the machine already holds an identity Control accepts |
 | 1 | Any other failure: Control refused the request for another reason (or predates `Join`), the certificate is not the named node's, the identity could not be stored |
 | 2 | Bad arguments: a flag, or a token file that is missing, not private, or holds no join token or enrollment credential |
 | 3 | Control rejected the token |
-| 4 | Control could not be reached: network, TLS verification, or no answer in time |
+| 4 | Control could not be reached: network, TLS verification, or no answer in time, also while checking an identity already on the machine |
 
 ### Forwarding and sysctl
 

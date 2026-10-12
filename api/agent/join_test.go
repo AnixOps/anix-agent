@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AnixOps/anix-agent/v4/api/agent/pki"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,4 +99,43 @@ func TestJoinRefusesBadConfigurationsBeforeDialling(t *testing.T) {
 		})
 	}
 	assert.False(t, dialled)
+}
+
+func TestIdentityCheckClassification(t *testing.T) {
+	identity := &pki.Identity{
+		Node: agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: 12}, SPIFFEID: "spiffe://anixops/prod/agent/proxy-12",
+	}
+	refusal := func(st codes.Code, code string) error { return status.Error(st, code+": refused") }
+	trailer := func(code string) metadata.MD { return metadata.Pairs(agentcontrol.MetadataErrorCode, code) }
+	for name, test := range map[string]struct {
+		err     error
+		trailer metadata.MD
+		class   error
+	}{
+		"revoked":                    {err: refusal(codes.Unauthenticated, agentcontrol.ErrorCodeCertRevoked), class: ErrIdentityRefused},
+		"revoked, node disabled":     {err: refusal(codes.PermissionDenied, agentcontrol.ErrorCodeCertRevoked), class: ErrIdentityRefused},
+		"expired":                    {err: refusal(codes.Unauthenticated, agentcontrol.ErrorCodeCertExpired), class: ErrIdentityRefused},
+		"invalid":                    {err: refusal(codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid), class: ErrIdentityRefused},
+		"wrong cluster":              {err: refusal(codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongCluster), class: ErrIdentityRefused},
+		"wrong node":                 {err: refusal(codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongNode), class: ErrIdentityRefused},
+		"code in the trailer":        {err: status.Error(codes.Unauthenticated, "refused"), trailer: trailer(agentcontrol.ErrorCodeCertRevoked), class: ErrIdentityRefused},
+		"unauthenticated, uncoded":   {err: status.Error(codes.Unauthenticated, "no"), class: ErrIdentityRefused},
+		"permission denied, uncoded": {err: status.Error(codes.PermissionDenied, "no"), class: ErrIdentityRefused},
+		"unavailable":                {err: status.Error(codes.Unavailable, "connection reset"), class: ErrJoinUnreachable},
+		"deadline":                   {err: status.Error(codes.DeadlineExceeded, "slow"), class: ErrJoinUnreachable},
+		"another refusal":            {err: refusal(codes.FailedPrecondition, "agent_pki_unavailable")},
+		"internal":                   {err: status.Error(codes.Internal, "boom")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := identityCheckError(identity, "control.example.com:50051", test.err, test.trailer)
+			require.Error(t, err)
+			for _, class := range []error{ErrIdentityRefused, ErrJoinUnreachable, ErrJoinRejected} {
+				assert.Equal(t, class == test.class, errors.Is(err, class), "class %v: %v", class, err)
+			}
+			if test.class == ErrIdentityRefused {
+				assert.Contains(t, err.Error(), "proxy-12")
+			}
+		})
+	}
+	assert.NoError(t, identityCheckError(identity, "control.example.com:50051", nil, nil))
 }

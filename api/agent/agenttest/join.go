@@ -51,6 +51,8 @@ type joinState struct {
 	nextID   uint32
 	// edit changes each answer before it is sent.
 	edit func(*agentv1pb.JoinResponse)
+	// bundleCalls counts GetTrustBundle calls.
+	bundleCalls int
 }
 
 // AddJoinToken registers a node group's join token.
@@ -88,6 +90,52 @@ func (c *Control) EnrollCalls() []EnrollCall {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]EnrollCall(nil), c.join.enrolls...)
+}
+
+// DeleteNode models deleting a node in Control: its certificates are
+// refused as revoked (agent_cert_revoked) from now on, and a machine that
+// joined as it joins as a new node next time.
+func (c *Control) DeleteNode(node agentcontrol.AgentNode) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.refusedSerials == nil {
+		c.refusedSerials = map[string]bool{}
+	}
+	c.refuseCertificate = agentcontrol.ErrorCodeCertRevoked
+	for serial, issued := range c.issuedTo {
+		if issued == node {
+			c.refusedSerials[serial] = true
+		}
+	}
+	for fingerprint, joined := range c.join.machines {
+		if joined == node {
+			delete(c.join.machines, fingerprint)
+		}
+	}
+}
+
+// GetTrustBundle implements AgentEnrollment.GetTrustBundle: it needs a
+// valid agent client certificate of any node, as Control's certificate
+// principal checks it.
+func (c *Control) GetTrustBundle(ctx context.Context, _ *agentv1pb.GetAgentTrustBundleRequest) (*agentv1pb.GetAgentTrustBundleResponse, error) {
+	c.mu.Lock()
+	c.join.bundleCalls++
+	c.mu.Unlock()
+	chain := peerChain(ctx)
+	if len(chain) == 0 {
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "an agent client certificate is required")
+	}
+	if _, _, err := c.verifyCertificate(ctx, chain); err != nil {
+		return nil, err
+	}
+	return &agentv1pb.GetAgentTrustBundleResponse{TrustBundleDer: [][]byte{c.agentCACert.Raw}}, nil
+}
+
+// TrustBundleCalls counts the GetTrustBundle calls.
+func (c *Control) TrustBundleCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.join.bundleCalls
 }
 
 // Join implements AgentEnrollment.Join.

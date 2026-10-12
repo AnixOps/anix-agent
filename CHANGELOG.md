@@ -16,8 +16,11 @@
   (mode 0600 or stricter, size limit, prefix). The certificate must name the node Control
   answered; it is stored in `<pki-dir>/<node>` with the identity store's modes, so `anix-agent
   server` with `AgentNode: <node>` starts enrolled, and the token file is removed. A machine
-  whose `--pki-dir` already holds a usable identity is left alone (Control is not contacted;
-  `approval` is `unknown`); `--reset` asks for a new node in a directory of its own. `--json`
+  whose `--pki-dir` already holds a usable identity is left alone when Control still accepts it
+  (checked by presenting it on `AgentEnrollment.GetTrustBundle`; `approval` is `unknown`). When
+  Control refuses it (`agent_cert_*`, such as a deleted node's revoked certificate) the join goes
+  ahead with the token and keeps the old directory; when Control cannot be reached it exits 4.
+  `--reset` skips the check and asks for a new node in a directory of its own. `--json`
   prints one object (`node`, `node_name`, `group`, `created`, `approval`, `spiffe_id`,
   `not_after`); exit status 2 is bad arguments, 3 a rejected token (`join_rejected`,
   `agent_enrollment_rejected`), 4 Control unreachable (network, TLS), 1 anything else. See

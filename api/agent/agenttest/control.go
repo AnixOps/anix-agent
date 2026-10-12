@@ -139,6 +139,8 @@ type Control struct {
 	// refusedSerials fail with this code (agent_cert_*).
 	refuseCertificate string
 	refusedSerials    map[string]bool
+	// issuedTo maps an issued serial to its node (DeleteNode).
+	issuedTo map[string]agentcontrol.AgentNode
 
 	// Forwarding (forward.v1): forward.go; link certificates: link.go.
 	forward forwardState
@@ -840,6 +842,20 @@ func peerChain(ctx context.Context) []*x509.Certificate {
 }
 
 func (c *Control) verifyPeer(ctx context.Context, chain []*x509.Certificate) (*x509.Certificate, error) {
+	leaf, identity, err := c.verifyCertificate(ctx, chain)
+	if err != nil {
+		return nil, err
+	}
+	if identity.Node.ID != c.NodeID {
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongNode, "the client certificate names another node")
+	}
+	return leaf, nil
+}
+
+// verifyCertificate checks a presented agent certificate as Control's
+// certificate principal does: issued by the agent CA, not refused, of this
+// cluster; any node.
+func (c *Control) verifyCertificate(ctx context.Context, chain []*x509.Certificate) (*x509.Certificate, agentcontrol.AgentIdentity, error) {
 	roots := x509.NewCertPool()
 	roots.AddCert(c.agentCACert)
 	leaf := chain[0]
@@ -849,22 +865,21 @@ func (c *Control) verifyPeer(ctx context.Context, chain []*x509.Certificate) (*x
 		refusal = ""
 	}
 	c.mu.Unlock()
+	none := agentcontrol.AgentIdentity{}
 	if refusal != "" {
-		return nil, refuse(ctx, codes.Unauthenticated, refusal, "the agent certificate is refused")
+		return nil, none, refuse(ctx, codes.Unauthenticated, refusal, "the agent certificate is refused")
 	}
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
-		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "the client certificate is not a valid agent certificate of this cluster")
+		return nil, none, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "the client certificate is not a valid agent certificate of this cluster")
 	}
 	identity, err := agentcontrol.AgentIdentityFromCertificate(leaf)
 	switch {
 	case err != nil:
-		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "the client certificate is not an agent certificate")
+		return nil, none, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertInvalid, "the client certificate is not an agent certificate")
 	case identity.Cluster != c.Cluster:
-		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongCluster, "the client certificate is of another cluster")
-	case identity.Node.ID != c.NodeID:
-		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongNode, "the client certificate names another node")
+		return nil, none, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeCertWrongCluster, "the client certificate is of another cluster")
 	}
-	return leaf, nil
+	return leaf, identity, nil
 }
 
 // refuse answers a call with Control's error code: in the trailer and at
@@ -923,6 +938,10 @@ func (c *Control) issueFor(csrDER []byte, node agentcontrol.AgentNode) (*agentv1
 	serialHex := hex.EncodeToString(serial.Bytes())
 	c.mu.Lock()
 	c.issued = append(c.issued, serialHex)
+	if c.issuedTo == nil {
+		c.issuedTo = map[string]agentcontrol.AgentNode{}
+	}
+	c.issuedTo[serialHex] = node
 	c.mu.Unlock()
 	return &agentv1pb.AgentCertificate{
 		CertificateDer: der, TrustBundleDer: [][]byte{c.agentCACert.Raw}, SpiffeId: identity.String(),

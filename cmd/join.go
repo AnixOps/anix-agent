@@ -51,7 +51,9 @@ var (
 
 const joinLong = `Join this machine to AnixOps Control as a node. Control's installer runs it
 as the Agent's user (anixops-agent) after installing the Agent and before
-starting its service.
+starting its service. Run it as that user: the identity store refuses files
+owned by another user, so an identity written by root is unusable for the
+service.
 
 The token file holds one credential and must be private to the user (mode
 0600 or stricter):
@@ -67,10 +69,16 @@ The certificate must name the node Control answered. It is stored in
 finds it and does not enroll again. The token file is removed once the
 identity is stored.
 
-A machine that already holds a usable identity under --pki-dir is left as it
-is: join prints that node without contacting Control. --reset ignores the
-identities on the machine (it does not remove them) and asks Control for a
-new node, which gets a directory of its own.
+A machine that already holds a usable identity under --pki-dir (the one
+enrolled last) is left as it is when Control still accepts it: join presents
+it on AgentEnrollment.GetTrustBundle and, when Control answers, prints that
+node without joining. When Control refuses it (agent_cert_revoked,
+agent_cert_expired, agent_cert_invalid, agent_cert_wrong_cluster,
+agent_cert_wrong_node; a deleted node's certificates are revoked), join
+proceeds with the token as if there were no identity and keeps the old
+directory. --reset skips the check, ignores the identities on the machine
+(it does not remove them) and asks Control for a new node, which gets a
+directory of its own.
 
 Control is reached over TLS only, verified against the system roots for the
 host of --grpc. A join sends the hex SHA-256 of "anixops-join-v1\n" and the
@@ -91,13 +99,14 @@ identity already on the machine). node_name and group are empty when Control
 did not name them. Errors go to stderr, with Control's error code.
 
 Exit status:
-  0  joined, or the machine already holds an identity
+  0  joined, or the machine already holds an identity Control accepts
   1  any other failure: Control refused the request for another reason, the
      certificate is not the named node's, the identity could not be stored
   2  bad arguments: a flag, or a token file that is missing, not private, or
      holds no join token or enrollment credential
   3  Control rejected the token (join_rejected, agent_enrollment_rejected)
-  4  Control could not be reached: network, TLS, or no answer in time`
+  4  Control could not be reached: network, TLS, or no answer in time (also
+     while checking an identity already on the machine)`
 
 // joinOptions are the flags of one join.
 type joinOptions struct {
@@ -170,20 +179,32 @@ func runJoin(cmd *cobra.Command, options *joinOptions) error {
 	if err != nil {
 		return joinFail(cmd, joinExitUsage, err)
 	}
-	if !options.reset {
-		identity, store, err := pki.Newest(options.pkiDir, options.cluster, time.Now())
-		switch {
-		case err == nil:
-			return printJoin(cmd.OutOrStdout(), options.json, existingJoinOutput(identity),
-				fmt.Sprintf("This machine already holds the identity of %s in %s (%s, valid until %s); Control was not contacted. Use --reset to join as a new node.",
-					identity.Node, store.Dir(), identity.SPIFFEID, identity.NotAfter.UTC().Format(time.RFC3339)))
-		case !errors.Is(err, pki.ErrNotEnrolled):
-			return joinFail(cmd, joinExitFailed, fmt.Errorf("read the identities in %s: %w", options.pkiDir, err))
-		}
-	}
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if !options.reset {
+		// The identity enrolled last, if Control still accepts it.
+		identity, store, err := pki.Newest(options.pkiDir, options.cluster, time.Now())
+		switch {
+		case errors.Is(err, pki.ErrNotEnrolled):
+		case err != nil:
+			return joinFail(cmd, joinExitFailed, fmt.Errorf("read the identities in %s: %w", options.pkiDir, err))
+		default:
+			err := agentapi.CheckIdentity(ctx, config, identity)
+			switch {
+			case err == nil:
+				return printJoin(cmd.OutOrStdout(), options.json, existingJoinOutput(identity),
+					fmt.Sprintf("This machine already holds the identity of %s in %s (%s, valid until %s), and Control accepts it; not joining again. Use --reset to join as a new node.",
+						identity.Node, store.Dir(), identity.SPIFFEID, identity.NotAfter.UTC().Format(time.RFC3339)))
+			case errors.Is(err, agentapi.ErrIdentityRefused):
+				// A deleted node, a revoked certificate: join as if the
+				// machine had no identity, and keep its directory.
+				fmt.Fprintf(cmd.ErrOrStderr(), "anix-agent join: %v; joining with the token (%s is kept)\n", err, store.Dir())
+			default:
+				return joinFail(cmd, joinExitStatus(err), fmt.Errorf("check the identity of %s in %s with Control: %w", identity.Node, store.Dir(), err))
+			}
+		}
 	}
 	result, err := agentapi.Join(ctx, config)
 	if err != nil {

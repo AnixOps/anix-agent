@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // Joining is the one-shot bootstrap of a machine that is not a node yet
@@ -57,10 +59,15 @@ var (
 	// ErrJoinUnreachable classifies a JoinError: Control's agent listener
 	// could not be reached over TLS, or did not answer in time.
 	ErrJoinUnreachable = errors.New("Control is unreachable")
+	// ErrIdentityRefused classifies a JoinError of CheckIdentity: Control
+	// refused the presented certificate (revoked, expired, invalid, of
+	// another cluster or node), so it can no longer authenticate the Agent.
+	ErrIdentityRefused = errors.New("Control refused the agent certificate")
 )
 
-// JoinError is a failed join. Class is ErrJoinRejected, ErrJoinUnreachable
-// or nil for any other failure; errors.Is matches it.
+// JoinError is a failed join or identity check. Class is ErrJoinRejected,
+// ErrJoinUnreachable, ErrIdentityRefused or nil for any other failure;
+// errors.Is matches it.
 type JoinError struct {
 	Class error
 	// Code is Control's error code (join_rejected, ...), "" without one.
@@ -149,9 +156,6 @@ func Join(ctx context.Context, config JoinConfig) (*JoinResult, error) {
 	if !joining && !strings.HasPrefix(config.Credential, agentcontrol.EnrollmentCredentialPrefix) {
 		return nil, fmt.Errorf("the credential is neither an %s join token nor an %s enrollment credential", agentcontrol.JoinTokenPrefix, agentcontrol.EnrollmentCredentialPrefix)
 	}
-	if strings.TrimSpace(config.Target) == "" {
-		return nil, errors.New("Control's agent target (host:port) is required")
-	}
 	root := config.Dir
 	if root == "" {
 		root = pki.DefaultRoot
@@ -159,23 +163,10 @@ func Join(ctx context.Context, config JoinConfig) (*JoinResult, error) {
 	if !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("agent identity directory %q must be an absolute path", root)
 	}
-	if config.ServerName == "" {
-		host, _, err := net.SplitHostPort(config.Target)
-		if err != nil {
-			return nil, fmt.Errorf("Control's agent target %q is not host:port: %w", config.Target, err)
-		}
-		config.ServerName = host
+	if err := config.prepare(); err != nil {
+		return nil, err
 	}
-	if config.DialTimeout <= 0 {
-		config.DialTimeout = defaultDialTimeout
-	}
-	if config.CallTimeout <= 0 {
-		config.CallTimeout = defaultJoinCallTimeout
-	}
-	now := time.Now
-	if config.Now != nil {
-		now = config.Now
-	}
+	now := config.Now
 
 	key, err := pki.GenerateKey()
 	if err != nil {
@@ -185,15 +176,9 @@ func Join(ctx context.Context, config JoinConfig) (*JoinResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialEnrollment(ctx, enrollmentTarget{
-		Target: config.Target, ServerName: config.ServerName, RootCAs: config.RootCAs,
-		DialContext: config.DialContext, DialTimeout: config.DialTimeout,
-	}, nil)
+	conn, err := config.dial(ctx, nil)
 	if err != nil {
-		return nil, &JoinError{
-			Class: ErrJoinUnreachable, Err: err,
-			Message: fmt.Sprintf("cannot reach Control's agent listener %s over TLS (server name %s): %v", config.Target, config.ServerName, err),
-		}
+		return nil, err
 	}
 	defer conn.Close()
 	callCtx, cancel := context.WithTimeout(ctx, config.CallTimeout)
@@ -267,6 +252,105 @@ func Join(ctx context.Context, config JoinConfig) (*JoinResult, error) {
 	return result, nil
 }
 
+// prepare checks the target and fills in the defaults.
+func (config *JoinConfig) prepare() error {
+	if strings.TrimSpace(config.Target) == "" {
+		return errors.New("Control's agent target (host:port) is required")
+	}
+	if config.ServerName == "" {
+		host, _, err := net.SplitHostPort(config.Target)
+		if err != nil {
+			return fmt.Errorf("Control's agent target %q is not host:port: %w", config.Target, err)
+		}
+		config.ServerName = host
+	}
+	if config.DialTimeout <= 0 {
+		config.DialTimeout = defaultDialTimeout
+	}
+	if config.CallTimeout <= 0 {
+		config.CallTimeout = defaultJoinCallTimeout
+	}
+	if config.Now == nil {
+		config.Now = time.Now
+	}
+	return nil
+}
+
+// dial connects to AgentEnrollment, presenting certificate when set; a
+// failure is ErrJoinUnreachable.
+func (config *JoinConfig) dial(ctx context.Context, certificate *tls.Certificate) (*grpc.ClientConn, error) {
+	conn, err := dialEnrollment(ctx, enrollmentTarget{
+		Target: config.Target, ServerName: config.ServerName, RootCAs: config.RootCAs,
+		DialContext: config.DialContext, DialTimeout: config.DialTimeout,
+	}, certificate)
+	if err != nil {
+		return nil, &JoinError{
+			Class: ErrJoinUnreachable, Err: err,
+			Message: fmt.Sprintf("cannot reach Control's agent listener %s over TLS (server name %s): %v", config.Target, config.ServerName, err),
+		}
+	}
+	return conn, nil
+}
+
+// CheckIdentity asks Control whether it still accepts identity, an
+// identity already on the machine: it presents the certificate on
+// AgentEnrollment.GetTrustBundle, which needs a valid agent client
+// certificate and refuses revoked ones. It answers nil when Control accepts
+// it; ErrIdentityRefused when Control refuses it (agent_cert_revoked,
+// agent_cert_expired, agent_cert_invalid, agent_cert_wrong_cluster,
+// agent_cert_wrong_node, the refusals renewal acts on, or Unauthenticated
+// or PermissionDenied without a code); ErrJoinUnreachable when Control
+// cannot be reached; another JoinError otherwise. Only config's connection
+// settings are used.
+func CheckIdentity(ctx context.Context, config JoinConfig, identity *pki.Identity) error {
+	certificate := identity.TLSCertificate()
+	if certificate == nil {
+		return errors.New("the identity holds no certificate")
+	}
+	if err := config.prepare(); err != nil {
+		return err
+	}
+	conn, err := config.dial(ctx, certificate)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	callCtx, cancel := context.WithTimeout(ctx, config.CallTimeout)
+	defer cancel()
+	var trailer metadata.MD
+	_, err = agentv1pb.NewAgentEnrollmentClient(conn).GetTrustBundle(callCtx, &agentv1pb.GetAgentTrustBundleRequest{}, grpc.Trailer(&trailer))
+	return identityCheckError(identity, config.Target, err, trailer)
+}
+
+// identityCheckError classifies the answer of CheckIdentity's
+// GetTrustBundle: the certificate refusals renewal discards a certificate
+// for (certificateRefusal), and Unauthenticated or PermissionDenied without
+// a code, are ErrIdentityRefused; the rest as a join call's failure.
+func identityCheckError(identity *pki.Identity, target string, err error, trailer metadata.MD) error {
+	if err == nil {
+		return nil
+	}
+	coded := withControlCode(err, trailer)
+	code := errorCodeOf(coded)
+	st, _ := grpcStatus(err)
+	_, action := certificateRefusal(coded)
+	if action != certificateKept || (code == "" && st != nil && (st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied)) {
+		return &JoinError{Class: ErrIdentityRefused, Code: code, Err: coded,
+			Message: fmt.Sprintf("Control refused the certificate of %s (%s): %s", identity.Node, identity.SPIFFEID, statusDetail(st, code))}
+	}
+	return joinCallError("GetTrustBundle", "agent certificate", target, err, trailer)
+}
+
+// statusDetail is a refusal for the operator: Control's code, its message
+// and the status code.
+func statusDetail(st *status.Status, code string) string {
+	detail := strings.TrimPrefix(st.Message(), code+": ")
+	if code != "" {
+		detail = code + ": " + detail
+	}
+	return detail + " (" + st.Code().String() + ")"
+}
+
 // joinCallError classifies a refused or failed Join or Enroll call. Its
 // message carries Control's error code and status, without the gRPC
 // framing.
@@ -277,11 +361,7 @@ func joinCallError(method, credential, target string, err error, trailer metadat
 	if st == nil {
 		return &JoinError{Code: code, Err: coded, Message: fmt.Sprintf("AgentEnrollment.%s failed: %v", method, err)}
 	}
-	detail := strings.TrimPrefix(st.Message(), code+": ")
-	if code != "" {
-		detail = code + ": " + detail
-	}
-	detail += " (" + st.Code().String() + ")"
+	detail := statusDetail(st, code)
 	switch {
 	case code == JoinErrorCodeRejected || code == agentcontrol.ErrorCodeEnrollmentRejected ||
 		(code == "" && (st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied)):

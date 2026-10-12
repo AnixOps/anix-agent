@@ -305,26 +305,130 @@ func TestJoinLeavesAnExistingIdentityAlone(t *testing.T) {
 	run := runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json")...)
 	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
 	first := decodeJoinOutput(t, run.stdout)
+	assert.Zero(t, f.control.TrustBundleCalls(), "nothing to check on a machine without an identity")
 
-	// Even a token Control would reject: Control is not contacted.
+	// Control accepts the identity, so even a token it would reject is
+	// not used: the token is not sent.
 	tokenFile := f.tokenFile(t, "anixjoin_unknown", 0o600)
 	run = runJoinCommand(t, f.args(tokenFile, "--json")...)
 	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+	assert.Empty(t, run.stderr)
 	assert.Equal(t, joinOutput{
 		Node: testJoinedNode, Approval: "unknown", SPIFFEID: testJoinedSPIFFE, NotAfter: first.NotAfter,
 	}, decodeJoinOutput(t, run.stdout))
+	assert.Equal(t, 1, f.control.TrustBundleCalls(), "the identity was checked with Control")
 	assert.Len(t, f.control.JoinRequests(), 1)
+	assert.Len(t, f.control.Streams(), 0)
 	assert.FileExists(t, tokenFile, "an unused token is kept")
 
 	run = runJoinCommand(t, f.args(tokenFile)...)
 	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
 	assert.Contains(t, run.stdout, "already holds the identity of proxy-12")
+	assert.Contains(t, run.stdout, "Control accepts it")
 
 	// An identity of another cluster than --cluster does not count.
 	run = runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json", "--cluster", "other")...)
 	assert.Equal(t, joinExitFailed, run.status)
 	assert.Contains(t, run.stderr, `cluster "test-cluster"`)
 	assert.Len(t, f.control.JoinRequests(), 2)
+}
+
+// A node deleted in Control: its certificate is revoked, so the machine
+// joins again with the token and becomes a new node; the old directory
+// stays.
+func TestJoinReplacesAnIdentityControlRefuses(t *testing.T) {
+	f := newJoinFixture(t)
+	run := runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json")...)
+	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+	oldDir := filepath.Join(f.pkiDir, testJoinedNode)
+	oldIdentity, err := os.ReadFile(filepath.Join(oldDir, "identity.pem"))
+	require.NoError(t, err)
+
+	f.control.DeleteNode(agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: 12})
+	tokenFile := f.tokenFile(t, testJoinToken, 0o600)
+	run = runJoinCommand(t, f.args(tokenFile, "--json")...)
+	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+	output := decodeJoinOutput(t, run.stdout)
+	assert.Equal(t, joinOutput{
+		Node: "proxy-13", NodeName: output.NodeName, Group: "HK", Created: true, Approval: "approved",
+		SPIFFEID: "spiffe://anixops/test-cluster/agent/proxy-13", NotAfter: output.NotAfter,
+	}, output)
+	assert.Contains(t, run.stderr, agentcontrol.ErrorCodeCertRevoked)
+	assert.Contains(t, run.stderr, oldDir+" is kept")
+	assert.Equal(t, 1, f.control.TrustBundleCalls())
+	requests := f.control.JoinRequests()
+	require.Len(t, requests, 2)
+	assert.False(t, requests[1].GetReset_(), "a refused identity is not a --reset")
+	assert.NoFileExists(t, tokenFile)
+
+	// The new node's identity is stored; the old one is untouched.
+	node := agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: 13}
+	store, err := pki.NewStore(f.pkiDir, node)
+	require.NoError(t, err)
+	identity, err := store.Load(pki.Expectation{Node: node, Now: time.Now()})
+	require.NoError(t, err)
+	assert.Equal(t, pki.BootstrapJoinToken, identity.Bootstrap)
+	unchanged, err := os.ReadFile(filepath.Join(oldDir, "identity.pem"))
+	require.NoError(t, err)
+	assert.Equal(t, oldIdentity, unchanged)
+
+	// The next run checks the new identity, which Control accepts.
+	run = runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json")...)
+	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+	assert.Equal(t, "proxy-13", decodeJoinOutput(t, run.stdout).Node)
+	assert.Len(t, f.control.JoinRequests(), 2)
+}
+
+// Every certificate refusal renewal acts on makes the join go ahead.
+func TestJoinGoesAheadForEveryCertificateRefusal(t *testing.T) {
+	for _, code := range []string{
+		agentcontrol.ErrorCodeCertRevoked, agentcontrol.ErrorCodeCertExpired, agentcontrol.ErrorCodeCertInvalid,
+		agentcontrol.ErrorCodeCertWrongCluster, agentcontrol.ErrorCodeCertWrongNode,
+	} {
+		t.Run(code, func(t *testing.T) {
+			f := newJoinFixture(t)
+			run := runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json")...)
+			require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+			f.control.RefuseCertificates(code)
+			run = runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json")...)
+			require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+			assert.Contains(t, run.stderr, code)
+			assert.Len(t, f.control.JoinRequests(), 2)
+			// Control's rejoin rule gives the machine its node back: a new
+			// certificate in the same directory.
+			output := decodeJoinOutput(t, run.stdout)
+			assert.Equal(t, testJoinedNode, output.Node)
+			assert.False(t, output.Created)
+		})
+	}
+}
+
+// The check needs Control: without it, the join neither reuses nor
+// replaces the identity.
+func TestJoinExitsFourWhenTheIdentityCannotBeChecked(t *testing.T) {
+	f := newJoinFixture(t)
+	run := runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json")...)
+	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	closed := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	tokenFile := f.tokenFile(t, testJoinToken, 0o600)
+	run = runJoinCommand(t, "--control", testControlURL, "--grpc", closed, "--token-file", tokenFile, "--pki-dir", f.pkiDir, "--json")
+	assert.Equal(t, joinExitUnreachable, run.status, run.stderr)
+	assert.Empty(t, run.stdout)
+	assert.Contains(t, run.stderr, "check the identity of proxy-12")
+	assert.Contains(t, run.stderr, "cannot reach Control's agent listener "+closed)
+	assert.FileExists(t, tokenFile)
+
+	// An untrusted Control is a TLS failure, the same.
+	joinRootCAs = nil
+	run = runJoinCommand(t, f.args(tokenFile, "--json")...)
+	assert.Equal(t, joinExitUnreachable, run.status, run.stderr)
+	assert.Contains(t, run.stderr, "certificate")
+	assert.Len(t, f.control.JoinRequests(), 1)
+	assert.Zero(t, f.control.TrustBundleCalls())
 }
 
 func TestJoinResetAsksForANewNodeAndKeepsTheOldIdentity(t *testing.T) {
@@ -337,6 +441,7 @@ func TestJoinResetAsksForANewNodeAndKeepsTheOldIdentity(t *testing.T) {
 	output := decodeJoinOutput(t, run.stdout)
 	assert.Equal(t, "proxy-13", output.Node)
 	assert.True(t, output.Created)
+	assert.Zero(t, f.control.TrustBundleCalls(), "--reset does not check the identity")
 	requests := f.control.JoinRequests()
 	require.Len(t, requests, 2)
 	assert.True(t, requests[1].GetReset_())
