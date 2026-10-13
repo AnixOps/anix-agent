@@ -25,13 +25,16 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 4.2.0 范围
+## 5.0.0-rc.1 范围
 
-`v4.2.0` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
-4.2.0 使用同一版本号（H25），是 v4.2 转发与 Agent 控制面的首个稳定版本，
-汇总 4.2.0-rc.1 至 rc.4。功能范围与 rc.4 相同，源码相对 rc.4 只改了版本号；
-依赖与工具链同 rc.4：Agent 与 `anixops-relay` 用 Go 1.26.9 构建，
-`golang.org/x/net` v0.60.0，SDK 固定到 anix-control go_dev `d8684dc2`。范围如下：
+`v5.0.0-rc.1` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+5.0.0-rc.1 使用同一版本号（H25），是 5.0 的第一个候选版本。相对 4.2.0 的变化：
+新增 `anix-agent join`（节点组 `anixjoin_` 接入令牌，见下文“控制流 mTLS 身份”一节与
+`docs/INSTALL.md`）；Go 模块路径改为
+`github.com/AnixOps/anix-agent/v5`，构建时注入版本的 ldflag 改为
+`-X github.com/AnixOps/anix-agent/v5/cmd.version=<version>`；SDK 固定到 anix-control
+go_dev `26033470`（anix-control#299 的合并提交，含 `AgentEnrollment.Join`）。除此之外依赖与
+工具链同 4.2.0（Go 1.26.9、`golang.org/x/net` v0.60.0），4.2.0 的功能范围保持不变：
 
 - Agent 控制流（AG-1 至 AG-5b）：A2 协商、mTLS 身份（Control 4.2 默认 `required`）、
   配置与用户下发、流上报告与包报告、维护事件、alive 列表和插件制品；
@@ -49,7 +52,7 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 4.2.0 发布范围）
+## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.1 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
@@ -119,7 +122,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v4.2.0
+export VERSION=v5.0.0-rc.1
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh

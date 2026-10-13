@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 5.0.0-rc.1 - 2026-10-13
+
+The Agent and Control share the version number (H25). This is the first 5.0 candidate.
+
+### Highlights
+
+- **`anix-agent join`** is the command Control 5.0's installer runs to bring a machine into a
+  node group with an `anixjoin_` join token (see Added). It needs a Control that serves
+  `AgentEnrollment.Join`: a Control that predates it makes the join exit 1 and name the missing
+  method.
+- **The Go module path is `github.com/AnixOps/anix-agent/v5`**, and a build that injects the
+  version uses `-X github.com/AnixOps/anix-agent/v5/cmd.version=<version>` (see Changed).
+- **The anix-control SDK is pinned to go_dev `26033470`**, the merge commit of
+  anix-control#299 (the `Join` contract).
+- Apart from the items below, the Agent's code, its toolchain (Go 1.26.9) and its dependencies
+  are those of 4.2.0 (the pin above is the only dependency that moves), so the four advisories
+  listed under Known Gaps of 4.2.0 are not fixed in this release either.
+
 ### Added
 
 - **`anix-agent join`: a machine joins a node group with its join token** (5.0 node
@@ -25,14 +43,14 @@
   `not_after`); exit status 2 is bad arguments, 3 a rejected token (`join_rejected`,
   `agent_enrollment_rejected`), 4 Control unreachable (network, TLS), 1 anything else. See
   `docs/INSTALL.md`, "Joining a node group".
-  **Pin:** the anix-control SDK moves to `0c90ce6f` of anix-control#299 (`feat/v5-sdk-join`,
-  the `Join` contract), which is not merged yet; the pin moves to the go_dev merge commit when
-  it is. The `cmd/anixops-relay` module keeps go_dev `d8684dc2`.
+  **Pin:** the anix-control SDK moves to go_dev `26033470`
+  (`v0.0.0-20261012230826-26033470ec19`), the merge commit of anix-control#299 with the `Join`
+  contract. The `cmd/anixops-relay` module keeps go_dev `d8684dc2`.
 
 ### Changed
 
-- **The Go module path is `github.com/AnixOps/anix-agent/v5`** (it was `.../v4`), ahead of
-  the 5.0 release; the product version does not change here and the behaviour is the same.
+- **The Go module path is `github.com/AnixOps/anix-agent/v5`** (it was `.../v4`), for the
+  5.0 major version; the behaviour is the same.
   Every import, the `cmd/anixops-relay` module path (`.../v5/cmd/anixops-relay`), the protobuf
   `go_package` options with their generated bindings (`api/grpc/gen.sh` and `gen.ps1` pass the
   new module path), and the version ldflag in `Dockerfile`, `build.sh`, `build.ps1` and the
