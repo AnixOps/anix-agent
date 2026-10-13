@@ -5,7 +5,7 @@ import (
 
 	"encoding/json"
 
-	conf2 "github.com/AnixOps/anix-agent/v4/conf"
+	conf2 "github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
 )

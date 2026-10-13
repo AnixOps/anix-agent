@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent/state"
+	"github.com/AnixOps/anix-agent/v5/api/agent/state"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"

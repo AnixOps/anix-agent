@@ -9,7 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"github.com/AnixOps/anix-agent/v4/common/maintenance"
+	"github.com/AnixOps/anix-agent/v5/common/maintenance"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
+	"github.com/AnixOps/anix-agent/v5/plugin/machinetelemetry"
 	"github.com/stretchr/testify/require"
 )
 

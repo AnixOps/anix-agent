@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AnixOps/anix-agent/v4/common/crypt"
+	"github.com/AnixOps/anix-agent/v5/common/crypt"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/curve25519"

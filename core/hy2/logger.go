@@ -5,8 +5,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/AnixOps/anix-agent/v4/common/format"
-	"github.com/AnixOps/anix-agent/v4/limiter"
+	"github.com/AnixOps/anix-agent/v5/common/format"
+	"github.com/AnixOps/anix-agent/v5/limiter"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	"github.com/AnixOps/anix-agent/v4/common/maintenance"
-	"github.com/AnixOps/anix-agent/v4/plugin"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/common/maintenance"
+	"github.com/AnixOps/anix-agent/v5/plugin"
 )
 
 // streamMaintenanceInterval is how often the data plane reads the outbox

@@ -1,6 +1,6 @@
 package panel
 
-import "github.com/AnixOps/anix-agent/v4/common/monitor"
+import "github.com/AnixOps/anix-agent/v5/common/monitor"
 
 // Close implements api/client.NodeAPI.
 // REST transport has no persistent connection to close.

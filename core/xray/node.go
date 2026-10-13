@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/inbound"
 	"github.com/xtls/xray-core/features/outbound"

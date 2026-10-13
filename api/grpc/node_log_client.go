@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	pb "github.com/AnixOps/anix-agent/v4/api/grpc/v2boardpb"
-	"github.com/AnixOps/anix-agent/v4/api/panel"
+	pb "github.com/AnixOps/anix-agent/v5/api/grpc/v2boardpb"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"

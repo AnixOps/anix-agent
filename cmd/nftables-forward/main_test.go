@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/AnixOps/anix-agent/v4/plugin/nftablesforward"
+	"github.com/AnixOps/anix-agent/v5/plugin/nftablesforward"
 	"github.com/stretchr/testify/require"
 )
 

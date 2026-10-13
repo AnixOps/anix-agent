@@ -5,7 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"github.com/AnixOps/anix-agent/v4/plugin"
+	"github.com/AnixOps/anix-agent/v5/plugin"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/common/maintenance"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/maintenance"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 )

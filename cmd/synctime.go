@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/AnixOps/anix-agent/v4/common/systime"
+	"github.com/AnixOps/anix-agent/v5/common/systime"
 	"github.com/beevik/ntp"
 	"github.com/spf13/cobra"
 )

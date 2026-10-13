@@ -109,7 +109,7 @@ const file_core_xray_app_dispatcher_config_proto_rawDesc = "" +
 	"\rSessionConfigJ\x04\b\x01\x10\x02\"M\n" +
 	"\x06Config\x12C\n" +
 	"\bsettings\x18\x01 \x01(\v2'.v2bx.core.app.dispatcher.SessionConfigR\bsettingsBv\n" +
-	"\x1ccom.v2bx.core.app.dispatcherP\x01Z9github.com/AnixOps/anix-agent/v4/core/xray/app/dispatcher\xaa\x02\x18V2bX.core.app.dispatcherb\x06proto3"
+	"\x1ccom.v2bx.core.app.dispatcherP\x01Z9github.com/AnixOps/anix-agent/v5/core/xray/app/dispatcher\xaa\x02\x18V2bX.core.app.dispatcherb\x06proto3"
 
 var (
 	file_core_xray_app_dispatcher_config_proto_rawDescOnce sync.Once

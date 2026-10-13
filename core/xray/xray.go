@@ -7,10 +7,10 @@ import (
 
 	"encoding/json/v2"
 
-	"github.com/AnixOps/anix-agent/v4/conf"
-	vCore "github.com/AnixOps/anix-agent/v4/core"
-	"github.com/AnixOps/anix-agent/v4/core/xray/app/dispatcher"
-	_ "github.com/AnixOps/anix-agent/v4/core/xray/distro/all"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/core/xray/app/dispatcher"
+	_ "github.com/AnixOps/anix-agent/v5/core/xray/distro/all"
 	log "github.com/sirupsen/logrus"
 	"github.com/xtls/xray-core/app/proxyman"
 	"github.com/xtls/xray-core/app/stats"

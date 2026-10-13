@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/AnixOps/anix-agent/v4/common/monitor"
-	"github.com/AnixOps/anix-agent/v4/common/sign"
-	"github.com/AnixOps/anix-agent/v4/common/utils"
+	"github.com/AnixOps/anix-agent/v5/common/monitor"
+	"github.com/AnixOps/anix-agent/v5/common/sign"
+	"github.com/AnixOps/anix-agent/v5/common/utils"
 	"github.com/go-resty/resty/v2"
 	"github.com/sirupsen/logrus"
 )

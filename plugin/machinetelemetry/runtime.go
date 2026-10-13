@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/common/monitor"
+	"github.com/AnixOps/anix-agent/v5/common/monitor"
 	"github.com/AnixOps/anix-control/sdk/telemetry/systemdreport"
 	"github.com/shirou/gopsutil/v3/host"
 	gopsnet "github.com/shirou/gopsutil/v3/net"

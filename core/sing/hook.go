@@ -6,12 +6,12 @@ import (
 	"net"
 	"sync"
 
-	"github.com/AnixOps/anix-agent/v4/common/format"
-	"github.com/AnixOps/anix-agent/v4/common/rate"
+	"github.com/AnixOps/anix-agent/v5/common/format"
+	"github.com/AnixOps/anix-agent/v5/common/rate"
 
-	"github.com/AnixOps/anix-agent/v4/limiter"
+	"github.com/AnixOps/anix-agent/v5/limiter"
 
-	"github.com/AnixOps/anix-agent/v4/common/counter"
+	"github.com/AnixOps/anix-agent/v5/common/counter"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	N "github.com/sagernet/sing/common/network"

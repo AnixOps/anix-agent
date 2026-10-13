@@ -4,9 +4,9 @@ import (
 	"encoding/base64"
 	"errors"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/common/counter"
-	"github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/counter"
+	"github.com/AnixOps/anix-agent/v5/core"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/anytls"
 	"github.com/sagernet/sing-box/protocol/hysteria"

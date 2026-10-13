@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent/agenttest"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/agent/agenttest"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	"github.com/stretchr/testify/assert"

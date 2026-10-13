@@ -14,10 +14,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
-	vCore "github.com/AnixOps/anix-agent/v4/core"
-	"github.com/AnixOps/anix-agent/v4/core/wireguard"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/core/wireguard"
 )
 
 type options struct {

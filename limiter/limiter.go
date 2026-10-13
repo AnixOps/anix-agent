@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/common/format"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/format"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/juju/ratelimit"
 )
 

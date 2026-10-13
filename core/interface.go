@@ -1,8 +1,8 @@
 package core
 
 import (
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
 )
 
 type AddUsersParams struct {

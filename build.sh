@@ -28,7 +28,7 @@ BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # LDFlags
-LDFLAGS="-s -w -X 'github.com/AnixOps/anix-agent/v4/cmd.version=${VERSION}'"
+LDFLAGS="-s -w -X 'github.com/AnixOps/anix-agent/v5/cmd.version=${VERSION}'"
 
 # 默认值
 PLATFORM=""

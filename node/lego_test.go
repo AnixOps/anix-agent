@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/conf"
 )
 
 func TestLego_RenewCertMissingFile(t *testing.T) {

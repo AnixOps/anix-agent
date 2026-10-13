@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/AnixOps/anix-agent/v4/plugin/gostmesh"
+	"github.com/AnixOps/anix-agent/v5/plugin/gostmesh"
 )
 
 func main() {

@@ -12,8 +12,8 @@ import (
 
 	"encoding/json"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
 	coreConf "github.com/xtls/xray-core/infra/conf"

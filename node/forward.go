@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
-	"github.com/AnixOps/anix-agent/v4/forward"
-	"github.com/AnixOps/anix-agent/v4/upgrade"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	"github.com/AnixOps/anix-agent/v5/forward"
+	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	log "github.com/sirupsen/logrus"
 )
