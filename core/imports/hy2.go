@@ -2,4 +2,4 @@
 
 package imports
 
-import _ "github.com/AnixOps/anix-agent/v4/core/hy2"
+import _ "github.com/AnixOps/anix-agent/v5/core/hy2"

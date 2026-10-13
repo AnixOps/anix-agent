@@ -3,8 +3,8 @@ package node
 import (
 	"strconv"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
 	log "github.com/sirupsen/logrus"
 )
 

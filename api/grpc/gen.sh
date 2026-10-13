@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-MODULE_PATH="github.com/AnixOps/anix-agent/v4"
+MODULE_PATH="github.com/AnixOps/anix-agent/v5"
 PROTO_FILES=(
   "api/grpc/v2board.proto"
 )

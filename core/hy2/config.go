@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/apernet/hysteria/core/v2/server"
 	"github.com/apernet/hysteria/extras/v2/correctnet"
 	"github.com/apernet/hysteria/extras/v2/masq"

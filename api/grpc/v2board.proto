@@ -2,7 +2,7 @@
 
 package v2board;
 
-option go_package = "github.com/AnixOps/anix-agent/v4/api/grpc/v2boardpb";
+option go_package = "github.com/AnixOps/anix-agent/v5/api/grpc/v2boardpb";
 
 // ==================== 閫氱敤娑堟伅 ====================
 

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
 )
 
 // ErrNodeNotFound is answered for a tag the core does not run. A caller

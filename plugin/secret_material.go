@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/agent"
 )
 
 const secretStateFileName = "secret-state.json"

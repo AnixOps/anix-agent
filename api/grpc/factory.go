@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/common/monitor"
-	"github.com/AnixOps/anix-agent/v4/common/utils"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/monitor"
+	"github.com/AnixOps/anix-agent/v5/common/utils"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/sirupsen/logrus"
 )
 

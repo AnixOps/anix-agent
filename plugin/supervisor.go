@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AnixOps/anix-agent/v4/common/maintenance"
+	"github.com/AnixOps/anix-agent/v5/common/maintenance"
 	"io"
 	"net/url"
 	"os"
@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/agent"
 )
 
 const (

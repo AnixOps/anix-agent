@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/common/maintenance"
+	"github.com/AnixOps/anix-agent/v5/common/maintenance"
 	"github.com/stretchr/testify/require"
 )
 

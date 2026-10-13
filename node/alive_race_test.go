@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
-	"github.com/AnixOps/anix-agent/v4/limiter"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	"github.com/AnixOps/anix-agent/v5/limiter"
 )
 
 // gateCore is a core whose AddNode runs a hook first: a test stops a node

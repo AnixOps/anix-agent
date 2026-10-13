@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/common/maintenance"
-	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
+	"github.com/AnixOps/anix-agent/v5/common/maintenance"
+	"github.com/AnixOps/anix-agent/v5/plugin/machinetelemetry"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

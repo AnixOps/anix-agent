@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 

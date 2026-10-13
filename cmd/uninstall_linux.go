@@ -11,8 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/AnixOps/anix-agent/v4/conf"
-	"github.com/AnixOps/anix-agent/v4/upgrade"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	"github.com/AnixOps/anix-agent/v5/upgrade"
 )
 
 // What the installers write, and so what uninstall removes. Two installers

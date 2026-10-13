@@ -1,4 +1,4 @@
-module github.com/AnixOps/anix-agent/v4/cmd/anixops-relay
+module github.com/AnixOps/anix-agent/v5/cmd/anixops-relay
 
 go 1.26.0
 

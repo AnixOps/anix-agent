@@ -31,6 +31,14 @@
 
 ### Changed
 
+- **The Go module path is `github.com/AnixOps/anix-agent/v5`** (it was `.../v4`), ahead of
+  the 5.0 release; the product version does not change here and the behaviour is the same.
+  Every import, the `cmd/anixops-relay` module path (`.../v5/cmd/anixops-relay`), the protobuf
+  `go_package` options with their generated bindings (`api/grpc/gen.sh` and `gen.ps1` pass the
+  new module path), and the version ldflag in `Dockerfile`, `build.sh`, `build.ps1` and the
+  release workflow move with it: a build that injects the version needs
+  `-X github.com/AnixOps/anix-agent/v5/cmd.version=<version>`. The frozen
+  `github.com/AnixOps/anix-agent/sdk` module and the anix-control SDK import path are unchanged.
 - Dialling AgentEnrollment (enrollment, renewal and the join) names the last connection
   error, such as a refused connection or a failed TLS verification, instead of only the
   timeout. The process exits with a command's own status (only `join` has one).

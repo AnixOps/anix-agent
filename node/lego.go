@@ -20,8 +20,8 @@ import (
 	"github.com/go-acme/lego/v4/providers/dns"
 	"github.com/go-acme/lego/v4/registration"
 
-	"github.com/AnixOps/anix-agent/v4/common/file"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/common/file"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/lego"
 )

@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/AnixOps/anix-agent/v4/plugin/nategress"
+	"github.com/AnixOps/anix-agent/v5/plugin/nategress"
 )
 
 func main() {

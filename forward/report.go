@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
 	"github.com/AnixOps/anix-control/sdk/forward/wire"

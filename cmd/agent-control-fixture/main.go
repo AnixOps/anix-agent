@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	"github.com/AnixOps/anix-agent/v4/api/agent/state"
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/plugin"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/agent/state"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/plugin"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )

@@ -3,8 +3,8 @@ package hy2
 import (
 	"strings"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/apernet/hysteria/core/v2/server"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"

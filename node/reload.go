@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	vCore "github.com/AnixOps/anix-agent/v4/core"
-	"github.com/AnixOps/anix-agent/v4/limiter"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/limiter"
 	log "github.com/sirupsen/logrus"
 )
 

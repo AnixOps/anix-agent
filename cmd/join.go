@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	"github.com/AnixOps/anix-agent/v4/api/agent/pki"
-	"github.com/AnixOps/anix-agent/v4/conf"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/agent/pki"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	"github.com/spf13/cobra"
 )

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent/agenttest"
-	"github.com/AnixOps/anix-agent/v4/conf"
-	"github.com/AnixOps/anix-agent/v4/forward"
+	"github.com/AnixOps/anix-agent/v5/api/agent/agenttest"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	"github.com/AnixOps/anix-agent/v5/forward"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
 	"github.com/AnixOps/anix-control/sdk/forward/driver"

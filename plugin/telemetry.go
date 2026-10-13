@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
+	"github.com/AnixOps/anix-agent/v5/plugin/machinetelemetry"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	"github.com/AnixOps/anix-control/sdk/telemetry/systemdreport"
 )

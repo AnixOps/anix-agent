@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
+	"github.com/AnixOps/anix-agent/v5/plugin/machinetelemetry"
 	"github.com/AnixOps/anix-control/sdk/telemetry/systemdreport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

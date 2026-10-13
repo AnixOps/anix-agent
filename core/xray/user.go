@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/common/counter"
-	"github.com/AnixOps/anix-agent/v4/common/format"
-	vCore "github.com/AnixOps/anix-agent/v4/core"
-	"github.com/AnixOps/anix-agent/v4/core/xray/app/dispatcher"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/counter"
+	"github.com/AnixOps/anix-agent/v5/common/format"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/core/xray/app/dispatcher"
 	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/proxy"
 )

@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	"github.com/AnixOps/anix-agent/v4/conf"
-	"github.com/AnixOps/anix-agent/v4/plugin"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	"github.com/AnixOps/anix-agent/v5/plugin"
 )
 
 func TestPluginSupervisorSpecNamespacesByFinalNodeID(t *testing.T) {

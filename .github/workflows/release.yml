@@ -154,7 +154,7 @@ jobs:
         run: |
           echo "version: $version"
           mkdir -p build_assets
-          GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath -ldflags "-X 'github.com/AnixOps/anix-agent/v4/cmd.version=$version' -s -w -buildid="
+          GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath -ldflags "-X 'github.com/AnixOps/anix-agent/v5/cmd.version=$version' -s -w -buildid="
           ln -s anix-agent build_assets/V2bX
 
       # The relay of the experimental anixops engine (anix-control H22): its

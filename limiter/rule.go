@@ -3,7 +3,7 @@ package limiter
 import (
 	"regexp"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
 )
 
 func (l *Limiter) CheckDomainRule(destination string) (reject bool) {

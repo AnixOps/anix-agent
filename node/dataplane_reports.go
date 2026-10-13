@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/common/monitor"
-	vCore "github.com/AnixOps/anix-agent/v4/core"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/monitor"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )

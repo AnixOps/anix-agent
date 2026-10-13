@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/AnixOps/anix-agent/v4/common/exec"
+	"github.com/AnixOps/anix-agent/v5/common/exec"
 )
 
 const (

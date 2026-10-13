@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/conf"
-	vCore "github.com/AnixOps/anix-agent/v4/core"
-	"github.com/AnixOps/anix-agent/v4/limiter"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/conf"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/limiter"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 

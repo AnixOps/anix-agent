@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent/pki"
+	"github.com/AnixOps/anix-agent/v5/api/agent/pki"
 )
 
 // `anix-agent identity --json` on a forward node configured by the O1

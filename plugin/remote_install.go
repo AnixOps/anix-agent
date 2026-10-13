@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/agent"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AnixOps/anix-agent/v4/api/agent/pki"
+	"github.com/AnixOps/anix-agent/v5/api/agent/pki"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

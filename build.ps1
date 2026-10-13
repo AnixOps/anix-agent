@@ -29,7 +29,7 @@ $GitCommit = git rev-parse --short HEAD 2>$null
 if (-not $GitCommit) { $GitCommit = "unknown" }
 
 # LDFlags
-$LDFlags = "-s -w -X 'github.com/AnixOps/anix-agent/v4/cmd.version=$Version'"
+$LDFlags = "-s -w -X 'github.com/AnixOps/anix-agent/v5/cmd.version=$Version'"
 
 # 支持的平台和架构
 $Platforms = @(

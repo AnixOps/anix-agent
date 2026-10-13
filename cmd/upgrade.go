@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/AnixOps/anix-agent/v4/api/panel"
-	"github.com/AnixOps/anix-agent/v4/upgrade"
+	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/upgrade"
 	"github.com/spf13/cobra"
 )
 
