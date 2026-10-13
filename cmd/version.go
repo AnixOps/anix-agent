@@ -18,7 +18,7 @@ const (
 )
 
 var (
-	version  = "v4.2.0" // release builds replace this through ldflags
+	version  = "v5.0.0-rc.1" // release builds replace this through ldflags
 	codename = productName
 	intro    = "AnixOps multi-core node agent"
 )
