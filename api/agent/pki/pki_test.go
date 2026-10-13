@@ -312,6 +312,60 @@ func TestListSkipsOtherEntries(t *testing.T) {
 	assert.Empty(t, missing)
 }
 
+func TestNewestPicksTheLastEnrolledUsableIdentity(t *testing.T) {
+	ca := newTestCA(t)
+	root := t.TempDir()
+	save := func(node agentcontrol.AgentNode, cluster string, enrolledAt time.Time, lifetime time.Duration) {
+		t.Helper()
+		key, err := GenerateKey()
+		require.NoError(t, err)
+		issued := ca.issue(t, &key.PublicKey, issueOptions{node: node, cluster: cluster, lifetime: lifetime})
+		identity, err := FromIssued(key, issued, Expectation{Node: node, Now: time.Now()})
+		require.NoError(t, err)
+		identity.EnrolledAt, identity.Bootstrap = enrolledAt, BootstrapJoinToken
+		store, err := NewStore(root, node)
+		require.NoError(t, err)
+		require.NoError(t, store.Save(identity))
+	}
+	_, _, err := Newest(root, "", time.Now())
+	assert.ErrorIs(t, err, ErrNotEnrolled)
+
+	now := time.Now()
+	save(agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: 3}, "prod", now.Add(-2*time.Hour), 0)
+	save(agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: 7}, "prod", now.Add(-time.Hour), 0)
+	// Enrolled last, but expired, of another cluster, or unreadable.
+	save(agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: 8}, "prod", now, time.Second)
+	save(agentcontrol.AgentNode{Kind: agentcontrol.NodeKindForward, ID: 9}, "staging", now, 0)
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "proxy-10"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "proxy-10", "identity.pem"), []byte("garbage"), 0o600))
+
+	identity, store, err := Newest(root, "prod", now.Add(time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, "proxy-7", identity.Node.String())
+	assert.Equal(t, filepath.Join(root, "proxy-7"), store.Dir())
+	assert.Equal(t, BootstrapJoinToken, identity.Bootstrap)
+
+	// Without a pinned cluster the staging forward node is the newest.
+	identity, _, err = Newest(root, "", now.Add(time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, "forward-9", identity.Node.String())
+
+	_, _, err = Newest(filepath.Join(root, "missing"), "", now)
+	assert.ErrorIs(t, err, ErrNotEnrolled)
+}
+
+func TestNewJoinCSRNamesNoNode(t *testing.T) {
+	key, err := GenerateKey()
+	require.NoError(t, err)
+	der, err := NewJoinCSR(key)
+	require.NoError(t, err)
+	request, err := x509.ParseCertificateRequest(der)
+	require.NoError(t, err)
+	require.NoError(t, request.CheckSignature())
+	assert.Equal(t, JoinCSRCommonName, request.Subject.CommonName)
+	assert.Empty(t, request.URIs)
+}
+
 func savedIdentity(t *testing.T) (*Store, *Identity) {
 	t.Helper()
 	ca := newTestCA(t)

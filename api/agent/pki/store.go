@@ -409,3 +409,33 @@ func List(root string) ([]*Store, error) {
 	sort.Slice(stores, func(i, j int) bool { return stores[i].dir < stores[j].dir })
 	return stores, nil
 }
+
+// Newest returns the usable identity under root that was enrolled last
+// (then: issued last), and its store: one that loads (private files, a key
+// and certificate of its node, of cluster when set) and has not expired at
+// now. Without one it answers ErrNotEnrolled. `anix-agent join` uses it to
+// leave a machine that already is a node as it is.
+func Newest(root, cluster string, now time.Time) (*Identity, *Store, error) {
+	stores, err := List(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	var (
+		newest      *Identity
+		newestStore *Store
+	)
+	for _, store := range stores {
+		identity, err := store.Load(Expectation{Node: store.node, Cluster: cluster, Now: now})
+		if err != nil || identity.Expired(now) {
+			continue
+		}
+		if newest == nil || identity.EnrolledAt.After(newest.EnrolledAt) ||
+			(identity.EnrolledAt.Equal(newest.EnrolledAt) && identity.NotBefore.After(newest.NotBefore)) {
+			newest, newestStore = identity, store
+		}
+	}
+	if newest == nil {
+		return nil, nil, ErrNotEnrolled
+	}
+	return newest, newestStore, nil
+}

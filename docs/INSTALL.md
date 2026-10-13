@@ -59,6 +59,99 @@ The configuration it writes holds credentials only (no `ApiKey`, no `Cores`):
   (`CertDir/proxy-<id>/identity.pem`); `validate-config` refuses it
   otherwise. Configurations with an `ApiKey` work as before.
 
+### Joining a node group (`anix-agent join`)
+
+Control 5.0 replaces the per-node command with one per node group (anix-control
+`docs/design/node-onboarding`, "The Install Command"):
+
+```bash
+curl -fsSL https://<control>/install.sh | sudo bash -s -- -u https://<control> -t anixjoin_...
+```
+
+The same command works on any number of machines; each becomes a node of the
+group. After installing the binary and the units, the installer writes the
+token to a file private to `anixops-agent` and runs, as that user:
+
+```bash
+anix-agent join --control https://<control> --grpc <grpc host:port> --token-file <file> \
+  [--name hk-01] [--host 203.0.113.5] [--address <IPv4>] [--address <IPv6>] [--reset] --json
+```
+
+- **The token decides the call.** `anixjoin_...` (a node group's join token)
+  calls `AgentEnrollment.Join`: Control creates a node of the group, or gives a
+  reinstalled machine its earlier node back. `anixagt_...` (a one-time
+  enrollment credential, for moving an existing node to a new machine) calls
+  `AgentEnrollment.Enroll` without `x-node-id`: the credential names its node.
+  Anything else is refused. The file must have mode 0600 or stricter, the same
+  check as `AgentIdentity.EnrollCredentialFile`.
+- **What the join sends.** A CSR for a key generated on the machine, the host
+  name, `--name`, `--host`, the non-empty `--address` values in order (the installer takes
+  them from Control's `GET /install/ip` over IPv4 and IPv6), `GOARCH`, `GOOS`,
+  the Agent's version, `--reset`, and the machine fingerprint: the hex SHA-256
+  of `anixops-join-v1\n` and the machine ID (`/etc/machine-id`, else
+  `/var/lib/dbus/machine-id`; empty without one, so such a machine never
+  rejoins). The fingerprint is never authentication; it only selects the node a
+  machine may rejoin under Control's rejoin rule.
+- **TLS only.** Control's agent listener (`--grpc`) is verified against the
+  system roots for the host of `--grpc`; there is no plaintext mode.
+- **The identity.** The certificate must name the node Control answered (and
+  the cluster of `--cluster`, when given). It is stored like an enrolled one, in
+  `--pki-dir/<node>` (default `/var/lib/anixops-agent/pki`: `identity.pem`,
+  `ca.pem`, `identity.json`, directory 0700, files 0600, owned by the user that
+  ran the join), so `anix-agent server` with `"AgentNode": "<node>"` and
+  `AgentIdentity.CertDir` set to that root starts enrolled and renews it as
+  usual. `anix-agent identity --json` lists it with `"bootstrap": "join-token"`.
+  The token file is removed once the identity is stored.
+- **A machine that is a node already.** When `--pki-dir` holds an identity
+  that loads and has not expired, the join takes the one enrolled last and asks
+  Control whether it still accepts it: it presents the certificate on
+  `AgentEnrollment.GetTrustBundle`, which needs a valid agent certificate and
+  refuses revoked ones.
+  - Control accepts it: the join does not use the token and prints that node
+    (`created` false, `approval` `unknown`), so re-running the installer
+    upgrades in place.
+  - Control refuses it (`agent_cert_revoked`, `agent_cert_expired`,
+    `agent_cert_invalid`, `agent_cert_wrong_cluster`, `agent_cert_wrong_node`,
+    or `Unauthenticated`/`PermissionDenied` without a code; deleting a node
+    revokes its certificates): the join goes ahead with the token as if the
+    machine had no identity. The refused identity's directory stays; a new node
+    gets its own, and a rejoin of the same node replaces the certificate in it.
+  - Control cannot be reached (network, TLS): the join exits 4 and changes
+    nothing.
+
+  `--reset` skips the check, ignores the identities on the machine, without
+  removing them, and asks Control for a new node (never the machine's earlier
+  one), which gets a directory of its own.
+- **Run it as the service user.** The identity store accepts only files owned by
+  the user that reads them, so an identity written by `sudo anix-agent join` (as
+  root) is refused by the service running as `anixops-agent`. The installer runs
+  the join as `anixops-agent`; by hand, use `sudo -u anixops-agent anix-agent join ...`
+  (or `chown -R anixops-agent:` the node's directory afterwards).
+
+With `--json` it prints one JSON object on stdout:
+
+```json
+{"node":"proxy-12","node_name":"hk-01","group":"HK","created":true,"approval":"approved","spiffe_id":"spiffe://anixops/<cluster>/agent/proxy-12","not_after":"2026-10-19T08:00:00Z"}
+```
+
+`created` is false when the machine rejoined its earlier node, for an
+`anixagt_` credential, and when the machine already held an identity.
+`approval` is `approved`, `pending` (the group requires approval: the node
+connects, and Control sends its configuration and users once an administrator
+approves it), or `unknown` when Control did not say: an `anixagt_` credential
+(Enroll does not answer it) or an identity already on the machine. `node_name`
+and `group` are empty when Control did not name them. Without `--json` it prints
+one line. Errors go to stderr, with Control's error code (`join_rejected`,
+`agent_enrollment_rejected`). Exit status:
+
+| Status | Meaning |
+|---|---|
+| 0 | Joined, or the machine already holds an identity Control accepts |
+| 1 | Any other failure: Control refused the request for another reason (or predates `Join`), the certificate is not the named node's, the identity could not be stored |
+| 2 | Bad arguments: a flag, or a token file that is missing, not private, or holds no join token or enrollment credential |
+| 3 | Control rejected the token |
+| 4 | Control could not be reached: network, TLS verification, or no answer in time, also while checking an identity already on the machine |
+
 ### Forwarding and sysctl
 
 nftables forwarding needs the kernel to forward. The Agent checks

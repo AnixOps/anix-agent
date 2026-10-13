@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Added
+
+- **`anix-agent join`: a machine joins a node group with its join token** (5.0 node
+  onboarding, phase 5; anix-control `docs/design/node-onboarding`, "Join Protocol" and "Agent
+  Changes"). Control 5.0's installer runs it as `anixops-agent` before starting the service:
+  `anix-agent join --control <https url> --grpc <host:port> --token-file <file> [--name]
+  [--host] [--address ...] [--reset] [--pki-dir] [--cluster] [--json]`. An `anixjoin_` token
+  calls `AgentEnrollment.Join` with a CSR, the machine fingerprint (SHA-256 of
+  `anixops-join-v1\n` and `/etc/machine-id`), the host name, the requested name and host, the
+  public addresses, `GOARCH`, `GOOS`, the version and `--reset`; an `anixagt_` credential calls
+  `Enroll` without node metadata. The token file gets the enrollment credential file's checks
+  (mode 0600 or stricter, size limit, prefix). The certificate must name the node Control
+  answered; it is stored in `<pki-dir>/<node>` with the identity store's modes, so `anix-agent
+  server` with `AgentNode: <node>` starts enrolled, and the token file is removed. A machine
+  whose `--pki-dir` already holds a usable identity is left alone when Control still accepts it
+  (checked by presenting it on `AgentEnrollment.GetTrustBundle`; `approval` is `unknown`). When
+  Control refuses it (`agent_cert_*`, such as a deleted node's revoked certificate) the join goes
+  ahead with the token and keeps the old directory; when Control cannot be reached it exits 4.
+  `--reset` skips the check and asks for a new node in a directory of its own. `--json`
+  prints one object (`node`, `node_name`, `group`, `created`, `approval`, `spiffe_id`,
+  `not_after`); exit status 2 is bad arguments, 3 a rejected token (`join_rejected`,
+  `agent_enrollment_rejected`), 4 Control unreachable (network, TLS), 1 anything else. See
+  `docs/INSTALL.md`, "Joining a node group".
+  **Pin:** the anix-control SDK moves to `0c90ce6f` of anix-control#299 (`feat/v5-sdk-join`,
+  the `Join` contract), which is not merged yet; the pin moves to the go_dev merge commit when
+  it is. The `cmd/anixops-relay` module keeps go_dev `d8684dc2`.
+
+### Changed
+
+- Dialling AgentEnrollment (enrollment, renewal and the join) names the last connection
+  error, such as a refused connection or a failed TLS verification, instead of only the
+  timeout. The process exits with a command's own status (only `join` has one).
+- The test Control (`api/agent/agenttest`) serves `Join`, takes `Enroll` with a credential and
+  no node metadata as Control does, and its server certificate also names `127.0.0.1`.
+
 ## 4.2.0 - 2026-10-10
 
 Upgrade the Agent before Control, as for every 4.2 candidate. The Agent and Control

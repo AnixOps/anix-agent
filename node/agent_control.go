@@ -95,7 +95,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		ServerName:   serverName,
 		Identity:     identity,
 		AgentVersion: panel.Version,
-		InstanceID:   fmt.Sprintf("%s-%d-%d", hostname, os.Getpid(), nodeID),
+		InstanceID:   agentapi.InstanceID(hostname, strconv.Itoa(nodeID)),
 		Capabilities: capabilities,
 		Labels: map[string]string{
 			"core":      core.Type(),

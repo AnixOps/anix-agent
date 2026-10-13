@@ -379,10 +379,31 @@ func (m *identityManager) readCredential() (string, error) {
 	if m.credentialFile == "" {
 		return "", nil
 	}
-	file, err := os.Open(m.credentialFile)
+	credential, err := ReadCredentialFile(m.credentialFile, agentcontrol.EnrollmentCredentialPrefix)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
+	return credential, err
+}
+
+// maxCredentialFileBytes bounds the read of the credential file; an
+// anixagt_ credential is about 50 bytes, an anixjoin_ join token about 52.
+const maxCredentialFileBytes = 4096
+
+// credentialKinds describes the bootstrap credentials by prefix.
+var credentialKinds = map[string]string{
+	agentcontrol.EnrollmentCredentialPrefix: "enrollment credential",
+	agentcontrol.JoinTokenPrefix:            "join token",
+}
+
+// ReadCredentialFile reads a bootstrap credential (a one-time anixagt_
+// enrollment credential, a node group's anixjoin_ join token) from path. The
+// file must be private to the Agent's user (no group or other permissions);
+// at most maxCredentialFileBytes are read. It answers the trimmed content,
+// which must start with one of prefixes, "" for an empty file, and an error
+// that wraps fs.ErrNotExist when the file is missing.
+func ReadCredentialFile(path string, prefixes ...string) (string, error) {
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -392,7 +413,7 @@ func (m *identityManager) readCredential() (string, error) {
 		return "", err
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("%s has mode %04o; an enrollment credential must be private (chmod 600)", m.credentialFile, info.Mode().Perm())
+		return "", fmt.Errorf("%s has mode %04o; %s must be private (chmod 600)", path, info.Mode().Perm(), describeCredentials(prefixes))
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, maxCredentialFileBytes))
 	if err != nil {
@@ -402,15 +423,30 @@ func (m *identityManager) readCredential() (string, error) {
 	if credential == "" {
 		return "", nil
 	}
-	if !strings.HasPrefix(credential, agentcontrol.EnrollmentCredentialPrefix) {
-		return "", fmt.Errorf("%s does not hold an %s enrollment credential", m.credentialFile, agentcontrol.EnrollmentCredentialPrefix)
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(credential, prefix) {
+			return credential, nil
+		}
 	}
-	return credential, nil
+	return "", fmt.Errorf("%s does not hold %s", path, describeCredentials(prefixes))
 }
 
-// maxCredentialFileBytes bounds the read of the credential file; an
-// anixagt_ credential is about 50 bytes.
-const maxCredentialFileBytes = 4096
+// describeCredentials names the credentials of prefixes: "an anixagt_
+// enrollment credential or an anixjoin_ join token".
+func describeCredentials(prefixes []string) string {
+	names := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		kind := credentialKinds[prefix]
+		if kind == "" {
+			kind = "credential"
+		}
+		names = append(names, "an "+prefix+" "+kind)
+	}
+	if len(names) == 0 {
+		return "a credential"
+	}
+	return strings.Join(names, " or ")
+}
 
 func credentialDigest(credential string) string {
 	digest := sha256.Sum256([]byte(credential))

@@ -257,6 +257,15 @@ Windows：
 `anix-agent identity [--json]` 显示每个节点的 SPIFFE ID、证书序列号、过期与续期时间，
 只读本地文件，不连接 Control。容器部署需把 `CertDir` 挂载为持久卷。
 
+`anix-agent join --control <url> --grpc <host:port> --token-file <file>` 是 Control 5.0
+安装脚本以 `anixops-agent` 用户运行的一次性接入：节点组的 `anixjoin_` 接入令牌调用
+`AgentEnrollment.Join`（`anixagt_` 凭证调用 `Enroll`），校验证书后写入
+`CertDir/<node>`，`anix-agent server` 随后直接使用该身份。本机已有可用身份时先用该证书调用
+`GetTrustBundle` 询问 Control：仍被接受则不再接入；被拒绝（如节点已删除、证书已吊销）则用令牌
+重新接入并保留旧目录；无法连接 Control 时退出码为 4。`--reset` 跳过检查并申请新节点。须以服务用户
+`anixops-agent` 运行（root 写入的文件会被身份存储拒绝）。JSON 输出与退出码见 `docs/INSTALL.md`
+“Joining a node group”。
+
 ### 控制流数据面：节点配置（AgentStream）
 
 开启 `AgentControlEnabled` 后，Agent 在 Hello 中声明 `config.v1`。Control 支持时
