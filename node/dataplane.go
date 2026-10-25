@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,7 +48,13 @@ var (
 type nodeDataPlane struct {
 	nodeID      int
 	controllers []*Controller
-	client      *agentapi.Client
+	// extras run the node's protocols past its first one, by protocol id
+	// (reconcileExtras), guarded by extrasMu: an Agent of the installer's
+	// configuration has one controller, which runs the first protocol, and
+	// a node may serve more, also two of one type.
+	extrasMu sync.Mutex
+	extras   map[uint64]*Controller
+	client   *agentapi.Client
 	// forward runs the forwarding state of the node's snapshots (F3b),
 	// nil when the node does not forward.
 	forward *forward.Component
@@ -141,7 +149,189 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 			errs = append(errs, fmt.Errorf("%s: %w", controller.label(), err))
 		}
 	}
+	if err := n.reconcileExtras(ctx, snapshot); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// allControllers lists the node's controllers: the configuration file's and
+// the extras, in protocol order.
+func (n *nodeDataPlane) allControllers() []*Controller {
+	n.extrasMu.Lock()
+	defer n.extrasMu.Unlock()
+	if len(n.extras) == 0 {
+		return n.controllers
+	}
+	all := append([]*Controller(nil), n.controllers...)
+	ids := make([]uint64, 0, len(n.extras))
+	for id := range n.extras {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		all = append(all, n.extras[id])
+	}
+	return all
+}
+
+// expandingController is the controller whose node runs every protocol of
+// a snapshot: the only controller of the node, configured with no
+// NodeType (the installer's configuration). It runs the first protocol,
+// and extras run the others. nil when the configuration file names the
+// node's protocols itself (a NodeType, or several entries).
+func (n *nodeDataPlane) expandingController() *Controller {
+	if len(n.controllers) != 1 || normalizeNodeType(n.controllers[0].nodeType) != "" {
+		return nil
+	}
+	return n.controllers[0]
+}
+
+// reconcileExtras brings the node's extra controllers to snapshot's
+// protocols past the first (snapshotExtraProtocols): one that is gone is
+// closed first (its port may be another protocol's now), a new one starts
+// with the first controller's users, and one that stays applies the
+// snapshot as any controller does.
+func (n *nodeDataPlane) reconcileExtras(ctx context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
+	base := n.expandingController()
+	var wanted []uint64
+	if base != nil {
+		ids, err := snapshotExtraProtocols(snapshot)
+		if err != nil {
+			return agentapi.InvalidConfig(err)
+		}
+		wanted = ids
+	}
+	keep := make(map[uint64]bool, len(wanted))
+	for _, id := range wanted {
+		keep[id] = true
+	}
+	var errs []error
+	n.extrasMu.Lock()
+	for id, extra := range n.extras {
+		if keep[id] {
+			continue
+		}
+		delete(n.extras, id)
+		n.forgetController(extra)
+		if err := extra.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", extra.label(), err))
+		}
+	}
+	n.extrasMu.Unlock()
+	for _, id := range wanted {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n.extrasMu.Lock()
+		extra := n.extras[id]
+		n.extrasMu.Unlock()
+		if extra != nil {
+			if err := extra.applySnapshot(snapshot); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", extra.label(), err))
+			}
+			continue
+		}
+		extra = newExtraController(base, id, n)
+		if err := n.startExtra(base, extra, snapshot); err != nil {
+			_ = extra.Close()
+			errs = append(errs, fmt.Errorf("%s: %w", extra.label(), err))
+			continue
+		}
+		n.extrasMu.Lock()
+		if n.extras == nil {
+			n.extras = map[uint64]*Controller{}
+		}
+		n.extras[id] = extra
+		n.extrasMu.Unlock()
+		log.WithField("tag", extra.tag).Info("Started the node's protocol in its own inbound")
+	}
+	return errors.Join(errs...)
+}
+
+// startExtra starts extra from snapshot with the users the node runs: the
+// stream start's, else the first controller's.
+func (n *nodeDataPlane) startExtra(base, extra *Controller, snapshot *agentv1pb.ConfigSnapshot) error {
+	info, err := nodeInfoFromSnapshot(snapshot, "", extra.protocolID, base.apiClient.GetNodeID())
+	if err != nil {
+		return agentapi.InvalidConfig(err)
+	}
+	users, ok := n.startupUserList()
+	if !ok {
+		users = base.currentUsers()
+	}
+	return extra.startWith(info, users, n.startupAliveList())
+}
+
+// closeExtras closes the node's extra controllers, when the node stops.
+func (n *nodeDataPlane) closeExtras() error {
+	n.extrasMu.Lock()
+	extras := n.extras
+	n.extras = nil
+	n.extrasMu.Unlock()
+	var errs []error
+	for _, extra := range extras {
+		n.forgetController(extra)
+		errs = append(errs, extra.Close())
+	}
+	return errors.Join(errs...)
+}
+
+// forgetController drops a closed controller's online IPs from the node's
+// reports.
+func (n *nodeDataPlane) forgetController(controller *Controller) {
+	n.reportMu.Lock()
+	delete(n.online, controller)
+	n.reportMu.Unlock()
+}
+
+// shareLegacyPull hands the users and alive list the node's first
+// controller pulled over the legacy transports (nil: unchanged) to the
+// extras, which pull nothing themselves.
+func (n *nodeDataPlane) shareLegacyPull(from *Controller, users []panel.UserInfo, alive map[int]int) {
+	if n == nil || (users == nil && alive == nil) || from != n.expandingController() {
+		return
+	}
+	for _, extra := range n.allControllers()[len(n.controllers):] {
+		var copied []panel.UserInfo
+		if users != nil {
+			copied = append([]panel.UserInfo{}, users...)
+		}
+		extra.reconcileMu.Lock()
+		err := extra.reconcileLocked(nil, copied, alive)
+		extra.reconcileMu.Unlock()
+		if err != nil {
+			log.WithField("tag", extra.tag).WithError(err).Error("Could not apply the node's users")
+		}
+	}
+}
+
+// snapshotExtraProtocols lists the protocols of snapshot past the first, in
+// the document's order, that legacy_pull.protocols answers. The first is
+// the one legacy_pull.default answers. None when Control sends no
+// per-protocol answers (an older Control, or a raw configuration, which the
+// node runs instead of its protocols).
+func snapshotExtraProtocols(snapshot *agentv1pb.ConfigSnapshot) ([]uint64, error) {
+	if snapshot == nil {
+		return nil, nil
+	}
+	var document snapshotDocument
+	if err := json.Unmarshal(snapshot.GetConfigJson(), &document); err != nil {
+		return nil, fmt.Errorf("decode the configuration document: %w", err)
+	}
+	if document.LegacyPull == nil || len(document.LegacyPull.Protocols) == 0 || len(document.Protocols) == 0 {
+		return nil, nil
+	}
+	if _, ok := document.LegacyPull.Protocols[strconv.FormatUint(document.Protocols[0].ID, 10)]; !ok {
+		return nil, nil
+	}
+	var ids []uint64
+	for _, protocol := range document.Protocols[1:] {
+		if body := document.LegacyPull.Protocols[strconv.FormatUint(protocol.ID, 10)]; len(body) > 0 && string(body) != "null" {
+			ids = append(ids, protocol.ID)
+		}
+	}
+	return ids, nil
 }
 
 // ApplyUsers implements agentapi.UsersApplier: each running controller
@@ -149,7 +339,7 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 func (n *nodeDataPlane) ApplyUsers(ctx context.Context, set agentapi.UserSet) error {
 	users := panelUsers(set.Users)
 	var errs []error
-	for _, controller := range n.controllers {
+	for _, controller := range n.allControllers() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -164,7 +354,7 @@ func (n *nodeDataPlane) ApplyUsers(ctx context.Context, set agentapi.UserSet) er
 // limits count the alive list from Control (alive.v1), each user missing
 // from it at 0.
 func (n *nodeDataPlane) ApplyAlive(ctx context.Context, alive map[uint64]uint32) {
-	for _, controller := range n.controllers {
+	for _, controller := range n.allControllers() {
 		if ctx.Err() != nil {
 			return
 		}
@@ -408,17 +598,25 @@ func (n *nodeDataPlane) allStarted() bool {
 // Agent runs: the UniProxy configuration answers (legacy_pull), byte for
 // byte what the legacy pull would give the node.
 type snapshotDocument struct {
-	Kind       string `json:"kind"`
+	Kind string `json:"kind"`
+	// Protocols are the node's enabled protocols, in order.
+	Protocols []struct {
+		ID uint64 `json:"id"`
+	} `json:"protocols"`
 	LegacyPull *struct {
 		Default json.RawMessage            `json:"default"`
 		Types   map[string]json.RawMessage `json:"types"`
+		// Protocols holds each enabled protocol's answer, by protocol id
+		// (UniProxy's protocol_id); Control sends it since v5.0.0-rc.2.
+		Protocols map[string]json.RawMessage `json:"protocols"`
 	} `json:"legacy_pull"`
 }
 
 // nodeInfoFromSnapshot returns the node configuration a controller with
 // nodeType (its configured NodeType, empty for the node's default) runs
-// from snapshot: legacy_pull.types[nodeType], or legacy_pull.default.
-func nodeInfoFromSnapshot(snapshot *agentv1pb.ConfigSnapshot, nodeType string, nodeID int) (*panel.NodeInfo, error) {
+// from snapshot: legacy_pull.types[nodeType], or legacy_pull.default. An
+// extra controller (protocolID set) runs legacy_pull.protocols[protocolID].
+func nodeInfoFromSnapshot(snapshot *agentv1pb.ConfigSnapshot, nodeType string, protocolID uint64, nodeID int) (*panel.NodeInfo, error) {
 	if snapshot == nil {
 		return nil, errors.New("no configuration snapshot")
 	}
@@ -433,7 +631,12 @@ func nodeInfoFromSnapshot(snapshot *agentv1pb.ConfigSnapshot, nodeType string, n
 		return nil, errors.New("the configuration document has no legacy_pull")
 	}
 	var body json.RawMessage
-	if normalized := normalizeNodeType(nodeType); normalized != "" {
+	if protocolID != 0 {
+		body = document.LegacyPull.Protocols[strconv.FormatUint(protocolID, 10)]
+		if len(body) == 0 || string(body) == "null" {
+			return nil, fmt.Errorf("the node serves no protocol %d (legacy_pull.protocols)", protocolID)
+		}
+	} else if normalized := normalizeNodeType(nodeType); normalized != "" {
 		body = document.LegacyPull.Types[normalized]
 		if len(body) == 0 || string(body) == "null" {
 			return nil, fmt.Errorf("the node serves no %q configuration (legacy_pull.types)", normalized)

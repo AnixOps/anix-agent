@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **A node runs every protocol Control serves it, also two of one type** (shadowsocks
+  `aes-256-gcm` and shadowsocks 2022 on two ports). With the installer's configuration (one
+  node entry, no `NodeType`) the node's controller runs the first protocol, and each further
+  protocol of the configuration snapshot runs in an inbound of its own (core tag
+  `[host]-type:node#<protocol id>`), from `legacy_pull.protocols` (anix-control#332). Users,
+  alive lists and reports cover every inbound; a protocol Control drops is removed. A Control
+  that does not send `legacy_pull.protocols`, a raw configuration, or a configuration file
+  that names `NodeType`s keep running as before.
+
 ## 5.0.0-rc.1 - 2026-10-13
 
 The Agent and Control share the version number (H25). This is the first 5.0 candidate.
