@@ -283,13 +283,17 @@ func (n *Node) closeResources() error {
 	for _, dataPlane := range n.dataPlanes {
 		dataPlane.close()
 	}
-	n.dataPlanes = nil
 	for _, client := range n.agentClients {
 		if client != nil {
 			closeErr = errors.Join(closeErr, client.Close())
 		}
 	}
 	n.agentClients = nil
+	// The extras once no stream applies a snapshot any more.
+	for _, dataPlane := range n.dataPlanes {
+		closeErr = errors.Join(closeErr, dataPlane.closeExtras())
+	}
+	n.dataPlanes = nil
 
 	for _, supervisor := range n.pluginSupervisors {
 		if supervisor == nil {

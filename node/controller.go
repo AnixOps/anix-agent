@@ -60,6 +60,10 @@ type Controller struct {
 	// of a configuration snapshot (legacy_pull.types), empty for the node's
 	// default answer.
 	nodeType string
+	// protocolID is the protocol an extra controller of the node runs
+	// (legacy_pull.protocols, nodeDataPlane.reconcileExtras), 0 for a
+	// controller of the configuration file.
+	protocolID uint64
 	// started is set once the node runs in the core.
 	started atomic.Bool
 	// lastConfigMode and lastUsersMode are the transports the last
@@ -139,7 +143,7 @@ func (c *Controller) fetchLegacyUsers() ([]panel.UserInfo, map[int]int, error) {
 // from the control stream: it starts the node, or reloads it through the
 // same restart path as a legacy configuration change.
 func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
-	node, err := nodeInfoFromSnapshot(snapshot, c.nodeType, c.apiClient.GetNodeID())
+	node, err := nodeInfoFromSnapshot(snapshot, c.nodeType, c.protocolID, c.apiClient.GetNodeID())
 	if err != nil {
 		// The document itself is wrong: config_invalid.
 		return agentapi.InvalidConfig(err)
@@ -258,6 +262,9 @@ func (c *Controller) label() string {
 	if nodeType == "" {
 		nodeType = "default"
 	}
+	if c.protocolID != 0 {
+		nodeType = fmt.Sprintf("protocol %d", c.protocolID)
+	}
 	return fmt.Sprintf("node %d (%s)", c.apiClient.GetNodeID(), nodeType)
 }
 
@@ -291,7 +298,7 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 	if len(c.Options.Name) == 0 {
 		c.tag = c.buildNodeTag(node)
 	} else {
-		c.tag = c.Options.Name
+		c.tag = c.Options.Name + c.protocolTagSuffix()
 	}
 	c.logHook = newRemoteLogHook(c.reportNodeLogs, c.tag)
 	log.StandardLogger().AddHook(c.logHook)
@@ -391,7 +398,16 @@ func (c *Controller) Close() error {
 }
 
 func (c *Controller) buildNodeTag(node *panel.NodeInfo) string {
-	return fmt.Sprintf("[%s]-%s:%d", c.apiClient.GetAPIHost(), node.Type, node.Id)
+	return fmt.Sprintf("[%s]-%s:%d", c.apiClient.GetAPIHost(), node.Type, node.Id) + c.protocolTagSuffix()
+}
+
+// protocolTagSuffix keeps an extra controller's core tag apart from the
+// node's other protocols, also those of the same type.
+func (c *Controller) protocolTagSuffix() string {
+	if c.protocolID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("#%d", c.protocolID)
 }
 
 func (c *Controller) buildSyncConfig() *SyncConfig {

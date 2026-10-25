@@ -243,7 +243,7 @@ func (n *nodeDataPlane) nodeStatus(context.Context) (*agentv1pb.NodeStatus, erro
 		UptimeSeconds: info.Uptime, RuntimeHealthy: true, ObservedAtUnixMs: time.Now().UnixMilli(),
 	}
 	var problems []string
-	for _, controller := range n.controllers {
+	for _, controller := range n.allControllers() {
 		if !controller.isStarted() {
 			continue
 		}
@@ -285,7 +285,7 @@ func (n *nodeDataPlane) runtimeHealthChanged() {
 		return
 	}
 	healthy, messages := true, []string(nil)
-	for _, controller := range n.controllers {
+	for _, controller := range n.allControllers() {
 		if !controller.isStarted() {
 			continue
 		}

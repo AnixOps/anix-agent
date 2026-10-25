@@ -62,6 +62,13 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 func (c *Controller) nodeInfoMonitor() (err error) {
 	c.reconcileMu.Lock()
 	defer c.reconcileMu.Unlock()
+	if c.protocolID != 0 {
+		// An extra controller pulls nothing: its configuration comes only
+		// from the stream's snapshots (a legacy pull answers the node's
+		// first protocol), and its users from the node's first controller
+		// (shareLegacyPull).
+		return nil
+	}
 
 	// The configuration comes from the control stream's snapshots while
 	// it carries config.v1, and through the legacy pull otherwise.
@@ -124,7 +131,11 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	if c.streamCarriesNodeData() || c.streamCarriesMaintenance() {
 		c.retireLegacySync()
 	}
-	return c.reconcileLocked(newN, newU, newA)
+	if err := c.reconcileLocked(newN, newU, newA); err != nil {
+		return err
+	}
+	c.stream.shareLegacyPull(c, newU, newA)
+	return nil
 }
 
 // pullCacheResetter is a legacy transport that remembers its last answers

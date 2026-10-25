@@ -419,21 +419,21 @@ func TestNodeInfoFromSnapshotPicksTheControllersNodeType(t *testing.T) {
 	}
 	snapshot := agenttest.Snapshot(1, document)
 
-	info, err := nodeInfoFromSnapshot(snapshot, "", 12)
+	info, err := nodeInfoFromSnapshot(snapshot, "", 0, 12)
 	require.NoError(t, err)
 	assert.Equal(t, "vless", info.Type)
 	assert.Equal(t, 12, info.Id)
-	info, err = nodeInfoFromSnapshot(snapshot, "V2Ray", 12)
+	info, err = nodeInfoFromSnapshot(snapshot, "V2Ray", 0, 12)
 	require.NoError(t, err)
 	assert.Equal(t, "vmess", info.Type)
 	assert.Equal(t, 10086, info.VAllss.ServerPort)
 
-	_, err = nodeInfoFromSnapshot(snapshot, "trojan", 12)
+	_, err = nodeInfoFromSnapshot(snapshot, "trojan", 0, 12)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"trojan"`)
 
 	forward := agenttest.Snapshot(1, map[string]any{"kind": "forward", "legacy_rules": []any{}})
-	_, err = nodeInfoFromSnapshot(forward, "", 12)
+	_, err = nodeInfoFromSnapshot(forward, "", 0, 12)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "forward")
 
@@ -441,7 +441,7 @@ func TestNodeInfoFromSnapshotPicksTheControllersNodeType(t *testing.T) {
 	// configuration (it holds the node's secrets).
 	secret := proxyDocument(443)
 	secret["legacy_pull"].(map[string]any)["default"] = map[string]any{"private_key": "do-not-log", "routes": []any{map[string]any{"id": 1, "match": 7, "action": "block"}}, "node_type": "vless"}
-	_, err = nodeInfoFromSnapshot(agenttest.Snapshot(2, secret), "", 12)
+	_, err = nodeInfoFromSnapshot(agenttest.Snapshot(2, secret), "", 0, 12)
 	require.Error(t, err)
 	assert.False(t, strings.Contains(err.Error(), "do-not-log"))
 }
