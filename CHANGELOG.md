@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 5.0.0-rc.2 - 2026-10-25
+
+The second 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.2. It adds one change
+over 5.0.0-rc.1: a node runs every protocol Control serves it (below). Upgrade the Agent
+first, then Control; until Control sends `legacy_pull.protocols`, a node runs its first
+protocol as before.
+
 ### Added
 
 - **A node runs every protocol Control serves it, also two of one type** (shadowsocks
