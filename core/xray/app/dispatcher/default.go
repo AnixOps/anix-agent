@@ -167,7 +167,6 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 		Writer: downlinkWriter,
 	}
 
-	ctx = contextWithDestinationBinding(ctx)
 	sessionInbound := session.InboundFromContext(ctx)
 	var user *protocol.MemoryUser
 	if sessionInbound != nil {
@@ -368,6 +367,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 		ctx = session.ContextWithContent(ctx, content)
 	}
 
+	ctx = contextWithDestinationBinding(ctx)
 	sessionInbound := session.InboundFromContext(ctx)
 	var user *protocol.MemoryUser
 	if sessionInbound != nil {
