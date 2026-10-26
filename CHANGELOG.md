@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- **Diagnostics on every proxy node.** The Agent now advertises `agent.diagnostic` on every
+  proxy node, not only on a node that forwards, and runs `service_status`, `service_restart`
+  and `log_tail` on its own unit (service `anix-agent`, `anix-agent.service`). A restart of
+  the Agent is answered first and queued 2 seconds later (`systemctl --no-block restart`), so
+  Control gets the answer before the process ends; the Agent then reconnects. Forwarding
+  nodes keep gost's unit and the forward checks. Control needs to allow the `anix-agent`
+  service for the panel to offer it.
+
 ## 5.0.0-rc.5 - 2026-10-26
 
 The fifth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.5. It fixes destination

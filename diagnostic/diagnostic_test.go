@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
@@ -104,5 +105,37 @@ func TestForwardChecks(t *testing.T) {
 	}
 	if _, err := e.Handle(context.Background(), operation(t, "forward.bogus", map[string]any{})); err == nil {
 		t.Fatal("an unknown forward action fails")
+	}
+}
+
+func TestSelfRestartAnswersBeforeItRuns(t *testing.T) {
+	var ran []string
+	var deferred func()
+	e := &Executor{
+		Units: AgentUnits(),
+		Self:  AgentService,
+		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			ran = append(ran, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+		After: func(_ time.Duration, f func()) { deferred = f },
+	}
+	out, err := e.Handle(context.Background(), operation(t, ActionServiceRestart, map[string]any{"service": AgentService}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state State
+	if err := json.Unmarshal(out, &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Success || !strings.Contains(state.Output, AgentUnit) {
+		t.Fatalf("restart answer: %+v", state)
+	}
+	if len(ran) != 0 || deferred == nil {
+		t.Fatalf("the restart runs after the answer: ran %q", ran)
+	}
+	deferred()
+	if want := "systemctl --no-block restart anix-agent.service"; len(ran) != 1 || ran[0] != want {
+		t.Fatalf("ran %q, want %q", ran, want)
 	}
 }

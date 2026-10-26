@@ -78,12 +78,12 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	}
 
 	capabilities := agentCapabilities(core, supervisor != nil)
-	controller.diagnostics = nil
-	if dataPlane != nil && dataPlane.forward != nil {
-		// A forwarding proxy node runs Control's forward checks.
-		controller.diagnostics = forward.NodeDiagnostics(dataPlane.forward, "")
-		capabilities = append(capabilities, forward.DiagnosticCapabilities(capabilities)...)
+	var forwardComponent *forward.Component
+	if dataPlane != nil {
+		forwardComponent = dataPlane.forward
 	}
+	controller.diagnostics = proxyNodeDiagnostics(forwardComponent)
+	capabilities = append(capabilities, forward.DiagnosticCapabilities(capabilities)...)
 
 	hostname, _ := os.Hostname()
 	keepaliveTime := time.Duration(apiConfig.GRPCKeepalive) * time.Second
@@ -131,6 +131,21 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	}
 	controller.agentClient = client
 	return client, nil
+}
+
+// proxyNodeDiagnostics is a proxy node's agent.diagnostic executor: the
+// generic tasks on the Agent's own unit, and, when the node forwards with
+// component, Control's forward checks and the tasks on gost's unit.
+func proxyNodeDiagnostics(component *forward.Component) *diagnostic.Executor {
+	executor := &diagnostic.Executor{Units: map[string]string{}}
+	if component != nil {
+		executor = forward.NodeDiagnostics(component, "")
+	}
+	for service, unit := range diagnostic.AgentUnits() {
+		executor.Units[service] = unit
+	}
+	executor.Self = diagnostic.AgentService
+	return executor
 }
 
 // agentControlDataPlane is the stream's data-plane configuration (AG-3):
