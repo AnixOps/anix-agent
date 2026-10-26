@@ -25,7 +25,7 @@ var (
 				fmt.Println(Err("版本号格式无效: ", targetVersion))
 				return
 			}
-			command := `tmp_file="$(mktemp)" && trap 'rm -f "${tmp_file}"' EXIT && curl -fsSL https://raw.githubusercontent.com/AnixOps/anix-agent/dev_new/scripts/install.sh -o "${tmp_file}" && bash "${tmp_file}"`
+			command := `tmp_file="$(mktemp)" && trap 'rm -f "${tmp_file}"' EXIT && curl -fsSL https://raw.githubusercontent.com/AnixOps/anix-agent/main/scripts/install.sh -o "${tmp_file}" && bash "${tmp_file}"`
 			if targetVersion != "" {
 				command += " " + targetVersion
 			}

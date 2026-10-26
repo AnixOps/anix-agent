@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [master, dev_new, "maintenance/**"]
+    branches: [main, "maintenance/**"]
     tags: ["v*"]
   pull_request:
-    branches: [master, dev_new]
+    branches: [main]
   workflow_dispatch:
 
 jobs:

@@ -9,7 +9,7 @@ plain='\033[0m'
 
 REPO_OWNER="${REPO_OWNER:-AnixOps}"
 REPO_NAME="${REPO_NAME:-anix-agent}"
-REPO_BRANCH="${REPO_BRANCH:-dev_new}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
 
 PRODUCT_NAME="AnixOps Agent"
 APP_NAME="anix-agent"
@@ -800,7 +800,7 @@ ${LEGACY_MANAGE_CMD_NAME} 命令继续作为兼容别名。
                需在 Agent 配置里设 Forward.AnixOps.Enable）
   REPO_OWNER   默认: AnixOps
   REPO_NAME    默认: anix-agent
-  REPO_BRANCH  默认: dev_new
+  REPO_BRANCH  默认: main
 EOF
 }
 
