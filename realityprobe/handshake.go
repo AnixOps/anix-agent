@@ -91,7 +91,7 @@ func realityHandshake(ctx context.Context, host, address string) error {
 	stopRaw := context.AfterFunc(ctx, func() { raw.Close() })
 	defer stopRaw()
 	_, port, _ := net.SplitHostPort(address)
-	portNumber, _ := strconv.Atoi(port)
+	portNumber, _ := strconv.ParseUint(port, 10, 16)
 	client := &xreality.Config{
 		Fingerprint: realityFingerprint,
 		ServerName:  host,
