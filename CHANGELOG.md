@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **Reality target probe (`reality.probe`).** A proxy node's Agent now advertises the
+  capability `reality.probe` and runs the `agent.diagnostic` action of that name: from the
+  node's own network it tells whether a site can serve as a REALITY target (dest and SNI).
+  Parameters: `server_name` (a host name, never an address), `port` (default 443) and
+  `timeout_ms` (default 5000, 100 to 10000). The Agent resolves the name itself and refuses
+  private, shared and reserved addresses, dials one address, completes one TLS handshake and
+  sends one `GET /`. The target passes when it answers TLS 1.3, ALPN h2 and an X25519 or
+  X25519MLKEM768 key exchange, its certificate verifies for the name, and `GET /` does not
+  redirect to another host. The result also carries latency, OCSP stapling, chain size and
+  the CDN the response shows, for Control's ranking. The probe is the Agent's own code, not a
+  call into a proxy core.
+
 ## 5.0.0-rc.6 - 2026-10-26
 
 The sixth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.6. It runs Control's

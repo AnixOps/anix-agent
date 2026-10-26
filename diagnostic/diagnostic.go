@@ -10,10 +10,12 @@
 //   - The forward checks of Control's route diagnosis (forward.listen,
 //     forward.port_conflict, forward.connect, forward.udp_probe), which the
 //     forward component runs on the hop it holds.
+//   - The Reality target probe (reality.probe, package realityprobe): from
+//     the node's network, whether a site can serve as a REALITY target.
 //
 // The payload is {"task": {"id", "type", "action", "params", "timeout"}}.
 // The answer is the generic diagnostic state {"success", "output", "error",
-// "duration_ms"}, plus "result" for a forward check. A task that ran is
+// "duration_ms"}, plus "result" for a forward check or a probe. A task that ran is
 // answered whatever it found; an error (FAILED) means it could not run: an
 // unknown action or malformed parameters.
 package diagnostic
@@ -79,7 +81,8 @@ type State struct {
 	Result     any    `json:"result,omitempty"`
 }
 
-// Checker runs the forward checks: the forward component.
+// Checker runs node-vantage checks: the forward component's forward
+// checks, and the Reality target probe.
 type Checker interface {
 	// IsCheck reports whether action is one of its checks.
 	IsCheck(action string) bool
@@ -95,6 +98,8 @@ func AgentUnits() map[string]string { return map[string]string{AgentService: Age
 type Executor struct {
 	// Forward runs the forward checks; nil refuses them.
 	Forward Checker
+	// Reality runs reality.probe; nil refuses it.
+	Reality Checker
 	// Units maps a service to its systemd unit; a service not listed is
 	// refused.
 	Units map[string]string
@@ -139,8 +144,11 @@ func (e *Executor) now() time.Time {
 // Run1 runs one task.
 func (e *Executor) Run1(ctx context.Context, task Task) (*State, error) {
 	started := e.now()
-	if e.Forward != nil && e.Forward.IsCheck(task.Action) {
-		result, verdict, summary, err := e.Forward.Check(ctx, task.Action, task.Params)
+	for _, checker := range []Checker{e.Forward, e.Reality} {
+		if checker == nil || !checker.IsCheck(task.Action) {
+			continue
+		}
+		result, verdict, summary, err := checker.Check(ctx, task.Action, task.Params)
 		if err != nil {
 			return nil, fmt.Errorf("agent.diagnostic %s: %w", task.Action, err)
 		}
@@ -152,6 +160,9 @@ func (e *Executor) Run1(ctx context.Context, task Task) (*State, error) {
 	}
 	if strings.HasPrefix(task.Action, "forward.") {
 		return nil, fmt.Errorf("agent.diagnostic: %q needs the forward component, which this Agent does not run", task.Action)
+	}
+	if strings.HasPrefix(task.Action, "reality.") {
+		return nil, fmt.Errorf("agent.diagnostic: %q runs only on a proxy node's Agent", task.Action)
 	}
 	service, _ := task.Params["service"].(string)
 	unit, ok := e.Units[service]

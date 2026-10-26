@@ -21,6 +21,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/diagnostic"
 	"github.com/AnixOps/anix-agent/v5/forward"
 	"github.com/AnixOps/anix-agent/v5/plugin"
+	"github.com/AnixOps/anix-agent/v5/realityprobe"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -84,6 +85,8 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	}
 	controller.diagnostics = proxyNodeDiagnostics(forwardComponent)
 	capabilities = append(capabilities, forward.DiagnosticCapabilities(capabilities)...)
+	// The proxy node probes Reality targets from its own network.
+	capabilities = append(capabilities, &agentv1pb.Capability{Name: realityprobe.Capability, Version: agentcontrol.CapabilityVersionV1})
 
 	hostname, _ := os.Hostname()
 	keepaliveTime := time.Duration(apiConfig.GRPCKeepalive) * time.Second
@@ -134,8 +137,9 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 }
 
 // proxyNodeDiagnostics is a proxy node's agent.diagnostic executor: the
-// generic tasks on the Agent's own unit, and, when the node forwards with
-// component, Control's forward checks and the tasks on gost's unit.
+// generic tasks on the Agent's own unit, the Reality target probe, and,
+// when the node forwards with component, Control's forward checks and the
+// tasks on gost's unit.
 func proxyNodeDiagnostics(component *forward.Component) *diagnostic.Executor {
 	executor := &diagnostic.Executor{Units: map[string]string{}}
 	if component != nil {
@@ -145,6 +149,7 @@ func proxyNodeDiagnostics(component *forward.Component) *diagnostic.Executor {
 		executor.Units[service] = unit
 	}
 	executor.Self = diagnostic.AgentService
+	executor.Reality = &realityprobe.Prober{}
 	return executor
 }
 

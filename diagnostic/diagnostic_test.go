@@ -139,3 +139,35 @@ func TestSelfRestartAnswersBeforeItRuns(t *testing.T) {
 		t.Fatalf("ran %q, want %q", ran, want)
 	}
 }
+
+type fakeProbe struct{}
+
+func (fakeProbe) IsCheck(action string) bool { return action == "reality.probe" }
+
+func (fakeProbe) Check(_ context.Context, _ string, params map[string]any) (any, string, string, error) {
+	if params["server_name"] == nil {
+		return nil, "", "", errors.New("server_name must be a host name")
+	}
+	return map[string]any{"verdict": "ok"}, "ok", "example.com:443 ok", nil
+}
+
+func TestRealityProbe(t *testing.T) {
+	e := &Executor{Units: map[string]string{}, Reality: fakeProbe{}}
+	out, err := e.Handle(context.Background(), operation(t, "reality.probe", map[string]any{"server_name": "example.com"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state State
+	if err := json.Unmarshal(out, &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Success || state.Output != "example.com:443 ok" || state.Result == nil {
+		t.Fatalf("state %+v", state)
+	}
+	if _, err := e.Handle(context.Background(), operation(t, "reality.probe", map[string]any{})); err == nil {
+		t.Fatal("malformed parameters: want an error")
+	}
+	if _, err := (&Executor{}).Handle(context.Background(), operation(t, "reality.probe", map[string]any{"server_name": "example.com"})); err == nil {
+		t.Fatal("no prober: want an error")
+	}
+}
