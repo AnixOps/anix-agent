@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **Destination statistics (`destinations.v1`, 访问统计).** The sing-box, Xray and Hysteria 2
+  (TCP) cores count each user's connections and bytes by destination: the registrable domain
+  (`www.youtube.com` counts as `youtube.com`), or the address network (`/24`, `/48`) of a
+  destination without a domain, with the sniffed protocol. At most 200 destinations per user
+  and window; the rest count as one "other" entry. Each traffic window goes to Control as a
+  `DestinationReport` (batch ids `node:proxy-<id>:<boot id>:destinations-<sequence>`, spool
+  `spool/destinations/`, 16 MB) while Control serves `destinations.v1`; Control records them
+  only while an administrator has them on (anix-control#339). WireGuard nodes report none.
+
 ## 5.0.0-rc.2 - 2026-10-25
 
 The second 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.2. It adds one change

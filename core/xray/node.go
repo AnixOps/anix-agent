@@ -132,6 +132,7 @@ func (c *Xray) DelNode(tag string) error {
 	if err != nil {
 		return fmt.Errorf("remove out error: %s", err)
 	}
+	c.dispatcher.Destinations.Delete(tag)
 	return nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AnixOps/anix-agent/v5/common/counter"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/common/rate"
 	"github.com/AnixOps/anix-agent/v5/limiter"
 
@@ -109,6 +110,9 @@ type DefaultDispatcher struct {
 	fdns         dns.FakeDNSEngine
 	Counter      sync.Map
 	LinkManagers sync.Map // map[string]*LinkManager
+	// Destinations counts each user's traffic by destination
+	// (destinations.v1), by inbound tag.
+	Destinations destinations.Collectors
 }
 
 func init() {
@@ -163,6 +167,7 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 		Writer: downlinkWriter,
 	}
 
+	ctx = contextWithDestinationBinding(ctx)
 	sessionInbound := session.InboundFromContext(ctx)
 	var user *protocol.MemoryUser
 	if sessionInbound != nil {
@@ -223,8 +228,9 @@ func (d *DefaultDispatcher) getLink(ctx context.Context, network net.Network) (*
 		}
 
 		ts := t.GetCounter(user.Email)
-		upcounter := &counter.XrayTrafficCounter{V: &ts.UpCounter}
-		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter}
+		binding := destinationBindingFromContext(ctx)
+		upcounter := &destinationCounter{user: &ts.UpCounter, binding: binding}
+		downcounter := &destinationCounter{user: &ts.DownCounter, binding: binding, download: true}
 		inboundLink.Writer = &dispatcher.SizeStatWriter{
 			Counter: upcounter,
 			Writer:  inboundLink.Writer,
@@ -302,6 +308,7 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 		ctx = session.ContextWithContent(ctx, content)
 	}
 	sniffingRequest := content.SniffingRequest
+	ctx = contextWithDestinationBinding(ctx)
 	inbound, outbound, l, err := d.getLink(ctx, destination.Network)
 	if err != nil {
 		return nil, err
@@ -415,10 +422,11 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 		}
 
 		ts := t.GetCounter(user.Email)
-		downcounter := &counter.XrayTrafficCounter{V: &ts.DownCounter}
+		binding := destinationBindingFromContext(ctx)
+		downcounter := &destinationCounter{user: &ts.DownCounter, binding: binding, download: true}
 		outbound.Reader = &CounterReader{
 			Reader:  &buf.TimeoutWrapperReader{Reader: outbound.Reader},
-			Counter: &ts.UpCounter,
+			Counter: &destinationCounter{user: &ts.UpCounter, binding: binding},
 		}
 		lm.AddLink(managedWriter, outbound.Reader)
 		outbound.Writer = &dispatcher.SizeStatWriter{
@@ -628,5 +636,13 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 		log.Record(accessMessage)
 	}
 
+	if sessionInbound != nil && sessionInbound.User != nil {
+		// The handler proxies the link before it returns (a muxed
+		// outbound returns at once: its later bytes still count, until
+		// the destination is idle for a window).
+		if binding := d.openDestination(ctx, sessionInbound.Tag, sessionInbound.User.Email, destination.Address.String(), protocol); binding != nil {
+			defer binding.release()
+		}
+	}
 	handler.Dispatch(ctx, link)
 }

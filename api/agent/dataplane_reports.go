@@ -30,14 +30,20 @@ import (
 // reportAckTimeout. An Agent that lists reports.v1 with the transient_ack
 // attribute gets report_unavailable instead: the batch stays and is sent
 // again not before retry_after_ms. NodeStatus and PackageReport are the latest value only:
-// never spooled or resent.
+// never spooled or resent. Destination statistics (destinations.v1) are
+// batches as traffic is, in their own spool, under batch ids
+// node:proxy-<id>:<boot id>:destinations-<sequence>, sent only while the
+// session carries destinations.v1.
 
 // Report spool and cadence defaults.
 const (
 	DefaultTrafficSpoolBytes = 64 << 20
 	DefaultLogsSpoolBytes    = 16 << 20
-	DefaultSpoolMaxAge       = 72 * time.Hour
-	DefaultStatusInterval    = time.Minute
+	// DefaultDestinationsSpoolBytes bounds the destination statistics:
+	// the oldest go first, before any traffic does.
+	DefaultDestinationsSpoolBytes = 16 << 20
+	DefaultSpoolMaxAge            = 72 * time.Hour
+	DefaultStatusInterval         = time.Minute
 	// DefaultPackageReportInterval is how often the latest package
 	// observations are sent; well inside Control's 25-minute staleness
 	// of a systemd.services report.
@@ -72,6 +78,11 @@ type ReportsConfig struct {
 	// own spool so they never push traffic out.
 	TrafficMaxBytes int64
 	LogsMaxBytes    int64
+	// Destinations turns on destinations.v1: the node reports each
+	// user's traffic by destination (SubmitDestinations), in a spool of
+	// DestinationsMaxBytes (default DefaultDestinationsSpoolBytes).
+	Destinations         bool
+	DestinationsMaxBytes int64
 	// MaxAge drops spooled batches older than it; default
 	// DefaultSpoolMaxAge, at most spool.MaxRetention (Control remembers a
 	// batch id for 7 days).
@@ -107,8 +118,9 @@ type reportsState struct {
 	seq    atomic.Uint64
 	wake   chan struct{}
 
-	traffic *spool.Spool
-	logs    *spool.Spool
+	traffic      *spool.Spool
+	logs         *spool.Spool
+	destinations *spool.Spool
 
 	mu       sync.Mutex
 	session  string
@@ -147,6 +159,9 @@ func (d *DataPlane) openReports() error {
 	if config.LogsMaxBytes <= 0 {
 		config.LogsMaxBytes = DefaultLogsSpoolBytes
 	}
+	if config.DestinationsMaxBytes <= 0 {
+		config.DestinationsMaxBytes = DefaultDestinationsSpoolBytes
+	}
 	if config.MaxAge <= 0 {
 		config.MaxAge = DefaultSpoolMaxAge
 	}
@@ -161,6 +176,11 @@ func (d *DataPlane) openReports() error {
 	if d.reports.logs, err = spool.Open(filepath.Join(root, "logs"), spool.Limits{MaxBytes: config.LogsMaxBytes, MaxAge: config.MaxAge}, d.now); err != nil {
 		return fmt.Errorf("log report spool: %w", err)
 	}
+	if config.Destinations {
+		if d.reports.destinations, err = spool.Open(filepath.Join(root, "destinations"), spool.Limits{MaxBytes: config.DestinationsMaxBytes, MaxAge: config.MaxAge}, d.now); err != nil {
+			return fmt.Errorf("destination report spool: %w", err)
+		}
+	}
 	if count, bytes, _ := d.spoolStats(); count > 0 {
 		d.logger().WithFields(log.Fields{"batches": count, "bytes": bytes}).Info("Report batches wait in the spool for the Agent control stream")
 	}
@@ -174,10 +194,12 @@ func (d *DataPlane) signalReports() {
 	}
 }
 
-// nextBatchID is node:proxy-<id>:<boot id>:<sequence> (at most 128 bytes).
-func (d *DataPlane) nextBatchID() string {
+// nextBatchID is node:proxy-<id>:<boot id>:<prefix><sequence> (at most 128
+// bytes). Control remembers every report batch of a node under one id
+// space, so each kind but traffic and logs names itself in prefix.
+func (d *DataPlane) nextBatchID(prefix string) string {
 	return "node:" + d.client.config.NodeKind + "-" + strconv.Itoa(d.client.config.NodeID) + ":" +
-		d.reports.bootID + ":" + strconv.FormatUint(d.reports.seq.Add(1), 10)
+		d.reports.bootID + ":" + prefix + strconv.FormatUint(d.reports.seq.Add(1), 10)
 }
 
 // ErrReportsOff means the data plane has no reports.v1.
@@ -191,7 +213,7 @@ func (d *DataPlane) SubmitTraffic(report *agentv1pb.TrafficReport) error {
 		return ErrReportsOff
 	}
 	report = proto.Clone(report).(*agentv1pb.TrafficReport)
-	report.BatchId = d.nextBatchID()
+	report.BatchId = d.nextBatchID("")
 	return d.submit(d.reports.traffic, &agentv1pb.AgentToControl{Payload: &agentv1pb.AgentToControl_Traffic{Traffic: report}})
 }
 
@@ -201,8 +223,22 @@ func (d *DataPlane) SubmitLogs(batch *agentv1pb.LogBatch) error {
 		return ErrReportsOff
 	}
 	batch = proto.Clone(batch).(*agentv1pb.LogBatch)
-	batch.BatchId = d.nextBatchID()
+	batch.BatchId = d.nextBatchID("")
 	return d.submit(d.reports.logs, &agentv1pb.AgentToControl{Payload: &agentv1pb.AgentToControl_Logs{Logs: batch}})
+}
+
+// ErrDestinationsOff means the data plane has no destinations.v1.
+var ErrDestinationsOff = errors.New("agent data plane: destination statistics are not configured")
+
+// SubmitDestinations stores a window of destination statistics in the
+// spool, as SubmitTraffic.
+func (d *DataPlane) SubmitDestinations(report *agentv1pb.DestinationReport) error {
+	if d.reports.destinations == nil {
+		return ErrDestinationsOff
+	}
+	report = proto.Clone(report).(*agentv1pb.DestinationReport)
+	report.BatchId = d.nextBatchID("destinations-")
+	return d.submit(d.reports.destinations, &agentv1pb.AgentToControl{Payload: &agentv1pb.AgentToControl_Destinations{Destinations: report}})
 }
 
 func (d *DataPlane) submit(target *spool.Spool, message *agentv1pb.AgentToControl) error {
@@ -243,6 +279,8 @@ func (d *DataPlane) receiveReportAck(sessionID string, ack *agentv1pb.ReportAck)
 	if d.reports.traffic != nil && d.reports.traffic.Remove(id) {
 		removed = true
 	} else if d.reports.logs != nil && d.reports.logs.Remove(id) {
+		removed = true
+	} else if d.reports.destinations != nil && d.reports.destinations.Remove(id) {
 		removed = true
 	}
 	d.reports.mu.Lock()
@@ -351,10 +389,19 @@ func (d *DataPlane) runReports() {
 
 // replay sends the spooled batches in order, traffic first, keeping at most
 // reportWindow awaiting their ReportAck, and resends one whose ReportAck
-// did not come within reportAckTimeout.
+// did not come within reportAckTimeout. Destination batches wait for a
+// session that carries destinations.v1.
 func (d *DataPlane) replay(session DataPlaneSession, now time.Time) {
-	for _, target := range []*spool.Spool{d.reports.traffic, d.reports.logs} {
-		if target == nil {
+	for _, spooled := range []struct {
+		target     *spool.Spool
+		capability string
+	}{
+		{d.reports.traffic, agentcontrol.CapabilityReports},
+		{d.reports.logs, agentcontrol.CapabilityReports},
+		{d.reports.destinations, agentcontrol.CapabilityDestinations},
+	} {
+		target := spooled.target
+		if target == nil || !session.Has(spooled.capability) {
 			continue
 		}
 		for _, entry := range target.Pending() {
@@ -390,7 +437,7 @@ func (d *DataPlane) replay(session DataPlaneSession, now time.Time) {
 			message.RequestId = newID("report")
 			message.NodeId = uint32(d.client.config.NodeID) // #nosec G115 -- node IDs are uint32 on the wire.
 			message.SentAtUnixMs = now.UnixMilli()
-			if err := d.client.sendData(session.ID, agentcontrol.CapabilityReports, message); err != nil {
+			if err := d.client.sendData(session.ID, spooled.capability, message); err != nil {
 				return
 			}
 			d.reports.mu.Lock()
@@ -523,7 +570,7 @@ func (d *DataPlane) reportsWake(session DataPlaneSession) time.Time {
 }
 
 func (d *DataPlane) spoolStats() (count int, bytes int64, drops spool.Drops) {
-	for _, target := range []*spool.Spool{d.reports.traffic, d.reports.logs} {
+	for _, target := range []*spool.Spool{d.reports.traffic, d.reports.logs, d.reports.destinations} {
 		if target == nil {
 			continue
 		}

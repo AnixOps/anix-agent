@@ -2,16 +2,19 @@ package node
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strings"
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/common/monitor"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
+	log "github.com/sirupsen/logrus"
 )
 
 // Reports on the stream (AG-5): traffic with online IPs, logs and status
@@ -27,6 +30,9 @@ const (
 	trafficUsersPerBatch = 5000
 	// logBatchEntries batches the node's log entries.
 	logBatchEntries = 200
+	// destinationEntriesPerBatch bounds the entries of one
+	// DestinationReport, far below Control's 50000 and 4 MiB.
+	destinationEntriesPerBatch = 10000
 )
 
 // logBatchInterval spools the buffered log entries as one LogBatch per node
@@ -85,6 +91,52 @@ func (n *nodeDataPlane) submitTraffic(controller *Controller, traffic []panel.Us
 	n.onlineSent = len(merged) > 0
 	n.reportMu.Unlock()
 	return nil
+}
+
+// reportDestinations reads the controller's destination statistics of the
+// window (destinations.v1) and spools them while the stream carries
+// destinations.v1 or is briefly down. Otherwise the window is dropped: no
+// legacy transport carries them. The core's counters are read either way,
+// so they never pile up.
+func (c *Controller) reportDestinations() {
+	provider, ok := c.server.(vCore.DestinationProvider)
+	if !ok {
+		return
+	}
+	traffic, err := provider.GetDestinationTraffic(c.tag)
+	if err != nil {
+		log.WithFields(log.Fields{"tag": c.tag, "err": err}).Warn("Could not read the destination statistics")
+		return
+	}
+	if len(traffic) == 0 || c.stream.mode(agentcontrol.CapabilityDestinations) == agentapi.DataPlaneLegacy {
+		return
+	}
+	c.stream.submitDestinations(c.tag, traffic)
+}
+
+// submitDestinations spools a window of destination statistics, in
+// batches of destinationEntriesPerBatch entries.
+func (n *nodeDataPlane) submitDestinations(tag string, traffic []destinations.Traffic) {
+	entries := make([]*agentv1pb.DestinationTraffic, 0, len(traffic))
+	for _, entry := range traffic {
+		if entry.UID <= 0 || (entry.Upload <= 0 && entry.Download <= 0 && entry.Connections <= 0) {
+			continue
+		}
+		entries = append(entries, &agentv1pb.DestinationTraffic{
+			UserId: uint64(entry.UID), Domain: entry.Domain, Protocol: entry.Protocol, // #nosec G115 -- checked positive.
+			UploadBytes: uint64(max(entry.Upload, 0)), DownloadBytes: uint64(max(entry.Download, 0)), // #nosec G115 -- checked positive.
+			Connections: uint32(min(max(entry.Connections, 0), math.MaxUint32)), // #nosec G115 -- clamped.
+		})
+	}
+	windowEnd := time.Now().UnixMilli()
+	plane := n.client.DataPlane()
+	for start := 0; start < len(entries); start += destinationEntriesPerBatch {
+		end := min(start+destinationEntriesPerBatch, len(entries))
+		if err := plane.SubmitDestinations(&agentv1pb.DestinationReport{Entries: entries[start:end], WindowEndUnixMs: windowEnd}); err != nil {
+			n.logger().WithError(err).WithField("tag", tag).Warn("Could not spool the destination statistics; this window's are dropped")
+			return
+		}
+	}
 }
 
 // mergeOnline is the union of the controllers' online IPs, by user id.

@@ -1,7 +1,6 @@
 package dispatcher
 
 import (
-	"sync/atomic"
 	"time"
 
 	"github.com/xtls/xray-core/common/buf"
@@ -11,7 +10,7 @@ var _ buf.TimeoutReader = (*CounterReader)(nil)
 
 type CounterReader struct {
 	Reader  buf.TimeoutReader
-	Counter *atomic.Int64
+	Counter interface{ Add(int64) int64 }
 }
 
 func (c *CounterReader) ReadMultiBufferTimeout(time.Duration) (buf.MultiBuffer, error) {

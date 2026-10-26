@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
 )
 
@@ -157,6 +158,18 @@ func (s *Selector) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
 		return nil, nil
 	}
 	return provider.GetOnlineDevice(tag)
+}
+
+func (s *Selector) GetDestinationTraffic(tag string) ([]destinations.Traffic, error) {
+	t, e := s.nodes.Load(tag)
+	if !e {
+		return nil, ErrNodeNotFound
+	}
+	provider, ok := t.(DestinationProvider)
+	if !ok {
+		return nil, nil
+	}
+	return provider.GetDestinationTraffic(tag)
 }
 
 func (s *Selector) UpdateUserRateLimit(tag, uuid string, speedLimit int) error {

@@ -346,6 +346,9 @@ func (d *DataPlane) capabilities() []string {
 	}
 	if d.config.Reports != nil {
 		names = append(names, agentcontrol.CapabilityReports)
+		if d.config.Reports.Destinations {
+			names = append(names, agentcontrol.CapabilityDestinations)
+		}
 	}
 	if d.config.PackageReports != nil || d.config.Forward != nil {
 		names = append(names, agentcontrol.CapabilityPackageReports)

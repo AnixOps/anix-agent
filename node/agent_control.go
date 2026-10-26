@@ -159,6 +159,9 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 		Reports: &agentapi.ReportsConfig{
 			TrafficMaxBytes: settings.SpoolBytes(), LogsMaxBytes: settings.LogSpoolBytes(), MaxAge: settings.SpoolMaxAge(),
 			Status: dataPlane.nodeStatus,
+			// Each user's traffic by destination: Control records it
+			// only while an administrator has it on.
+			Destinations: true,
 		},
 	}
 	if dataPlane.forward != nil {
