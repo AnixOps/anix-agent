@@ -49,7 +49,7 @@ func TestProbePasses(t *testing.T) {
 	if verdict != VerdictOK || r.Verdict != VerdictOK || len(r.Failures) != 0 {
 		t.Fatalf("verdict %s, %+v", verdict, r)
 	}
-	if r.ServerName != "example.com" || r.TLSVersion != "TLS 1.3" || r.ALPN != "h2" || r.HTTPStatus != 200 || r.CertChainBytes == 0 || r.CertNotAfter == nil {
+	if r.ServerName != "example.com" || r.TLSVersion != "TLS 1.3" || r.ALPN != "h2" || r.HTTPStatus != 200 || r.CertChainBytes == 0 || r.CertNotAfter == nil || r.RealityMS == 0 {
 		t.Fatalf("result %+v", r)
 	}
 	if r.Curve != tls.X25519MLKEM768.String() && r.Curve != tls.X25519.String() {
@@ -174,4 +174,40 @@ func TestPublicAddr(t *testing.T) {
 			t.Errorf("%s: %v", addr, got)
 		}
 	}
+}
+
+func TestRealityHandshake(t *testing.T) {
+	t.Run("TLS 1.3 target", func(t *testing.T) {
+		server := httptest.NewUnstartedServer(http.HandlerFunc(ok))
+		server.EnableHTTP2 = true
+		server.StartTLS()
+		t.Cleanup(server.Close)
+		if err := realityHandshake(context.Background(), "example.com", server.Listener.Addr().String()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("TLS 1.2 target", func(t *testing.T) {
+		server := httptest.NewUnstartedServer(http.HandlerFunc(ok))
+		server.TLS = &tls.Config{MaxVersion: tls.VersionTLS12}
+		server.StartTLS()
+		t.Cleanup(server.Close)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := realityHandshake(ctx, "example.com", server.Listener.Addr().String()); err == nil {
+			t.Fatal("REALITY through a TLS 1.2 target passed")
+		}
+	})
+	t.Run("no target", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		address := listener.Addr().String()
+		listener.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := realityHandshake(ctx, "example.com", address); err == nil {
+			t.Fatal("REALITY with no target passed")
+		}
+	})
 }

@@ -26,6 +26,7 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
 	github.com/vmihailenco/msgpack/v5 v5.4.1
+	github.com/xtls/reality v0.0.0-20251014195629-e4eec4520535
 	github.com/xtls/xray-core v1.251202.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.57.0
@@ -297,7 +298,6 @@ require (
 	github.com/vultr/govultr/v3 v3.21.1 // indirect
 	github.com/wyx2685/sing-vmess v0.0.0-20250723121437-95d5ab59ff92 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	github.com/xtls/reality v0.0.0-20251014195629-e4eec4520535 // indirect
 	github.com/yandex-cloud/go-genproto v0.14.0 // indirect
 	github.com/yandex-cloud/go-sdk/services/dns v0.0.3 // indirect
 	github.com/yandex-cloud/go-sdk/v2 v2.0.8 // indirect
