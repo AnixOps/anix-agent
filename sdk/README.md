@@ -35,7 +35,7 @@ Release the SDK before changing a Control dependency:
 GOWORK=off ./scripts/check-breaking.sh
 GOWORK=off go test ./...
 git tag -a sdk/v1.1.0 -m "Anix Agent SDK v1.1.0"
-git push origin dev_new sdk/v1.1.0
+git push origin main sdk/v1.1.0
 ```
 
 After the tag is published, Control may run:
