@@ -15,6 +15,14 @@
   redirect to another host. The result also carries latency, OCSP stapling, chain size and
   the CDN the response shows, for Control's ranking. The probe is the Agent's own code, not a
   call into a proxy core.
+- **`reality.probe` runs a real REALITY handshake.** A target that passes the TLS checks is
+  then tried end to end on the node: a throwaway REALITY server on 127.0.0.1 with a fresh key
+  pair and the target as dest, and a REALITY client (fingerprint chrome) through it. Failure
+  `reality` when the client does not authenticate or its data does not arrive; `reality_ms`
+  on success. Some sites pass every TLS check and still break REALITY (www.microsoft.com from
+  a Germany node). The REALITY library is linked in, no core process runs. The handshake adds
+  up to 12 s to a probe (the server first learns the target's post-handshake records), so a
+  probe now takes at most `timeout_ms` + 12 s.
 
 ### Fixed
 

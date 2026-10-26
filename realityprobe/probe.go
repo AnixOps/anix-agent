@@ -10,10 +10,13 @@
 //
 // A target passes when it answers TLS 1.3 with ALPN h2 and an X25519 key
 // exchange (X25519 or X25519MLKEM768), its certificate verifies for the
-// name, and GET / does not redirect to another host. The rest of the
-// result (latency, OCSP stapling, chain size, CDN) is for Control's
-// ranking. The probe is the Agent's own Go code, not a call into a proxy
-// core, so it stays the same whichever core the node runs.
+// name, GET / does not redirect to another host, and a REALITY handshake
+// relayed through it on the node authenticates (some sites pass every TLS
+// check and still break REALITY). The rest of the result (latency, OCSP
+// stapling, chain size, CDN) is for Control's ranking. The probe runs in the
+// Agent's own process, the REALITY handshake with the REALITY library
+// linked in, not through a running proxy core, so it stays the same
+// whichever core the node runs.
 package realityprobe
 
 import (
@@ -61,6 +64,7 @@ const (
 	FailCertificate    = "certificate"
 	FailHTTP           = "http"
 	FailRedirect       = "redirect"
+	FailReality        = "reality"
 )
 
 // The verdicts of the diagnostic answer.
@@ -94,6 +98,8 @@ type Result struct {
 	ServerHeader   string     `json:"server_header,omitempty"`
 	// CDN names the CDN the response headers show the site behind.
 	CDN string `json:"cdn,omitempty"`
+	// RealityMS is how long the loopback REALITY handshake took.
+	RealityMS int64 `json:"reality_ms,omitempty"`
 }
 
 func (r *Result) fail(code string, err error) {
@@ -127,7 +133,7 @@ func (p *Prober) Check(ctx context.Context, action string, params map[string]any
 	if err != nil {
 		return nil, "", "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout+RealityTimeout)
 	defer cancel()
 	result := p.Probe(ctx, host, port)
 	return result, result.Verdict, Summary(result), nil
@@ -264,6 +270,9 @@ func (p *Prober) Probe(ctx context.Context, host string, port int) *Result {
 
 	if state.NegotiatedProtocol == "h2" {
 		p.get(ctx, result, conn)
+	}
+	if len(result.Failures) == 0 {
+		p.reality(ctx, result, host, address)
 	}
 	return result
 }
