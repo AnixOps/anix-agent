@@ -25,11 +25,13 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 5.0.0-rc.6 范围
+## 5.0.0-rc.7 范围
 
-`v5.0.0-rc.6` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
-5.0.0-rc.6 使用同一版本号（H25），是 5.0 的第六个候选版本。相对 rc.5：Xray 内核执行 Control 下发的
-域名出口分流（`egress`），每个代理节点都提供通用诊断（`anix-agent` 服务状态、重启、日志）。
+`v5.0.0-rc.7` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+5.0.0-rc.7 使用同一版本号（H25），是 5.0 的第七个候选版本。相对 rc.6：节点上探测 REALITY 目标站
+（`reality.probe`，含一次真实 REALITY 握手），供 Control 排名、推荐和自动切换目标站；anixcore 内核
+执行域名出口分流；出口中转入站不再报限速器错误。rc.6 起 Xray 内核执行 Control 下发的域名出口分流
+（`egress`），每个代理节点都提供通用诊断（`anix-agent` 服务状态、重启、日志）。
 rc.5 修复了 Xray 节点访问统计只记连接、不记字节的问题，并加入 anixcore 内核驱动（非默认构建）。rc.4 起新增访问统计上报
 （`destinations.v1`，需要 Control 5.0.0-rc.4 或更新），默认分支改为 `main`。
 rc.2 起一个节点运行 Control 下发的每个协议，同类协议也可以并存（如 SS 与 SS2022 各占一个端口，需要
@@ -57,7 +59,7 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.6 发布范围）
+## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.7 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
@@ -127,7 +129,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v5.0.0-rc.6
+export VERSION=v5.0.0-rc.7
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
