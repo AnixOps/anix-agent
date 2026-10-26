@@ -87,8 +87,8 @@ func (c *Core) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic,
 	}
 	slice := make([]panel.UserTraffic, 0, len(traffic))
 	for _, entry := range traffic {
-		uid, err := strconv.Atoi(entry.Name)
-		if err != nil || entry.Up+entry.Down == 0 {
+		uid, ok := panelUID(entry.Name)
+		if !ok || entry.Up+entry.Down == 0 {
 			continue
 		}
 		slice = append(slice, panel.UserTraffic{UID: uid, Upload: entry.Up, Download: entry.Down})
@@ -112,8 +112,8 @@ func (c *Core) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
 	}
 	users := make([]panel.OnlineUser, 0, len(online))
 	for _, entry := range online {
-		uid, err := strconv.Atoi(entry.Name)
-		if err != nil {
+		uid, ok := panelUID(entry.Name)
+		if !ok {
 			continue
 		}
 		users = append(users, panel.OnlineUser{UID: uid, IP: entry.IP})
@@ -127,4 +127,14 @@ func (c *Core) clientFor(tag string) (*client, bool) {
 	defer c.mu.Unlock()
 	n, ok := c.nodes[tag]
 	return c.client, ok && n.created
+}
+
+// panelUID is the panel user id an anixcore user name stands for. Panel ids
+// are reported as uint32, so anything outside that range is not one.
+func panelUID(name string) (int, bool) {
+	uid, err := strconv.ParseUint(name, 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return int(uid), true
 }
