@@ -2,7 +2,22 @@
 
 ## Unreleased
 
+## 5.0.0-rc.6 - 2026-10-26
+
+The sixth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.6. It runs Control's
+egress routes on the Xray core and offers the generic diagnostics on every proxy node.
+Upgrade Control and the Agent in either order.
+
 ### Added
+
+- **Egress routes (`egress` in the configuration snapshot).** Control can now send a node's
+  traffic for chosen domains out through another node, for example AI services that block
+  the node's own region. A source node's snapshot lists routes (domains plus the exit node's
+  Shadowsocks 2022 relay), and the exit node's snapshot lists the relay inbounds it serves.
+  The Xray core applies them while it runs, without a restart: a Shadowsocks outbound and a
+  domain rule per route, and an inbound with its own direct outbound per relay. Only
+  protocols on the Xray core take routes. A snapshot with egress on an Agent whose cores
+  cannot run them is answered not applied. Older Agents ignore the member.
 
 - **Diagnostics on every proxy node.** The Agent now advertises `agent.diagnostic` on every
   proxy node, not only on a node that forwards, and runs `service_status`, `service_restart`
@@ -19,15 +34,6 @@ statistics on Xray nodes, which reported connections with zero bytes, and adds t
 driver (not in the default build). Upgrade Control and the Agent in either order.
 
 ### Added
-
-- **Egress routes (`egress` in the configuration snapshot).** Control can now send a node's
-  traffic for chosen domains out through another node, for example AI services that block
-  the node's own region. A source node's snapshot lists routes (domains plus the exit node's
-  Shadowsocks 2022 relay), and the exit node's snapshot lists the relay inbounds it serves.
-  The Xray core applies them while it runs, without a restart: a Shadowsocks outbound and a
-  domain rule per route, and an inbound with its own direct outbound per relay. Only
-  protocols on the Xray core take routes. A snapshot with egress on an Agent whose cores
-  cannot run them is answered not applied. Older Agents ignore the member.
 
 - **anixcore core (`core/anixcore`, build tag `anixcore`).** Drives the AnixOps node kernel
   `anixcore` from networkcore_anixops through its local management API. It starts
