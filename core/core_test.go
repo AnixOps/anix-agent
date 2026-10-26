@@ -101,3 +101,37 @@ func TestDefaultCoreConfigsCarryTheCoreDefaults(t *testing.T) {
 	require.NotNil(t, defaults[2].Hysteria2Config)
 	require.NotNil(t, defaults[3].WireGuardConfig)
 }
+
+// egressCore is a fakeCore that runs egress routes.
+type egressCore struct {
+	fakeCore
+	applied []*panel.EgressConfig
+}
+
+func (e *egressCore) ApplyEgress(config *panel.EgressConfig) error {
+	e.applied = append(e.applied, config)
+	return nil
+}
+
+func TestSelectorAppliesEgressOnTheFirstCoreThatRunsIt(t *testing.T) {
+	sing := &fakeCore{kind: "sing", protocols: []string{"vless"}}
+	xray := &egressCore{fakeCore: fakeCore{kind: "xray", protocols: []string{"vless"}}}
+	previous := cores
+	cores = map[string]func(*conf.CoreConfig) (Core, error){
+		"sing": func(*conf.CoreConfig) (Core, error) { return sing, nil },
+		"xray": func(*conf.CoreConfig) (Core, error) { return xray, nil },
+	}
+	t.Cleanup(func() { cores = previous })
+
+	selector, err := NewSelector([]conf.CoreConfig{{Type: "sing"}, {Type: "xray"}})
+	require.NoError(t, err)
+	config := &panel.EgressConfig{Relays: []panel.EgressRelay{{ID: 1, Port: 1, Method: "m", Password: "k"}}}
+	require.NoError(t, selector.(EgressApplier).ApplyEgress(config))
+	require.Equal(t, []*panel.EgressConfig{config}, xray.applied)
+
+	withCores(t, map[string]*fakeCore{"sing": sing})
+	onlySing, err := NewSelector([]conf.CoreConfig{{Type: "sing"}})
+	require.NoError(t, err)
+	require.NoError(t, onlySing.(EgressApplier).ApplyEgress(nil), "nothing to run")
+	require.ErrorIs(t, onlySing.(EgressApplier).ApplyEgress(config), ErrEgressUnsupported)
+}

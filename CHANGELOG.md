@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Egress routes (`egress` in the configuration snapshot).** Control can now send a node's
+  traffic for chosen domains out through another node, for example AI services that block
+  the node's own region. A source node's snapshot lists routes (domains plus the exit node's
+  Shadowsocks 2022 relay), and the exit node's snapshot lists the relay inbounds it serves.
+  The Xray core applies them while it runs, without a restart: a Shadowsocks outbound and a
+  domain rule per route, and an inbound with its own direct outbound per relay. Only
+  protocols on the Xray core take routes. A snapshot with egress on an Agent whose cores
+  cannot run them is answered not applied. Older Agents ignore the member.
+
 - **anixcore core (`core/anixcore`, build tag `anixcore`).** Drives the AnixOps node kernel
   `anixcore` from networkcore_anixops through its local management API. It starts
   `anixcore run` with a random loopback API port and token (or connects to a running one

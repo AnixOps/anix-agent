@@ -38,6 +38,8 @@ type Xray struct {
 	users                     *UserMap
 	nodeReportMinTrafficBytes map[string]int64
 	debugger                  *CoreDebugger
+	// egress is what ApplyEgress added, guarded by access.
+	egress *egressState
 }
 
 type UserMap struct {

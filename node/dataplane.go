@@ -15,6 +15,7 @@ import (
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/monitor"
+	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/forward"
 	"github.com/AnixOps/anix-agent/v5/plugin"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
@@ -152,7 +153,52 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 	if err := n.reconcileExtras(ctx, snapshot); err != nil {
 		errs = append(errs, err)
 	}
+	if err := n.applyEgress(snapshot); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// applyEgress runs the snapshot's egress routes and relays (the member
+// "egress") on the node's core; a snapshot without them removes the ones
+// the core ran. A core that cannot run them fails only a snapshot that has
+// some.
+func (n *nodeDataPlane) applyEgress(snapshot *agentv1pb.ConfigSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	egress, err := panel.ParseEgress(snapshot.GetConfigJson())
+	if err != nil {
+		return err
+	}
+	var server vCore.Core
+	for _, controller := range n.controllers {
+		if controller.server != nil {
+			server = controller.server
+			break
+		}
+	}
+	if server == nil {
+		if egress.Empty() {
+			return nil
+		}
+		return errors.New("egress routes: the node has no core")
+	}
+	applier, ok := server.(vCore.EgressApplier)
+	if !ok {
+		if egress.Empty() {
+			return nil
+		}
+		return vCore.ErrEgressUnsupported
+	}
+	if err := applier.ApplyEgress(egress); err != nil {
+		return fmt.Errorf("egress routes: %w", err)
+	}
+	if !egress.Empty() {
+		n.logger().WithFields(log.Fields{"egress_routes": len(egress.Routes), "egress_relays": len(egress.Relays)}).
+			Info("Applied the node's egress routes")
+	}
+	return nil
 }
 
 // allControllers lists the node's controllers: the configuration file's and
