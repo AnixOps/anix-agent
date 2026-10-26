@@ -2,13 +2,13 @@ name: SDK Quality
 
 on:
   push:
-    branches: [master, dev_new]
+    branches: [main]
     tags: ["sdk/v*"]
     paths:
       - "sdk/**"
       - ".github/workflows/sdk.yml"
   pull_request:
-    branches: [master, dev_new]
+    branches: [main]
     paths:
       - "sdk/**"
       - ".github/workflows/sdk.yml"

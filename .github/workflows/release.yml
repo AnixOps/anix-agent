@@ -3,10 +3,10 @@ name: Build and Release
 on:
   workflow_dispatch:
   push:
-    branches: [master, dev_new]
+    branches: [main]
     tags: ["v*"]
   pull_request:
-    branches: [master, dev_new]
+    branches: [main]
 
 permissions:
   contents: read

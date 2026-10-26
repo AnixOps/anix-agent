@@ -13,6 +13,14 @@
   `spool/destinations/`, 16 MB) while Control serves `destinations.v1`; Control records them
   only while an administrator has them on (anix-control#339). WireGuard nodes report none.
 
+### Changed
+
+- **The default branch is `main` (was `dev_new`).** `install.sh` defaults to
+  `REPO_BRANCH=main`, `anix-agent.sh` to `INSTALL_SCRIPT_REF=main`, and `anix-agent install`
+  downloads the installer from `main`. raw.githubusercontent.com does not redirect a renamed
+  branch, so on a node installed before this change run the management script with
+  `REPO_BRANCH=main` (or reinstall it) until it is updated.
+
 ## 5.0.0-rc.2 - 2026-10-25
 
 The second 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.2. It adds one change
