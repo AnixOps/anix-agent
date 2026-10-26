@@ -231,3 +231,21 @@ func (s *Selector) Type() string {
 	t += ")"
 	return t
 }
+
+// ErrEgressUnsupported is answered for egress routes when no core of the
+// configuration runs them.
+var ErrEgressUnsupported = errors.New("no core of this Agent runs egress routes (they need the xray core)")
+
+// ApplyEgress implements EgressApplier: the first core in configuration
+// order that runs egress routes runs them all.
+func (s *Selector) ApplyEgress(config *panel.EgressConfig) error {
+	for _, key := range s.order {
+		if applier, ok := s.cores[key].(EgressApplier); ok {
+			return applier.ApplyEgress(config)
+		}
+	}
+	if config.Empty() {
+		return nil
+	}
+	return ErrEgressUnsupported
+}
