@@ -39,6 +39,7 @@ type NodeInfo struct {
 	Hysteria    *HysteriaNode
 	Hysteria2   *Hysteria2Node
 	WireGuard   *WireGuardNode
+	Iwan        *IwanNode
 	Common      *CommonNode
 }
 
@@ -153,6 +154,22 @@ type WireGuardNode struct {
 	AllowedIPs       []string       `json:"allowed_ips"`
 	TunnelType       string         `json:"tunnel_type"`
 	Relay            WireGuardRelay `json:"relay"`
+}
+
+// IwanNode is a Panabit iWAN inbound (docs/protocols/iwan.md §12 of
+// networkcore_anixops). iWAN has no confidentiality or integrity.
+type IwanNode struct {
+	CommonNode
+	// IPv4 network the users' tunnel addresses come from, e.g. 10.66.0.0/16.
+	Pool string `json:"pool"`
+	MTU  int    `json:"mtu"`
+	// `ip` or `ip:port` the gateway relays DNS to.
+	DNSUpstream string `json:"dns_upstream"`
+	// Nil keeps the kernel default (allowed).
+	AllowEncrypt        *bool `json:"allow_encrypt"`
+	AllowClientToClient bool  `json:"allow_client_to_client"`
+	// Fixed tunnel addresses by panel user id.
+	FixedAddresses map[string]string `json:"fixed_addresses"`
 }
 
 type WireGuardRelay struct {
@@ -418,6 +435,15 @@ func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string
 		}
 		cm = &rsp.CommonNode
 		node.WireGuard = rsp
+		node.Security = None
+	case "iwan":
+		rsp := &IwanNode{}
+		err = json.Unmarshal(body, rsp)
+		if err != nil {
+			return nil, "", fmt.Errorf("decode iwan params error: %s", err)
+		}
+		cm = &rsp.CommonNode
+		node.Iwan = rsp
 		node.Security = None
 	}
 	if cm == nil {

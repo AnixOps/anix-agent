@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **anixcore serves Panabit iWAN nodes.** A panel node of type `iwan` becomes an anixcore
+  `iwan` inbound (UDP L3 tunnel) with the node's `pool`, `mtu`, `dns_upstream`,
+  `allow_encrypt` and `allow_client_to_client`, over UniProxy and gRPC (`iwan` is now in
+  the advertised protocols). Users log in with their panel id and an iWAN password made of
+  the first 16 hex digits of their UUID; `fixed_addresses` (user id to address) pins a
+  user's tunnel address. iWAN has no encryption.
+
 ## 5.0.0-rc.7 - 2026-10-26
 
 The seventh 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.7. The Agent probes

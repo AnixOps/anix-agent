@@ -232,6 +232,37 @@ func parseWireGuardRelay(value string) panel.WireGuardRelay {
 	return relay
 }
 
+// parseIwanNode reads an iWAN node from the config's extra fields, which
+// carry JSON values as strings.
+func parseIwanNode(common panel.CommonNode, extra map[string]string) (*panel.IwanNode, error) {
+	node := &panel.IwanNode{
+		CommonNode:  common,
+		Pool:        extra["pool"],
+		MTU:         parseIntDefault(extra["mtu"], 0),
+		DNSUpstream: extra["dns_upstream"],
+	}
+	if value := extra["allow_encrypt"]; value != "" {
+		allow, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("iwan allow_encrypt %q is invalid", value)
+		}
+		node.AllowEncrypt = &allow
+	}
+	if value := extra["allow_client_to_client"]; value != "" {
+		allow, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("iwan allow_client_to_client %q is invalid", value)
+		}
+		node.AllowClientToClient = allow
+	}
+	if value := extra["fixed_addresses"]; value != "" && value != "null" {
+		if err := json.Unmarshal([]byte(value), &node.FixedAddresses); err != nil {
+			return nil, fmt.Errorf("iwan fixed_addresses: %w", err)
+		}
+	}
+	return node, nil
+}
+
 func nodeConfigFingerprint(resp *pb.NodeConfigResponse) ([sha256.Size]byte, error) {
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(resp)
 	if err != nil {
@@ -302,7 +333,7 @@ func (c *GRPCClient) Register(authKey, name, host string, port int32, serverVers
 		Port:               port,
 		ServerVersion:      serverVersion,
 		ServerOs:           serverOS,
-		SupportedProtocols: []string{"vmess", "vless", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic", "anytls", "wireguard"},
+		SupportedProtocols: []string{"vmess", "vless", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic", "anytls", "wireguard", "iwan"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("grpc register: %w", err)
@@ -450,6 +481,14 @@ func (c *GRPCClient) GetNodeConfig() (*panel.NodeInfo, error) {
 			TunnelType:       extra["tunnel_type"],
 			Relay:            parseWireGuardRelay(extra["relay"]),
 		}
+		node.Security = panel.None
+
+	case "iwan":
+		iwan, err := parseIwanNode(common, resp.GetExtra())
+		if err != nil {
+			return nil, fmt.Errorf("grpc get config: %w", err)
+		}
+		node.Iwan = iwan
 		node.Security = panel.None
 	}
 
