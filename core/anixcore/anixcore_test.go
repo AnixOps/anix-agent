@@ -99,7 +99,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 				{"name": "7", "up": 100, "down": 200},
 				{"name": "8", "up": 0, "down": 0},
 				{"name": "not-a-panel-user", "up": 5, "down": 5},
-					{"name": "4294967296", "up": 5, "down": 5},
+				{"name": "4294967296", "up": 5, "down": 5},
 			}})
 		case r.Method == "GET" && rest == "online":
 			reply(200, map[string]any{"online": []map[string]any{
