@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **No limiter lookup for inbounds without panel users.** The Xray dispatcher's domain rule
+  check looked up a limiter for every inbound user, so each connection to an egress relay (or
+  a hand-written inbound) logged `get limiter ... error: not found` at error level. It now
+  looks one up only for users with an email, which are the panel's users; routing is
+  unchanged.
+
 ## 5.0.0-rc.6 - 2026-10-26
 
 The sixth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.6. It runs Control's

@@ -532,7 +532,9 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 	ob := outbounds[len(outbounds)-1]
 
 	sessionInbound := session.InboundFromContext(ctx)
-	if sessionInbound.User != nil {
+	// Only panel users (they have an email) have a limiter; an inbound of
+	// another kind, such as an egress relay, has none to look up.
+	if sessionInbound.User != nil && len(sessionInbound.User.Email) > 0 {
 		if l == nil {
 			var err error
 			l, err = limiter.GetLimiter(sessionInbound.Tag)
