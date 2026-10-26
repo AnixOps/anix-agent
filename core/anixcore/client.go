@@ -22,6 +22,8 @@ type apiUser struct {
 	Password string `json:"password,omitempty"`
 	UUID     string `json:"uuid,omitempty"`
 	Flow     string `json:"flow,omitempty"`
+	// iWAN fixed tunnel address.
+	Address string `json:"address,omitempty"`
 }
 
 type apiTraffic struct {

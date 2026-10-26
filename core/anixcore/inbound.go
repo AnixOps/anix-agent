@@ -124,6 +124,26 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node.CongestionControl != "" {
 			inbound["congestion_control"] = node.CongestionControl
 		}
+	case "iwan":
+		node := info.Iwan
+		if node == nil {
+			return nil, errors.New("iwan node info is missing")
+		}
+		if node.Pool == "" {
+			return nil, errors.New("iwan node needs a pool")
+		}
+		inbound["type"] = "iwan"
+		inbound["pool"] = node.Pool
+		if node.MTU != 0 {
+			inbound["mtu"] = node.MTU
+		}
+		if node.DNSUpstream != "" {
+			inbound["dns_upstream"] = node.DNSUpstream
+		}
+		if node.AllowEncrypt != nil {
+			inbound["allow_encrypt"] = *node.AllowEncrypt
+		}
+		inbound["allow_client_to_client"] = node.AllowClientToClient
 	default:
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}
@@ -262,6 +282,17 @@ func shadowsocksKeyLen(cipher string) (int, error) {
 	}
 }
 
+// iwanPassword is a panel user's iWAN password: the first 16 hex digits of
+// its UUID, since iWAN passwords are at most 16 bytes. anix-control shows
+// users the same value; the login name is the panel user id.
+func iwanPassword(uuid string) (string, error) {
+	digits := strings.ReplaceAll(uuid, "-", "")
+	if len(digits) < 16 {
+		return "", errors.New("uuid is too short for an iwan password")
+	}
+	return strings.ToLower(digits[:16]), nil
+}
+
 // userName is the anixcore user name of a panel user: its id, which comes
 // back in traffic and online reports.
 func userName(user panel.UserInfo) string {
@@ -295,6 +326,15 @@ func apiUserFor(info *panel.NodeInfo, user panel.UserInfo) (apiUser, error) {
 		}
 	case "vmess":
 		out.UUID = user.Uuid
+	case "iwan":
+		password, err := iwanPassword(user.Uuid)
+		if err != nil {
+			return apiUser{}, fmt.Errorf("user %d: %w", user.Id, err)
+		}
+		out.Password = password
+		if info.Iwan != nil {
+			out.Address = info.Iwan.FixedAddresses[out.Name]
+		}
 	default:
 		return apiUser{}, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}

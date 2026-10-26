@@ -140,6 +140,49 @@ func TestQuicProtocolsNeedCertificates(t *testing.T) {
 	}
 }
 
+func TestIwanInbound(t *testing.T) {
+	deny := false
+	info := &panel.NodeInfo{
+		Type:   "iwan",
+		Common: &panel.CommonNode{ServerPort: 4500},
+		Iwan: &panel.IwanNode{
+			Pool:           "10.66.0.0/16",
+			MTU:            1380,
+			DNSUpstream:    "9.9.9.9",
+			AllowEncrypt:   &deny,
+			FixedAddresses: map[string]string{"7": "10.66.0.9"},
+		},
+	}
+	inbound, err := inboundConfig("iwan", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"tag": "iwan", "type": "iwan", "listen": "0.0.0.0", "listen_port": 4500,
+		"pool": "10.66.0.0/16", "mtu": 1380, "dns_upstream": "9.9.9.9",
+		"allow_encrypt": false, "allow_client_to_client": false,
+	}
+	if !reflect.DeepEqual(inbound, want) {
+		t.Fatalf("iwan inbound = %#v", inbound)
+	}
+	uuid := "C9A1E7B0-5B0E-4A4B-9A54-2F3F1C1B0D11"
+	fixed, err := apiUserFor(info, panel.UserInfo{Id: 7, Uuid: uuid})
+	if err != nil || fixed != (apiUser{Name: "7", Password: "c9a1e7b05b0e4a4b", Address: "10.66.0.9"}) {
+		t.Fatalf("iwan fixed user = %+v, %v", fixed, err)
+	}
+	dynamic, err := apiUserFor(info, panel.UserInfo{Id: 8, Uuid: uuid})
+	if err != nil || dynamic.Address != "" || dynamic.Password != "c9a1e7b05b0e4a4b" {
+		t.Fatalf("iwan user = %+v, %v", dynamic, err)
+	}
+	if _, err := apiUserFor(info, panel.UserInfo{Id: 9, Uuid: "short"}); err == nil {
+		t.Fatal("a short uuid should be refused")
+	}
+	info.Iwan.Pool = ""
+	if _, err := inboundConfig("iwan", info, &conf.Options{}); err == nil {
+		t.Fatal("an iwan node without a pool should be refused")
+	}
+}
+
 func TestUnsupportedNodesAreRefused(t *testing.T) {
 	for _, info := range []*panel.NodeInfo{
 		{Type: "anytls", Common: &panel.CommonNode{ServerPort: 1}},
