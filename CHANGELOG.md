@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 5.0.0-rc.7 - 2026-10-26
+
+The seventh 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.7. The Agent probes
+REALITY targets from the node (`reality.probe`, with a real REALITY handshake) for Control's
+target ranking and automatic switching, the anixcore core runs egress routes, and egress
+relays no longer log limiter errors. Upgrade Control and the Agent in either order.
+
 ### Added
 
 - **Reality target probe (`reality.probe`).** A proxy node's Agent now advertises the
@@ -23,6 +30,11 @@
   a Germany node). The REALITY library is linked in, no core process runs. The handshake adds
   up to 12 s to a probe (the server first learns the target's post-handshake records), so a
   probe now takes at most `timeout_ms` + 12 s.
+- **Egress routes on the anixcore core.** The anixcore core now applies the snapshot's
+  `egress` member (`PUT /v1/egress`): the domains of every inbound go out through the exit
+  node's Shadowsocks 2022 relay, and an exit node serves its relays. The configuration is
+  replayed when a crashed anixcore is restarted. An anixcore without the endpoint answers an
+  error that asks to update it.
 
 ### Fixed
 
