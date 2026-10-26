@@ -4,7 +4,9 @@
 // WebSocket's task.assign.
 //
 //   - The generic actions of the administrator routes: service_status,
-//     service_restart and log_tail, for the service "gost" only.
+//     service_restart and log_tail, for the services the Executor lists:
+//     the Agent itself ("anix-agent") on a proxy node, and "gost" where
+//     the forward component runs.
 //   - The forward checks of Control's route diagnosis (forward.listen,
 //     forward.port_conflict, forward.connect, forward.udp_probe), which the
 //     forward component runs on the hop it holds.
@@ -28,6 +30,7 @@ import (
 	"time"
 
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
+	log "github.com/sirupsen/logrus"
 )
 
 // Operation is the desired operation kind and the capability an Agent that
@@ -47,6 +50,15 @@ const (
 	maxOutput = 32 << 10
 	// defaultTimeout bounds a generic task without its own.
 	defaultTimeout = 30 * time.Second
+	// selfRestartDelay leaves the answer of a restart of the Agent itself
+	// time to reach Control before the restart ends the process.
+	selfRestartDelay = 2 * time.Second
+)
+
+// The Agent's own service and its systemd unit (scripts/install.sh).
+const (
+	AgentService = "anix-agent"
+	AgentUnit    = "anix-agent.service"
 )
 
 // Task is the task Control sends.
@@ -76,6 +88,9 @@ type Checker interface {
 	Check(ctx context.Context, action string, params map[string]any) (result any, verdict string, summary string, err error)
 }
 
+// AgentUnits is Units for the Agent itself, which is Self.
+func AgentUnits() map[string]string { return map[string]string{AgentService: AgentUnit} }
+
 // Executor runs agent.diagnostic tasks.
 type Executor struct {
 	// Forward runs the forward checks; nil refuses them.
@@ -86,6 +101,12 @@ type Executor struct {
 	// NoRestart refuses service_restart of a service, with the reason (a
 	// unit another component manages).
 	NoRestart map[string]string
+	// Self names the service that is this Agent. Restarting its unit ends
+	// the process that answers, so its restart is answered first and runs
+	// selfRestartDelay later, queued without waiting (systemctl --no-block).
+	Self string
+	// After schedules the deferred restart; nil uses time.AfterFunc.
+	After func(d time.Duration, f func())
 	// Run runs systemctl and journalctl; nil runs them.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// Now defaults to time.Now.
@@ -156,6 +177,15 @@ func (e *Executor) Run1(ctx context.Context, task Task) (*State, error) {
 		if reason, refused := e.NoRestart[service]; refused {
 			return nil, fmt.Errorf("agent.diagnostic: %s cannot be restarted here: %s", service, reason)
 		}
+		if service == e.Self {
+			e.after(selfRestartDelay, func() {
+				if out, err := e.run(context.Background(), "systemctl", "--no-block", "restart", unit); err != nil {
+					log.WithError(err).WithField("output", string(out)).Warn("agent.diagnostic: the Agent's restart failed")
+				}
+			})
+			out = []byte(fmt.Sprintf("restarting %s in %s; the Agent reconnects when it is back", unit, selfRestartDelay))
+			break
+		}
 		out, err = e.run(ctx, "systemctl", "restart", unit)
 	case ActionLogTail:
 		lines := logTailDefault
@@ -171,6 +201,14 @@ func (e *Executor) Run1(ctx context.Context, task Task) (*State, error) {
 		state.Error = err.Error()
 	}
 	return state, nil
+}
+
+func (e *Executor) after(d time.Duration, f func()) {
+	if e.After != nil {
+		e.After(d, f)
+		return
+	}
+	time.AfterFunc(d, f)
 }
 
 func (e *Executor) run(ctx context.Context, name string, args ...string) ([]byte, error) {
