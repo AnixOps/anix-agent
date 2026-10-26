@@ -13,6 +13,14 @@
   networks. Users are keyed by panel id for traffic and online reports. Not in the default
   build: the node must have the anixcore binary. See `docs/anixcore-core.md`.
 
+### Fixed
+
+- **Destination statistics counted no bytes on Xray nodes.** `Dispatch` put one destination
+  binding on the context and `getLink` counted the link's bytes into a second one, which the
+  routing never bound, so every destination row had connections but zero upload and download.
+  `DispatchLink` (VLESS Vision) had no binding at all and recorded nothing. Both paths now
+  count into the binding the routing binds.
+
 ## 5.0.0-rc.4 - 2026-10-26
 
 The fourth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.4 (the Agent had no
