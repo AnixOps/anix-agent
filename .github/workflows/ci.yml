@@ -5,8 +5,7 @@ on:
     branches: [main, "maintenance/**"]
     tags: ["v*"]
   pull_request:
-    # dev_new: only until the branch is renamed to main (this PR runs on it).
-    branches: [main, dev_new]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
