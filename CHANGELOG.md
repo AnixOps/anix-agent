@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 5.0.0-rc.5 - 2026-10-26
+
+The fifth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.5. It fixes destination
+statistics on Xray nodes, which reported connections with zero bytes, and adds the anixcore core
+driver (not in the default build). Upgrade Control and the Agent in either order.
+
 ### Added
 
 - **anixcore core (`core/anixcore`, build tag `anixcore`).** Drives the AnixOps node kernel

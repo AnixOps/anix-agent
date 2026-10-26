@@ -25,11 +25,12 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 5.0.0-rc.4 范围
+## 5.0.0-rc.5 范围
 
-`v5.0.0-rc.4` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
-5.0.0-rc.4 使用同一版本号（H25），是 5.0 的第四个候选版本（Agent 没有 rc.3）。相对 rc.2：
-新增访问统计上报（`destinations.v1`，需要 Control 5.0.0-rc.4），默认分支改为 `main`。
+`v5.0.0-rc.5` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+5.0.0-rc.5 使用同一版本号（H25），是 5.0 的第五个候选版本。相对 rc.4：修复 Xray 节点访问统计
+只记连接、不记字节的问题，并加入 anixcore 内核驱动（非默认构建）。rc.4 起新增访问统计上报
+（`destinations.v1`，需要 Control 5.0.0-rc.4 或更新），默认分支改为 `main`。
 rc.2 起一个节点运行 Control 下发的每个协议，同类协议也可以并存（如 SS 与 SS2022 各占一个端口，需要
 Control 5.0.0-rc.2）。相对 4.2.0 的变化：
 新增 `anix-agent join`（节点组 `anixjoin_` 接入令牌，见下文“控制流 mTLS 身份”一节与
@@ -55,7 +56,7 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.4 发布范围）
+## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.5 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
@@ -125,7 +126,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v5.0.0-rc.4
+export VERSION=v5.0.0-rc.5
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
