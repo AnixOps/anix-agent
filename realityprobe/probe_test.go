@@ -99,7 +99,7 @@ func TestProbeHardRequirements(t *testing.T) {
 	t.Run("certificate for another name", func(t *testing.T) {
 		prober, port := site(t, true, 0, ok)
 		r := prober.Probe(context.Background(), "wrong.test", port)
-		if !slices.Contains(r.Failures, FailCertificate) {
+		if !slices.Equal(r.Failures, []string{FailCertificate}) || r.Verdict != VerdictFailed {
 			t.Fatalf("%+v", r)
 		}
 	})

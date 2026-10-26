@@ -229,16 +229,19 @@ func (p *Prober) Probe(ctx context.Context, host string, port int) *Result {
 
 	conn := tls.Client(raw, &tls.Config{
 		ServerName: host,
+		RootCAs:    p.RootCAs,
 		NextProtos: []string{"h2", "http/1.1"},
 		MinVersion: tls.VersionTLS12,
-		// The chain is verified below, so that a target with a bad
-		// certificate still answers what it negotiated.
-		InsecureSkipVerify: true, // #nosec G402 -- verified against RootCAs after the handshake.
 	})
 	defer conn.Close()
 	started = time.Now()
 	if err := conn.HandshakeContext(ctx); err != nil {
-		result.fail(FailHandshake, err)
+		code := FailHandshake
+		var verification *tls.CertificateVerificationError
+		if errors.As(err, &verification) {
+			code = FailCertificate
+		}
+		result.fail(code, err)
 		return result
 	}
 	result.HandshakeMS = time.Since(started).Milliseconds()
@@ -257,7 +260,7 @@ func (p *Prober) Probe(ctx context.Context, host string, port int) *Result {
 	if state.CurveID != tls.X25519 && state.CurveID != tls.X25519MLKEM768 {
 		result.fail(FailX25519, fmt.Errorf("key exchange %s, not X25519", result.Curve))
 	}
-	p.certificate(result, state)
+	certificate(result, state)
 
 	if state.NegotiatedProtocol == "h2" {
 		p.get(ctx, result, conn)
@@ -326,10 +329,9 @@ func PublicAddr(addr netip.Addr) bool {
 	return true
 }
 
-// certificate records the chain and verifies it for the result's name.
-func (p *Prober) certificate(result *Result, state tls.ConnectionState) {
+// certificate records the chain; the handshake verified it for the name.
+func certificate(result *Result, state tls.ConnectionState) {
 	if len(state.PeerCertificates) == 0 {
-		result.fail(FailCertificate, errors.New("no certificate"))
 		return
 	}
 	leaf := state.PeerCertificates[0]
@@ -346,14 +348,6 @@ func (p *Prober) certificate(result *Result, state tls.ConnectionState) {
 	}
 	notAfter := leaf.NotAfter.UTC()
 	result.CertNotAfter = &notAfter
-
-	intermediates := x509.NewCertPool()
-	for _, cert := range state.PeerCertificates[1:] {
-		intermediates.AddCert(cert)
-	}
-	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: result.ServerName, Roots: p.RootCAs, Intermediates: intermediates}); err != nil {
-		result.fail(FailCertificate, err)
-	}
 }
 
 // get sends GET / over the probe's connection and records the answer.
