@@ -11,6 +11,7 @@ type CoreConfig struct {
 	SingConfig      *SingConfig      `json:"-"`
 	Hysteria2Config *Hysteria2Config `json:"-"`
 	WireGuardConfig *WireGuardConfig `json:"-"`
+	AnixcoreConfig  *AnixcoreConfig  `json:"-"`
 }
 
 type _CoreConfig CoreConfig
@@ -33,6 +34,9 @@ func (c *CoreConfig) UnmarshalJSON(b []byte) error {
 	case "wireguard":
 		c.WireGuardConfig = NewWireGuardConfig()
 		return json.Unmarshal(b, c.WireGuardConfig)
+	case "anixcore":
+		c.AnixcoreConfig = NewAnixcoreConfig()
+		return json.Unmarshal(b, c.AnixcoreConfig)
 	}
 	return nil
 }

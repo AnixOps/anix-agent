@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **anixcore core (`core/anixcore`, build tag `anixcore`).** Drives the AnixOps node kernel
+  `anixcore` from networkcore_anixops through its local management API. It starts
+  `anixcore run` with a random loopback API port and token (or connects to a running one
+  given `ApiAddress`/`ApiToken`). If anixcore exits, the core restarts it and adds every
+  node and user back. Shadowsocks 2022 (AES), Trojan, VLESS (TLS or REALITY, Vision with
+  REALITY), VMess, Hysteria 2 and TUIC nodes map to anixcore inbounds, with ws and grpc
+  networks. Users are keyed by panel id for traffic and online reports. Not in the default
+  build: the node must have the anixcore binary. See `docs/anixcore-core.md`.
+
 ## 5.0.0-rc.4 - 2026-10-26
 
 The fourth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.4 (the Agent had no
