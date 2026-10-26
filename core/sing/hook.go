@@ -12,6 +12,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/limiter"
 
 	"github.com/AnixOps/anix-agent/v5/common/counter"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	N "github.com/sagernet/sing/common/network"
@@ -20,7 +21,8 @@ import (
 var _ adapter.ConnectionTracker = (*HookServer)(nil)
 
 type HookServer struct {
-	counter sync.Map //map[string]*counter.TrafficCounter
+	counter      sync.Map //map[string]*counter.TrafficCounter
+	destinations destinations.Collectors
 }
 
 func (h *HookServer) ModeList() []string {
@@ -72,6 +74,9 @@ func (h *HookServer) RoutedConnection(_ context.Context, conn net.Conn, m adapte
 		t = c.(*counter.TrafficCounter)
 	}
 	conn = counter.NewConnCounter(conn, t.GetCounter(m.User))
+	if stat := h.destinations.Get(m.Inbound).Open(m.User, destinationHost(m), m.Protocol); stat != nil {
+		conn = newDestinationConn(conn, stat)
+	}
 	return conn
 }
 
@@ -120,5 +125,8 @@ func (h *HookServer) RoutedPacketConnection(_ context.Context, conn N.PacketConn
 		t = c.(*counter.TrafficCounter)
 	}
 	conn = counter.NewPacketConnCounter(conn, t.GetCounter(m.User))
+	if stat := h.destinations.Get(m.Inbound).Open(m.User, destinationHost(m), m.Protocol); stat != nil {
+		conn = newDestinationPacketConn(conn, stat)
+	}
 	return conn
 }

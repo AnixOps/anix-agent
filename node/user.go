@@ -29,6 +29,7 @@ func (c *Controller) reportUserTrafficTask() (err error) {
 	}
 	online, onlineTotal := c.onlineToReport(userTraffic)
 
+	c.reportDestinations()
 	if c.stream.streamReports() {
 		// The stream (or its spool, while it is briefly down) carries the
 		// window as one batch: once spooled it never goes to a legacy

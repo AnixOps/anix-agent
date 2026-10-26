@@ -115,6 +115,7 @@ type Control struct {
 	appliedTraffic map[uint64][2]uint64
 	online         []*agentv1pb.OnlineUser
 	logEntries     []*agentv1pb.LogEntry
+	destinations   []*agentv1pb.DestinationTraffic
 	nodeStatuses   []*agentv1pb.NodeStatus
 	packageReports []*agentv1pb.PackageReport
 	reportAcks     []*agentv1pb.ReportAck
@@ -698,6 +699,8 @@ func (c *Control) handleBatch(current *session, message *agentv1pb.AgentToContro
 			batchID = payload.Traffic.GetBatchId()
 		case *agentv1pb.AgentToControl_Logs:
 			batchID = payload.Logs.GetBatchId()
+		case *agentv1pb.AgentToControl_Destinations:
+			batchID = payload.Destinations.GetBatchId()
 		}
 		ack := &agentv1pb.ReportAck{BatchId: batchID, ErrorCode: agentcontrol.ReportErrorCodeUnavailable, RetryAfterMs: 200}
 		c.mu.Lock()
@@ -713,6 +716,8 @@ func (c *Control) handleBatch(current *session, message *agentv1pb.AgentToContro
 		batchID = payload.Traffic.GetBatchId()
 	case *agentv1pb.AgentToControl_Logs:
 		batchID = payload.Logs.GetBatchId()
+	case *agentv1pb.AgentToControl_Destinations:
+		batchID = payload.Destinations.GetBatchId()
 	}
 	ack := &agentv1pb.ReportAck{BatchId: batchID}
 	switch {
@@ -738,6 +743,10 @@ func (c *Control) handleBatch(current *session, message *agentv1pb.AgentToContro
 		case *agentv1pb.AgentToControl_Logs:
 			for _, entry := range payload.Logs.GetEntries() {
 				c.logEntries = append(c.logEntries, proto.Clone(entry).(*agentv1pb.LogEntry))
+			}
+		case *agentv1pb.AgentToControl_Destinations:
+			for _, entry := range payload.Destinations.GetEntries() {
+				c.destinations = append(c.destinations, proto.Clone(entry).(*agentv1pb.DestinationTraffic))
 			}
 		}
 	}
@@ -771,6 +780,14 @@ func (c *Control) Online() []*agentv1pb.OnlineUser {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]*agentv1pb.OnlineUser(nil), c.online...)
+}
+
+// Destinations returns the recorded destination statistics entries: each
+// batch counts once.
+func (c *Control) Destinations() []*agentv1pb.DestinationTraffic {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1pb.DestinationTraffic(nil), c.destinations...)
 }
 
 // Batches returns the recorded batch ids.
@@ -1206,6 +1223,11 @@ func (c *Control) handle(current *session, message *agentv1pb.AgentToControl) er
 	case *agentv1pb.AgentToControl_Traffic, *agentv1pb.AgentToControl_Logs:
 		if !current.negotiated[agentcontrol.CapabilityReports] {
 			return status.Error(codes.InvalidArgument, "report needs capability reports.v1")
+		}
+		return c.handleBatch(current, message)
+	case *agentv1pb.AgentToControl_Destinations:
+		if !current.negotiated[agentcontrol.CapabilityDestinations] {
+			return status.Error(codes.InvalidArgument, "destinations needs capability destinations.v1")
 		}
 		return c.handleBatch(current, message)
 	case *agentv1pb.AgentToControl_Status:

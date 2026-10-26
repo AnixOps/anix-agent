@@ -334,6 +334,13 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
 - `package-reports.v1`：Supervisor 为插件进程设置 `ANIXOPS_NODE_ID`，
   `machine-telemetry` 采集本节点的 systemd 服务表；Agent 每 5 分钟（以及每次连接时）
   以 `PackageReport` 发送最新值，`version` 为节点被分配的插件版本。
+- `destinations.v1`（访问统计）：sing-box、Xray、Hysteria 2（TCP）按用户统计每个目标的
+  连接数与上下行字节。目标只记可注册域名（`www.youtube.com` 记为 `youtube.com`），
+  没有域名时记地址网段（IPv4 `/24`、IPv6 `/48`），并带嗅探到的协议（`tls`、`quic`、
+  `bittorrent` 等）；每个用户每个窗口最多 200 个目标，超出的合并为一条“其他”。
+  每个流量窗口以 `DestinationReport` 上报，批次号 `node:proxy-<id>:<boot id>:destinations-<序号>`，
+  单独的 spool `spool/destinations/`（16 MB）。是否记录、保留多久由 Control 管理员在
+  “流量与监控 → 访问统计”中设置；Control 不支持 `destinations.v1` 时不上报，也没有旧链路。
 
 ```json
 "AgentStream": {

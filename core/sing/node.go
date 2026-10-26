@@ -422,5 +422,6 @@ func (b *Sing) DelNode(tag string) error {
 	if err != nil {
 		return fmt.Errorf("delete inbound error: %s", err)
 	}
+	b.hookServer.destinations.Delete(tag)
 	return nil
 }

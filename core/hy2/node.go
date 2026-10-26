@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/apernet/hysteria/core/v2/server"
 	"github.com/spf13/viper"
@@ -43,6 +44,7 @@ func (h *Hysteria2) AddNode(tag string, info *panel.NodeInfo, config *conf.Optio
 			Tag:                   tag,
 			logger:                h.Logger,
 			ReportMinTrafficBytes: config.ReportMinTraffic * 1024,
+			destinations:          destinations.NewCollector(),
 		},
 	}
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/counter"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/common/format"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/core/xray/app/dispatcher"
@@ -149,4 +150,16 @@ func (c *Xray) AddUsers(p *vCore.AddUsersParams) (added int, err error) {
 	}
 
 	return len(users), nil
+}
+
+// GetDestinationTraffic returns tag's traffic by destination
+// (destinations.v1) since the last call, for the users the core knows.
+func (x *Xray) GetDestinationTraffic(tag string) ([]destinations.Traffic, error) {
+	entries := x.dispatcher.Destinations.Snapshot(tag)
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	x.users.mapLock.RLock()
+	defer x.users.mapLock.RUnlock()
+	return destinations.Resolve(entries, func(user string) int { return x.users.uidMap[user] }), nil
 }

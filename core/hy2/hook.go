@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/AnixOps/anix-agent/v5/common/counter"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/common/format"
 	"github.com/AnixOps/anix-agent/v5/limiter"
 	"github.com/apernet/hysteria/core/v2/server"
@@ -17,12 +18,9 @@ type HookServer struct {
 	logger                *zap.Logger
 	Counter               sync.Map
 	ReportMinTrafficBytes int64
-}
 
-func (h *HookServer) TraceStream(stream server.HyStream, stats *server.StreamStats) {
-}
-
-func (h *HookServer) UntraceStream(stream server.HyStream) {
+	destinations *destinations.Collector
+	streams      sync.Map // map[server.HyStream]*tracedStream
 }
 
 func (h *HookServer) LogTraffic(id string, tx, rx uint64) (ok bool) {

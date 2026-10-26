@@ -228,3 +228,80 @@ func heartbeatMetricOf(t *testing.T, control *agenttest.Control, metric string) 
 	}, 5*time.Second, 20*time.Millisecond)
 	return value
 }
+
+func newDestinationsClient(t *testing.T, control *agenttest.Control, root string) *Client {
+	t.Helper()
+	store, err := state.Open(root, agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: control.NodeID})
+	require.NoError(t, err)
+	client, err := NewClient(Config{
+		Target: control.Address, NodeID: int(control.NodeID), APIKey: control.APIKey, UseTLS: true, ServerName: control.ServerName,
+		RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
+		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
+		Heartbeat:    time.Second, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
+		DialTimeout: 2 * time.Second, DataPlane: &DataPlaneConfig{State: store, Config: nopConfig{}, Users: &recordingUsers{},
+			Reports: &ReportsConfig{Destinations: true, StatusInterval: time.Hour}},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+func destinationReport(users ...uint64) *agentv1pb.DestinationReport {
+	report := &agentv1pb.DestinationReport{WindowEndUnixMs: time.Now().UnixMilli()}
+	for _, id := range users {
+		report.Entries = append(report.Entries, &agentv1pb.DestinationTraffic{UserId: id, Domain: "youtube.com", Protocol: "tls", DownloadBytes: 1000 * id, Connections: 1})
+	}
+	return report
+}
+
+func TestDestinationReportsAreSpooledAndSentOnlyWithTheirCapability(t *testing.T) {
+	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityDestinations)
+	client := newDestinationsClient(t, control, t.TempDir())
+	startUsersClient(t, client)
+	plane := client.DataPlane()
+	assert.True(t, agentcontrol.HasCapabilityVersion(control.Hellos()[0].Capabilities, agentcontrol.CapabilityDestinations, "v1"))
+	assert.Equal(t, DataPlaneStream, plane.Mode(agentcontrol.CapabilityDestinations))
+
+	require.NoError(t, plane.SubmitDestinations(destinationReport(1, 2)))
+	require.NoError(t, plane.SubmitTraffic(trafficReport(1)))
+	require.Eventually(t, func() bool { return len(control.Batches()) == 2 && spooled(client) == 0 }, 5*time.Second, 10*time.Millisecond)
+	require.Len(t, control.Destinations(), 2)
+	assert.Equal(t, uint64(2000), control.Destinations()[1].GetDownloadBytes())
+	var ids []string
+	for _, message := range control.Received() {
+		if report := message.GetDestinations(); report != nil {
+			ids = append(ids, report.BatchId)
+		}
+	}
+	require.Len(t, ids, 1)
+	assert.Regexp(t, `^node:proxy-12:[0-9a-f]{32}:destinations-[0-9]+$`, ids[0], "a batch id of its own kind")
+}
+
+func TestDestinationReportsWaitForAControlThatServesThem(t *testing.T) {
+	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	root := t.TempDir()
+	client := newDestinationsClient(t, control, root)
+	startUsersClient(t, client)
+	plane := client.DataPlane()
+	assert.Equal(t, DataPlaneLegacy, plane.Mode(agentcontrol.CapabilityDestinations))
+
+	// Spooled directly (the node only submits in stream mode): it is not
+	// sent on a session without destinations.v1, and traffic still is.
+	require.NoError(t, plane.SubmitDestinations(destinationReport(1)))
+	require.NoError(t, plane.SubmitTraffic(trafficReport(1)))
+	require.Eventually(t, func() bool { return len(control.Batches()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	assert.Empty(t, control.Destinations())
+	assert.Equal(t, 1, spooled(client))
+	files, err := os.ReadDir(filepath.Join(root, "proxy-12", "spool", "destinations"))
+	require.NoError(t, err)
+	assert.Len(t, files, 1)
+}
+
+func TestSubmitDestinationsNeedsTheirConfiguration(t *testing.T) {
+	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityDestinations)
+	client := newReportsClient(t, control, t.TempDir(), reportsOptions{})
+	assert.ErrorIs(t, client.DataPlane().SubmitDestinations(destinationReport(1)), ErrDestinationsOff)
+	startUsersClient(t, client)
+	assert.False(t, agentcontrol.HasCapability(control.Hellos()[0].Capabilities, agentcontrol.CapabilityDestinations), "not advertised without a spool")
+}

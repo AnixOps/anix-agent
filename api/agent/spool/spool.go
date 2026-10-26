@@ -171,13 +171,15 @@ func batchID(message *agentv1pb.AgentToControl) string {
 		return payload.Traffic.GetBatchId()
 	case *agentv1pb.AgentToControl_Logs:
 		return payload.Logs.GetBatchId()
+	case *agentv1pb.AgentToControl_Destinations:
+		return payload.Destinations.GetBatchId()
 	}
 	return ""
 }
 
-// Append stores message (a TrafficReport or LogBatch envelope whose
-// sent_at_unix_ms is when the batch was made) durably, dropping the oldest
-// batches when the spool would exceed its bounds. A batch id already in the
+// Append stores message (a TrafficReport, LogBatch or DestinationReport
+// envelope whose sent_at_unix_ms is when the batch was made) durably,
+// dropping the oldest batches when the spool would exceed its bounds. A batch id already in the
 // spool is kept once.
 func (s *Spool) Append(message *agentv1pb.AgentToControl) error {
 	id := batchID(message)

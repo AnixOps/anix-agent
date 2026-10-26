@@ -2,6 +2,7 @@ package core
 
 import (
 	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
 )
 
@@ -46,4 +47,12 @@ type RateLimitUpdater interface {
 // existing proxy cores do not expose reversible counters.
 type TrafficRollbacker interface {
 	RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error
+}
+
+// DestinationProvider is implemented by cores that count each user's
+// traffic by destination (destinations.v1): the sing-box, Xray and
+// Hysteria 2 cores. GetDestinationTraffic returns tag's traffic since the
+// last call.
+type DestinationProvider interface {
+	GetDestinationTraffic(tag string) ([]destinations.Traffic, error)
 }
