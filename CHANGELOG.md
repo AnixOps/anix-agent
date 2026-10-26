@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 5.0.0-rc.4 - 2026-10-26
+
+The fourth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.4 (the Agent had no
+rc.3). It adds destination statistics and moves the default branch to `main`. Upgrade
+Control and the Agent in either order: each serves `destinations.v1` only when the other
+does. On a node installed before this release, run the management script with
+`REPO_BRANCH=main` to upgrade.
+
 ### Added
 
 - **Destination statistics (`destinations.v1`, 访问统计).** The sing-box, Xray and Hysteria 2
