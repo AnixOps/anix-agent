@@ -20,6 +20,7 @@ type fakeAPI struct {
 	inbounds map[string]map[string]any
 	users    map[string]map[string]apiUser
 	calls    []string
+	egress   []map[string]any
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -47,6 +48,11 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == "GET" && r.URL.Path == "/v1/status":
 		reply(200, map[string]any{"version": "test"})
+	case r.Method == "PUT" && r.URL.Path == "/v1/egress":
+		var egress map[string]any
+		_ = json.Unmarshal(body, &egress)
+		f.egress = append(f.egress, egress)
+		reply(200, map[string]any{"routes": []int{}, "relays": []any{}})
 	case r.Method == "POST" && r.URL.Path == "/v1/inbounds":
 		var inbound map[string]any
 		_ = json.Unmarshal(body, &inbound)
@@ -261,5 +267,82 @@ func TestCoreConfigParsesTheAnixcoreSection(t *testing.T) {
 	if config.AnixcoreConfig == nil || config.AnixcoreConfig.BinaryPath != "/usr/local/bin/anixcore" ||
 		config.AnixcoreConfig.RuntimeDir == "" || config.AnixcoreConfig.StartTimeoutSeconds != 10 {
 		t.Fatalf("config = %+v", config.AnixcoreConfig)
+	}
+}
+
+func TestEgressIsSentAndReplayed(t *testing.T) {
+	api, server := newFakeAPI(t)
+	core := externalCore(t, server)
+	defer core.Close()
+
+	config := &panel.EgressConfig{
+		Routes: []panel.EgressRoute{{ID: 3, Domains: []string{"openai.com", "full:claude.ai"}, Server: panel.EgressServer{
+			Host: "203.0.113.5", Port: 9443, Method: "2022-blake3-aes-128-gcm", Password: "AAECAwQFBgcICQoLDA0ODw==",
+		}}},
+		Relays: []panel.EgressRelay{{ID: 4, Port: 9444, Method: "2022-blake3-aes-128-gcm", Password: "AAECAwQFBgcICQoLDA0ODw=="}},
+	}
+	if err := core.ApplyEgress(config); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.egress) != 1 {
+		t.Fatalf("egress calls = %v", api.egress)
+	}
+	route := api.egress[0]["routes"].([]any)[0].(map[string]any)
+	server0 := route["server"].(map[string]any)
+	if route["id"] != float64(3) || server0["host"] != "203.0.113.5" || server0["port"] != float64(9443) {
+		t.Fatalf("sent route = %v", route)
+	}
+	relay := api.egress[0]["relays"].([]any)[0].(map[string]any)
+	if relay["id"] != float64(4) || relay["port"] != float64(9444) {
+		t.Fatalf("sent relay = %v", relay)
+	}
+
+	// A restarted anixcore gets the routes again.
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.egress) != 2 || len(api.egress[1]["routes"].([]any)) != 1 {
+		t.Fatalf("replayed egress = %v", api.egress)
+	}
+
+	// No configuration removes everything, with empty lists, and is not
+	// replayed.
+	if err := core.ApplyEgress(nil); err != nil {
+		t.Fatal(err)
+	}
+	if routes, ok := api.egress[2]["routes"].([]any); !ok || len(routes) != 0 {
+		t.Fatalf("cleared egress = %v", api.egress[2])
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.egress) != 3 {
+		t.Fatalf("an empty configuration was replayed: %v", api.egress)
+	}
+
+	vless := &panel.EgressConfig{Relays: []panel.EgressRelay{{ID: 5, Protocol: "vless", Port: 1, Method: "m", Password: "k"}}}
+	if err := core.ApplyEgress(vless); err == nil || !strings.Contains(err.Error(), "vless") {
+		t.Fatalf("an unknown relay protocol = %v", err)
+	}
+	if len(api.egress) != 3 {
+		t.Fatal("a refused configuration reached anixcore")
+	}
+}
+
+func TestEgressNeedsAnAnixcoreWithTheEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/status" {
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
+		w.WriteHeader(404)
+		_, _ = io.WriteString(w, `{"error":"no such endpoint"}`)
+	}))
+	defer server.Close()
+	core := externalCore(t, server)
+	defer core.Close()
+	config := &panel.EgressConfig{Relays: []panel.EgressRelay{{ID: 1, Port: 9000, Method: "m", Password: "k"}}}
+	if err := core.ApplyEgress(config); err == nil || !strings.Contains(err.Error(), "update it") {
+		t.Fatalf("ApplyEgress on an old anixcore = %v", err)
 	}
 }

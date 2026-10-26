@@ -53,6 +53,8 @@ type Core struct {
 	mu     sync.Mutex
 	client *client
 	nodes  map[string]*node
+	// egress is the last configuration ApplyEgress sent, nil for none.
+	egress *panel.EgressConfig
 
 	process *exec.Cmd
 	stop    chan struct{}
@@ -162,7 +164,8 @@ func (c *Core) supervise(exitErr error) {
 	}
 }
 
-// replay adds every known node with its users to a fresh anixcore.
+// replay adds every known node with its users, and the egress routes, to
+// a fresh anixcore.
 func (c *Core) replay() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -171,6 +174,11 @@ func (c *Core) replay() error {
 		n.created = false
 		if err := c.create(tag, n); err != nil {
 			failed = errors.Join(failed, fmt.Errorf("%s: %w", tag, err))
+		}
+	}
+	if c.egress != nil {
+		if err := c.putEgress(c.egress); err != nil {
+			failed = errors.Join(failed, err)
 		}
 	}
 	return failed
