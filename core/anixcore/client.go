@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/AnixOps/anix-agent/v5/api/panel"
 )
 
 const requestTimeout = 15 * time.Second
@@ -142,6 +144,10 @@ func (c *client) traffic(ctx context.Context, tag string, reset bool) ([]apiTraf
 		return nil, err
 	}
 	return answer.Traffic, nil
+}
+
+func (c *client) putEgress(ctx context.Context, config *panel.EgressConfig) error {
+	return c.do(ctx, http.MethodPut, "/v1/egress", config, nil)
 }
 
 func (c *client) online(ctx context.Context, tag string) ([]apiOnline, error) {

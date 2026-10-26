@@ -58,7 +58,7 @@ type DestinationProvider interface {
 }
 
 // EgressApplier is implemented by cores that run a node's egress routes
-// (panel.EgressConfig): the Xray core. ApplyEgress replaces what the core
+// (panel.EgressConfig): the Xray and anixcore cores. ApplyEgress replaces what the core
 // ran from the previous call; an empty configuration removes it all.
 type EgressApplier interface {
 	ApplyEgress(config *panel.EgressConfig) error
