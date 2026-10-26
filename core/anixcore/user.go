@@ -129,11 +129,11 @@ func (c *Core) clientFor(tag string) (*client, bool) {
 	return c.client, ok && n.created
 }
 
-// panelUID is the panel user id an anixcore user name stands for. Panel ids
-// are reported as uint32, so anything outside that range is not one.
+// panelUID is the panel user id an anixcore user name stands for: a
+// positive int32, which fits both int and the uint32 the panel reports.
 func panelUID(name string) (int, bool) {
-	uid, err := strconv.ParseUint(name, 10, 32)
-	if err != nil {
+	uid, err := strconv.ParseInt(name, 10, 32)
+	if err != nil || uid <= 0 {
 		return 0, false
 	}
 	return int(uid), true
