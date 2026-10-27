@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.0-rc.8 - 2026-10-27
+
+The eighth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.8. The anixcore core
+serves Panabit iWAN nodes. Upgrade the Agent before you add an iWAN node in Control.
+
 ### Added
 
 - **anixcore serves Panabit iWAN nodes.** A panel node of type `iwan` becomes an anixcore
