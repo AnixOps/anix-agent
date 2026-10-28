@@ -34,7 +34,7 @@ func TestDecodeOperationEnvelopeV2ValidatesExactSecretMaterialSet(t *testing.T) 
 	}
 	envelope := OperationEnvelope{
 		Version: OperationEnvelopeVersionV2, OperationID: "operation-v2", IdempotencyKey: "operation-v2-key",
-		SessionID: "session-v2", Revision: 4, PluginID: "gost-mesh", TargetVersion: "1.0.0",
+		SessionID: "session-v2", Revision: 4, PluginID: "mesh-demo", TargetVersion: "1.0.0",
 		ConfigHash: hex.EncodeToString(configDigest[:]), Config: config,
 		SecretMaterials: []SecretMaterial{
 			material("secret://mesh-edge@1/ca.pem", "ca"),

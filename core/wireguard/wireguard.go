@@ -7,10 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/netip"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,15 +32,6 @@ var _ vCore.TrafficRollbacker = (*WireGuard)(nil)
 type commandExecutor interface {
 	Run(name string, args ...string) error
 	Output(name string, args ...string) ([]byte, error)
-	Start(name string, args ...string) (process, error)
-}
-
-type process interface {
-	Stop() error
-}
-
-type processWaiter interface {
-	Wait() error
 }
 
 type osExecutor struct{}
@@ -59,40 +48,6 @@ func (osExecutor) Run(name string, args ...string) error {
 func (osExecutor) Output(name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	return cmd.Output()
-}
-
-func (osExecutor) Start(name string, args ...string) (process, error) {
-	cmd := exec.Command(name, args...)
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	return &osProcess{cmd: cmd}, nil
-}
-
-type osProcess struct {
-	cmd      *exec.Cmd
-	waitOnce sync.Once
-	waitErr  error
-}
-
-func (p *osProcess) Wait() error {
-	if p == nil || p.cmd == nil {
-		return nil
-	}
-	p.waitOnce.Do(func() {
-		p.waitErr = p.cmd.Wait()
-	})
-	return p.waitErr
-}
-
-func (p *osProcess) Stop() error {
-	if p == nil || p.cmd == nil || p.cmd.Process == nil {
-		return nil
-	}
-	if err := p.cmd.Process.Kill(); err != nil {
-		return err
-	}
-	return p.Wait()
 }
 
 type WireGuard struct {
@@ -112,10 +67,6 @@ type nodeState struct {
 	runtimeMu             sync.RWMutex
 	nodeSpeedLimit        int
 	tcConfigured          bool
-	gost                  process
-	gostWatchStop         chan struct{}
-	gostRuntime           *gostRuntime
-	networkPolicy         *networkPolicyRuntime
 	runtimeHealthy        bool
 	runtimeError          string
 	cfgPath               string
@@ -125,36 +76,6 @@ type nodeState struct {
 type trafficPair struct {
 	upload   int64
 	download int64
-}
-
-type gostRuntime struct {
-	role                         string
-	mode                         string
-	server                       string
-	serverPort                   int
-	tunPort                      int
-	tunName                      string
-	tunAddress                   string
-	entryTunIP                   string
-	wireGuardIface               string
-	mtu                          int
-	sourceCIDR                   string
-	routingTable                 int
-	routingPriority              int
-	exitNAT                      bool
-	outboundIface                string
-	wssPath                      string
-	wssSecure                    bool
-	wssServerName                string
-	wssCAFile                    string
-	wssCertFile                  string
-	wssKeyFile                   string
-	networkPolicySignature       string
-	natRuleAdded                 bool
-	forwardRuleAdded             bool
-	reverseForwardRuleAdded      bool
-	entryForwardRuleAdded        bool
-	entryReverseForwardRuleAdded bool
 }
 
 func init() {
@@ -220,14 +141,8 @@ func (w *WireGuard) AddNode(tag string, info *panel.NodeInfo, config *conf.Optio
 
 	if err := w.apply(state); err != nil {
 		w.cleanupPeerRateLimits(state)
-		if state.gost != nil {
-			w.cleanupGost(state)
-		}
-		w.cleanupNetworkPolicy(state)
 		_ = os.Remove(state.cfgPath)
-		if !isWireGuardExitNode(state.info) {
-			_ = w.executor.Run(w.cfg.IPPath, "link", "delete", state.iface)
-		}
+		_ = w.executor.Run(w.cfg.IPPath, "link", "delete", state.iface)
 		w.mu.Lock()
 		delete(w.nodes, tag)
 		delete(w.traffic, tag)
@@ -254,15 +169,8 @@ func (w *WireGuard) DelNode(tag string) error {
 	delete(w.nodes, tag)
 	delete(w.traffic, tag)
 	w.mu.Unlock()
-	if state.gost != nil {
-		w.cleanupGost(state)
-	}
-	w.cleanupNetworkPolicy(state)
 	w.cleanupPeerRateLimits(state)
 	_ = os.Remove(state.cfgPath)
-	if isWireGuardExitNode(state.info) {
-		return nil
-	}
 	return w.executor.Run(w.cfg.IPPath, "link", "delete", state.iface)
 }
 
@@ -282,10 +190,6 @@ func (w *WireGuard) AddUsers(p *vCore.AddUsersParams) (int, error) {
 	if current, exists := w.nodes[p.Tag]; !exists || current != state {
 		w.mu.Unlock()
 		return 0, errors.New("the node is not have")
-	}
-	if isWireGuardExitNode(state.info) {
-		w.mu.Unlock()
-		return len(p.Users), nil
 	}
 	previous := cloneWireGuardUsers(state.users)
 	for _, user := range p.Users {
@@ -320,10 +224,6 @@ func (w *WireGuard) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeIn
 		w.mu.Unlock()
 		return errors.New("the node is not have")
 	}
-	if isWireGuardExitNode(state.info) {
-		w.mu.Unlock()
-		return nil
-	}
 	previous := cloneWireGuardUsers(state.users)
 	for _, user := range users {
 		delete(state.users, user.Uuid)
@@ -356,10 +256,6 @@ func (w *WireGuard) UpdateUserRateLimit(tag, uuid string, speedLimit int) error 
 		w.mu.Unlock()
 		return errors.New("the node is not have")
 	}
-	if isWireGuardExitNode(state.info) {
-		w.mu.Unlock()
-		return nil
-	}
 	user, ok := state.users[uuid]
 	if !ok {
 		w.mu.Unlock()
@@ -389,10 +285,6 @@ func (w *WireGuard) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTra
 	if !ok {
 		w.mu.Unlock()
 		return nil, errors.New("the node is not have")
-	}
-	if isWireGuardExitNode(state.info) {
-		w.mu.Unlock()
-		return nil, nil
 	}
 	publicKeyToUID := make(map[string]int, len(state.users))
 	for _, user := range state.users {
@@ -455,9 +347,6 @@ func (w *WireGuard) RollbackUserTrafficSlice(tag string, traffic []panel.UserTra
 	if !ok {
 		return errors.New("the node is not have")
 	}
-	if isWireGuardExitNode(state.info) {
-		return nil
-	}
 	uidToPublicKey := make(map[int]string, len(state.users))
 	for _, user := range state.users {
 		uidToPublicKey[user.Id] = user.WireGuardPublicKey
@@ -488,10 +377,6 @@ func (w *WireGuard) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
 	if !ok {
 		w.mu.Unlock()
 		return nil, errors.New("the node is not have")
-	}
-	if isWireGuardExitNode(state.info) {
-		w.mu.Unlock()
-		return nil, nil
 	}
 	publicKeyToUID := make(map[string]int, len(state.users))
 	for _, user := range state.users {
@@ -534,10 +419,6 @@ func (w *WireGuard) apply(state *nodeState) error {
 }
 
 func (w *WireGuard) applyLocked(state *nodeState) error {
-	if isWireGuardExitNode(state.info) {
-		w.cleanupPeerRateLimits(state)
-		return w.applyGost(state)
-	}
 	if err := os.MkdirAll(w.cfg.RuntimeDir, 0700); err != nil {
 		return err
 	}
@@ -571,209 +452,8 @@ func (w *WireGuard) applyLocked(state *nodeState) error {
 	if err := w.applyPeerRateLimits(state); err != nil {
 		return err
 	}
-	return w.applyGost(state)
-}
-
-func isWireGuardExitNode(info *panel.NodeInfo) bool {
-	return info != nil && info.WireGuard != nil && wireGuardRelayRole(info.WireGuard) == "exit"
-}
-
-func (w *WireGuard) applyGost(state *nodeState) error {
-	n := state.info.WireGuard
-	backend := wireGuardRelayBackend(n)
-	if backend == "" {
-		if err := w.cleanupGost(state); err != nil {
-			return err
-		}
-		w.cleanupNetworkPolicy(state)
-		state.setRuntimeHealth(true, "")
-		return nil
-	}
-	if backend != "gost" {
-		return fmt.Errorf("wireguard relay backend is not supported: %q", n.Relay.Backend)
-	}
-	if err := w.applyNetworkPolicy(state); err != nil {
-		return err
-	}
-
-	role := wireGuardRelayRole(n)
-	mode, err := wireGuardGostMode(n)
-	if err != nil {
-		return err
-	}
-	tunPort := n.Relay.TunPort
-	if tunPort <= 0 {
-		tunPort = 8421
-	}
-	tunName := strings.TrimSpace(n.Relay.TunName)
-	if tunName == "" {
-		tunName = gostTunName(state.tag)
-	}
-	sourceCIDR := strings.TrimSpace(n.CIDR)
-	if sourceCIDR == "" {
-		return errors.New("wireguard cidr is required for gost relay routing")
-	}
-	runtime := &gostRuntime{
-		role:                   role,
-		mode:                   mode,
-		server:                 strings.TrimSpace(n.Relay.Server),
-		serverPort:             n.Relay.ServerPort,
-		tunPort:                tunPort,
-		tunName:                tunName,
-		tunAddress:             relayTunAddress(n, role),
-		entryTunIP:             relayTunIP(n.Relay.EntryTunAddress),
-		wireGuardIface:         state.iface,
-		mtu:                    wireGuardMTU(n),
-		sourceCIDR:             sourceCIDR,
-		routingTable:           relayRoutingTable(state.tag, n.Relay.RoutingTable),
-		routingPriority:        relayRoutingPriority(state.tag, n.Relay.RoutingPriority),
-		exitNAT:                n.Relay.ExitNAT,
-		outboundIface:          strings.TrimSpace(n.Relay.OutboundIface),
-		wssPath:                wireGuardWSSPath(n),
-		wssSecure:              n.Relay.WSSSecure,
-		wssServerName:          strings.TrimSpace(n.Relay.WSSServerName),
-		wssCAFile:              strings.TrimSpace(n.Relay.WSSCAFile),
-		wssCertFile:            strings.TrimSpace(n.Relay.WSSCertFile),
-		wssKeyFile:             strings.TrimSpace(n.Relay.WSSKeyFile),
-		networkPolicySignature: networkPolicySignature(n.Relay.NetworkPolicy),
-	}
-	if state.gost != nil && sameGostRuntime(state.gostRuntime, runtime) {
-		state.setRuntimeHealth(true, "")
-		return nil
-	}
-	if err := w.cleanupGost(state); err != nil {
-		return err
-	}
-	if err := w.enableIPv4Forwarding(); err != nil {
-		return err
-	}
-
-	var proc process
-	switch role {
-	case "exit":
-		proc, err = w.startGostExit(state, mode, tunName, tunPort)
-		if err == nil {
-			err = w.applyExitFirewall(runtime)
-		}
-	default:
-		proc, err = w.startGostEntry(state, mode, tunName, tunPort)
-		if err == nil {
-			err = w.applyEntryRouting(runtime)
-		}
-		if err == nil {
-			err = w.applyEntryForwarding(runtime)
-		}
-	}
-	if err != nil {
-		if proc != nil {
-			_ = proc.Stop()
-		}
-		if runtime.role == "exit" {
-			w.cleanupExitFirewall(runtime)
-		} else {
-			w.cleanupEntryForwarding(runtime)
-			w.cleanupEntryRouting(runtime)
-		}
-		return err
-	}
-	state.gost = proc
-	state.gostRuntime = runtime
 	state.setRuntimeHealth(true, "")
-	w.watchGostProcess(state, proc)
 	return nil
-}
-
-func sameGostRuntime(current, desired *gostRuntime) bool {
-	if current == nil || desired == nil {
-		return false
-	}
-	return current.role == desired.role &&
-		current.mode == desired.mode &&
-		current.server == desired.server &&
-		current.serverPort == desired.serverPort &&
-		current.tunPort == desired.tunPort &&
-		current.tunName == desired.tunName &&
-		current.tunAddress == desired.tunAddress &&
-		current.entryTunIP == desired.entryTunIP &&
-		current.wireGuardIface == desired.wireGuardIface &&
-		current.mtu == desired.mtu &&
-		current.sourceCIDR == desired.sourceCIDR &&
-		current.routingTable == desired.routingTable &&
-		current.routingPriority == desired.routingPriority &&
-		current.exitNAT == desired.exitNAT &&
-		current.outboundIface == desired.outboundIface &&
-		current.wssPath == desired.wssPath &&
-		current.wssSecure == desired.wssSecure &&
-		current.wssServerName == desired.wssServerName &&
-		current.wssCAFile == desired.wssCAFile &&
-		current.wssCertFile == desired.wssCertFile &&
-		current.wssKeyFile == desired.wssKeyFile &&
-		current.networkPolicySignature == desired.networkPolicySignature
-}
-
-func (w *WireGuard) watchGostProcess(state *nodeState, proc process) {
-	waiter, ok := proc.(processWaiter)
-	if !ok {
-		return
-	}
-	stop := make(chan struct{})
-	state.gostWatchStop = stop
-	go func() {
-		err := waiter.Wait()
-		select {
-		case <-stop:
-			return
-		default:
-		}
-		w.handleGostExit(state, proc, err)
-	}()
-}
-
-func (w *WireGuard) handleGostExit(state *nodeState, proc process, waitErr error) {
-	state.applyMu.Lock()
-	w.mu.Lock()
-	current, exists := w.nodes[state.tag]
-	if !exists || current != state || state.gost != proc {
-		w.mu.Unlock()
-		state.applyMu.Unlock()
-		return
-	}
-	state.gost = nil
-	state.gostWatchStop = nil
-	w.mu.Unlock()
-
-	message := "gost relay exited"
-	if waitErr != nil {
-		message = fmt.Sprintf("gost relay exited: %v", waitErr)
-	}
-	state.setRuntimeHealth(false, message)
-	slog.Error("wireguard gost relay exited", "tag", state.tag, "error", waitErr)
-	_ = w.cleanupGost(state)
-	state.applyMu.Unlock()
-
-	delay := w.cfg.GostRestartDelaySeconds
-	if delay <= 0 {
-		delay = 3
-	}
-	for {
-		time.Sleep(time.Duration(delay) * time.Second)
-
-		state.applyMu.Lock()
-		w.mu.Lock()
-		current, exists = w.nodes[state.tag]
-		w.mu.Unlock()
-		if !exists || current != state {
-			state.applyMu.Unlock()
-			return
-		}
-		err := w.applyGost(state)
-		state.applyMu.Unlock()
-		if err == nil {
-			return
-		}
-		state.setRuntimeHealth(false, fmt.Sprintf("gost relay restart failed: %v", err))
-		slog.Error("wireguard gost relay restart failed", "tag", state.tag, "error", err)
-	}
 }
 
 func (state *nodeState) setRuntimeHealth(healthy bool, message string) {
@@ -781,272 +461,6 @@ func (state *nodeState) setRuntimeHealth(healthy bool, message string) {
 	state.runtimeHealthy = healthy
 	state.runtimeError = strings.TrimSpace(message)
 	state.runtimeMu.Unlock()
-}
-
-func (w *WireGuard) cleanupGost(state *nodeState) error {
-	if state == nil {
-		return nil
-	}
-	if state.gostWatchStop != nil {
-		close(state.gostWatchStop)
-		state.gostWatchStop = nil
-	}
-	if state.gost != nil {
-		_ = state.gost.Stop()
-		state.gost = nil
-	}
-	runtime := state.gostRuntime
-	state.gostRuntime = nil
-	if runtime == nil {
-		return nil
-	}
-	if runtime.role == "exit" {
-		w.cleanupExitFirewall(runtime)
-		return nil
-	}
-	w.cleanupEntryForwarding(runtime)
-	w.cleanupEntryRouting(runtime)
-	return nil
-}
-
-func (w *WireGuard) startGostEntry(state *nodeState, mode, tunName string, tunPort int) (process, error) {
-	n := state.info.WireGuard
-	if strings.TrimSpace(n.Relay.Server) == "" || n.Relay.ServerPort <= 0 {
-		return nil, errors.New("wireguard gost entry requires relay.server and relay.server_port")
-	}
-	tunAddress := relayTunAddress(n, "entry")
-	if tunAddress == "" {
-		return nil, errors.New("wireguard gost entry requires relay.entry_tun_address or relay.tun_address")
-	}
-	listener := fmt.Sprintf(
-		"tun://:0/:%d?net=%s&name=%s&mtu=%d",
-		tunPort,
-		tunAddress,
-		tunName,
-		wireGuardMTU(n),
-	)
-	forwarder := gostRelayEndpoint(n, mode, n.Relay.Server, n.Relay.ServerPort, false)
-	return w.executor.Start(w.cfg.GostPath, "-L", listener, "-F", forwarder)
-}
-
-func (w *WireGuard) startGostExit(state *nodeState, mode, tunName string, tunPort int) (process, error) {
-	n := state.info.WireGuard
-	if n.Relay.ServerPort <= 0 {
-		return nil, errors.New("wireguard gost exit requires relay.server_port")
-	}
-	tunAddress := relayTunAddress(n, "exit")
-	if tunAddress == "" {
-		return nil, errors.New("wireguard gost exit requires relay.exit_tun_address or relay.tun_address")
-	}
-	entryTunIP := relayTunIP(n.Relay.EntryTunAddress)
-	if entryTunIP == "" {
-		return nil, errors.New("wireguard gost exit requires relay.entry_tun_address")
-	}
-	listener := fmt.Sprintf(
-		"tun://:%d?net=%s&name=%s&mtu=%d&route=%s&gw=%s",
-		tunPort,
-		tunAddress,
-		tunName,
-		wireGuardMTU(n),
-		n.CIDR,
-		entryTunIP,
-	)
-	relayListener := gostRelayEndpoint(n, mode, "", n.Relay.ServerPort, true)
-	return w.executor.Start(w.cfg.GostPath, "-L", listener, "-L", relayListener)
-}
-
-func (w *WireGuard) enableIPv4Forwarding() error {
-	if w.cfg.SysctlPath == "" {
-		return nil
-	}
-	return w.executor.Run(w.cfg.SysctlPath, "-w", "net.ipv4.ip_forward=1")
-}
-
-func (w *WireGuard) applyEntryRouting(runtime *gostRuntime) error {
-	w.cleanupEntryRouting(runtime)
-	routeArgs := []string{
-		"route", "replace", "default", "dev", runtime.tunName, "table", strconv.Itoa(runtime.routingTable),
-	}
-	var routeErr error
-	for attempt := 0; attempt < 30; attempt++ {
-		routeErr = w.executor.Run(w.cfg.IPPath, routeArgs...)
-		if routeErr == nil {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if routeErr != nil {
-		return routeErr
-	}
-	return w.executor.Run(
-		w.cfg.IPPath,
-		"rule", "add", "from", runtime.sourceCIDR,
-		"table", strconv.Itoa(runtime.routingTable),
-		"priority", strconv.Itoa(runtime.routingPriority),
-	)
-}
-
-func (w *WireGuard) cleanupEntryRouting(runtime *gostRuntime) {
-	if runtime == nil {
-		return
-	}
-	_ = w.executor.Run(
-		w.cfg.IPPath,
-		"rule", "delete", "from", runtime.sourceCIDR,
-		"table", strconv.Itoa(runtime.routingTable),
-		"priority", strconv.Itoa(runtime.routingPriority),
-	)
-	_ = w.executor.Run(w.cfg.IPPath, "route", "flush", "table", strconv.Itoa(runtime.routingTable))
-}
-
-func (w *WireGuard) applyEntryForwarding(runtime *gostRuntime) error {
-	if w.cfg.IPTablesPath == "" {
-		return nil
-	}
-	forwardRuleAdded, err := ensureIPTablesRule(w.executor, w.cfg.IPTablesPath, entryForwardRuleArgs(runtime)...)
-	runtime.entryForwardRuleAdded = forwardRuleAdded
-	if err != nil {
-		return err
-	}
-	reverseForwardRuleAdded, err := ensureIPTablesRule(w.executor, w.cfg.IPTablesPath, entryReverseForwardRuleArgs(runtime)...)
-	runtime.entryReverseForwardRuleAdded = reverseForwardRuleAdded
-	return err
-}
-
-func (w *WireGuard) cleanupEntryForwarding(runtime *gostRuntime) {
-	if runtime == nil || w.cfg.IPTablesPath == "" {
-		return
-	}
-	if runtime.entryReverseForwardRuleAdded {
-		reverseArgs := entryReverseForwardRuleArgs(runtime)
-		reverseArgs[0] = "-D"
-		_ = w.executor.Run(w.cfg.IPTablesPath, reverseArgs...)
-	}
-	if runtime.entryForwardRuleAdded {
-		forwardArgs := entryForwardRuleArgs(runtime)
-		forwardArgs[0] = "-D"
-		_ = w.executor.Run(w.cfg.IPTablesPath, forwardArgs...)
-	}
-}
-
-func (w *WireGuard) applyExitFirewall(runtime *gostRuntime) error {
-	if w.cfg.IPTablesPath == "" {
-		return nil
-	}
-	if runtime.exitNAT {
-		natArgs := []string{"-t", "nat", "-A", "POSTROUTING", "-s", runtime.sourceCIDR}
-		if runtime.outboundIface != "" {
-			natArgs = append(natArgs, "-o", runtime.outboundIface)
-		}
-		natArgs = append(natArgs, "-j", "MASQUERADE")
-		natRuleAdded, err := ensureIPTablesRule(w.executor, w.cfg.IPTablesPath, natArgs...)
-		if err != nil {
-			return err
-		}
-		runtime.natRuleAdded = natRuleAdded
-	}
-	forwardRuleAdded, err := ensureIPTablesRule(w.executor, w.cfg.IPTablesPath, exitForwardRuleArgs(runtime)...)
-	runtime.forwardRuleAdded = forwardRuleAdded
-	if err != nil {
-		return err
-	}
-	reverseForwardRuleAdded, err := ensureIPTablesRule(w.executor, w.cfg.IPTablesPath, exitReverseForwardRuleArgs(runtime)...)
-	runtime.reverseForwardRuleAdded = reverseForwardRuleAdded
-	return err
-}
-
-func (w *WireGuard) cleanupExitFirewall(runtime *gostRuntime) {
-	if runtime == nil || w.cfg.IPTablesPath == "" {
-		return
-	}
-	if !runtime.natRuleAdded && !runtime.forwardRuleAdded && !runtime.reverseForwardRuleAdded {
-		return
-	}
-	if runtime.reverseForwardRuleAdded {
-		reverseArgs := exitReverseForwardRuleArgs(runtime)
-		reverseArgs[0] = "-D"
-		_ = w.executor.Run(w.cfg.IPTablesPath, reverseArgs...)
-	}
-	if runtime.forwardRuleAdded {
-		forwardArgs := exitForwardRuleArgs(runtime)
-		forwardArgs[0] = "-D"
-		_ = w.executor.Run(w.cfg.IPTablesPath, forwardArgs...)
-	}
-	if runtime.natRuleAdded {
-		natArgs := []string{"-t", "nat", "-D", "POSTROUTING", "-s", runtime.sourceCIDR}
-		if runtime.outboundIface != "" {
-			natArgs = append(natArgs, "-o", runtime.outboundIface)
-		}
-		natArgs = append(natArgs, "-j", "MASQUERADE")
-		_ = w.executor.Run(w.cfg.IPTablesPath, natArgs...)
-	}
-}
-
-func exitForwardRuleArgs(runtime *gostRuntime) []string {
-	if runtime.outboundIface == "" {
-		return []string{"-A", "FORWARD", "-i", runtime.tunName, "-j", "ACCEPT"}
-	}
-	return []string{"-A", "FORWARD", "-i", runtime.tunName, "-o", runtime.outboundIface, "-j", "ACCEPT"}
-}
-
-func entryForwardRuleArgs(runtime *gostRuntime) []string {
-	return []string{
-		"-A", "FORWARD",
-		"-i", runtime.wireGuardIface,
-		"-o", runtime.tunName,
-		"-s", runtime.sourceCIDR,
-		"-j", "ACCEPT",
-	}
-}
-
-func entryReverseForwardRuleArgs(runtime *gostRuntime) []string {
-	return []string{
-		"-A", "FORWARD",
-		"-i", runtime.tunName,
-		"-o", runtime.wireGuardIface,
-		"-d", runtime.sourceCIDR,
-		"-m", "conntrack",
-		"--ctstate", "ESTABLISHED,RELATED",
-		"-j", "ACCEPT",
-	}
-}
-
-func exitReverseForwardRuleArgs(runtime *gostRuntime) []string {
-	args := []string{"-A", "FORWARD"}
-	if runtime.outboundIface != "" {
-		args = append(args, "-i", runtime.outboundIface)
-	}
-	args = append(args,
-		"-o", runtime.tunName,
-		"-d", runtime.sourceCIDR,
-		"-m", "conntrack",
-		"--ctstate", "ESTABLISHED,RELATED",
-		"-j", "ACCEPT",
-	)
-	return args
-}
-
-func ensureIPTablesRule(executor commandExecutor, path string, args ...string) (bool, error) {
-	checkArgs := make([]string, len(args))
-	copy(checkArgs, args)
-	for i, arg := range checkArgs {
-		if arg == "-A" {
-			checkArgs[i] = "-C"
-			break
-		}
-	}
-	if err := executor.Run(path, checkArgs...); err == nil {
-		return false, nil
-	}
-	var ruleErr error
-	for attempt := 0; attempt < 30; attempt++ {
-		ruleErr = executor.Run(path, args...)
-		if ruleErr == nil {
-			return true, nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false, ruleErr
 }
 
 func renderConfig(state *nodeState) string {
@@ -1104,8 +518,10 @@ func validateWireGuardNode(info *panel.NodeInfo) error {
 		return errors.New("wireguard node config is missing")
 	}
 	n := info.WireGuard
-	if wireGuardRelayRole(n) == "exit" {
-		return validateWireGuardExitNode(n)
+	// The relay (entry and exit nodes joined over gost) was removed with
+	// gost; a node that still carries relay settings is refused.
+	if hasWireGuardRelayConfig(n.Relay) {
+		return errors.New("wireguard relay was removed (it ran on gost): clear the node's relay settings")
 	}
 	if strings.TrimSpace(n.ServerPrivateKey) == "" {
 		return errors.New("wireguard server_private_key is required")
@@ -1137,9 +553,6 @@ func validateWireGuardNode(info *panel.NodeInfo) error {
 		if cidrErr != nil || cidr.Bits() == 0 || (cidr.Addr().Is4() && cidr.Bits() > 30) || (cidr.Addr().Is6() && cidr.Bits() > 126) || cidr.Bits() != serverPrefix.Bits() || !cidr.Contains(serverPrefix.Addr()) {
 			return fmt.Errorf("wireguard server_address is outside cidr %q", n.CIDR)
 		}
-		if wireGuardRelayBackend(n) == "gost" && !cidr.Addr().Is4() {
-			return errors.New("wireguard GOST relay runtime currently supports IPv4 peer CIDRs only")
-		}
 		if cidr.Addr().Is4() && isWireGuardIPv4Broadcast(cidr, serverPrefix.Addr()) {
 			return errors.New("wireguard server_address must not be the IPv4 broadcast address")
 		}
@@ -1149,140 +562,6 @@ func validateWireGuardNode(info *panel.NodeInfo) error {
 	}
 	if n.MTU != 0 && (n.MTU < 576 || n.MTU > 1500) {
 		return fmt.Errorf("wireguard mtu is invalid: %d", n.MTU)
-	}
-	backend := wireGuardRelayBackend(n)
-	if backend != "" && backend != "gost" {
-		return fmt.Errorf("wireguard relay backend is not supported: %q", n.Relay.Backend)
-	}
-	if backend == "gost" {
-		if err := validateWireGuardGostRuntimeSettings(n); err != nil {
-			return err
-		}
-		if err := validateNetworkPolicyConfig(n); err != nil {
-			return err
-		}
-		return validateWireGuardWSSRelay(n, "entry")
-	}
-	return nil
-}
-
-func validateWireGuardExitNode(n *panel.WireGuardNode) error {
-	if n == nil {
-		return errors.New("wireguard exit config is missing")
-	}
-	cidr, err := netip.ParsePrefix(strings.TrimSpace(n.CIDR))
-	if err != nil || cidr.Bits() == 0 || !cidr.Addr().Is4() || cidr.Bits() > 30 {
-		return fmt.Errorf("wireguard exit cidr is invalid: %q", n.CIDR)
-	}
-	if n.MTU != 0 && (n.MTU < 576 || n.MTU > 1500) {
-		return fmt.Errorf("wireguard mtu is invalid: %d", n.MTU)
-	}
-	if wireGuardRelayBackend(n) != "gost" {
-		return fmt.Errorf("wireguard exit relay backend is not supported: %q", n.Relay.Backend)
-	}
-	if n.Relay.ServerPort < 1 || n.Relay.ServerPort > 65535 {
-		return fmt.Errorf("wireguard exit relay.server_port is invalid: %d", n.Relay.ServerPort)
-	}
-	if n.Relay.TunPort < 0 || n.Relay.TunPort > 65535 {
-		return fmt.Errorf("wireguard exit relay.tun_port is invalid: %d", n.Relay.TunPort)
-	}
-	if relayTunAddress(n, "exit") == "" {
-		return errors.New("wireguard exit requires relay.exit_tun_address or relay.tun_address")
-	}
-	if relayTunIP(n.Relay.EntryTunAddress) == "" {
-		return errors.New("wireguard exit requires relay.entry_tun_address")
-	}
-	if err := validateWireGuardGostRuntimeSettings(n); err != nil {
-		return err
-	}
-	return validateWireGuardWSSRelay(n, "exit")
-}
-
-func validateWireGuardWSSRelay(n *panel.WireGuardNode, role string) error {
-	mode, err := wireGuardGostMode(n)
-	if err != nil || mode != "relay+wss" {
-		return err
-	}
-	path := wireGuardWSSPath(n)
-	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n") {
-		return fmt.Errorf("wireguard relay.wss_path is invalid: %q", path)
-	}
-	if role == "entry" {
-		if strings.TrimSpace(n.Relay.WSSCertFile) != "" || strings.TrimSpace(n.Relay.WSSKeyFile) != "" {
-			return errors.New("wireguard WSS entry must not receive exit certificate paths")
-		}
-		if !n.Relay.WSSSecure {
-			return errors.New("wireguard WSS entry requires relay.wss_secure=true")
-		}
-		serverName := strings.TrimSpace(n.Relay.WSSServerName)
-		if serverName == "" || strings.ContainsAny(serverName, " \t\r\n/\\") {
-			return errors.New("wireguard WSS entry requires a valid relay.wss_server_name")
-		}
-		return validateWireGuardRuntimeFile(n.Relay.WSSCAFile, "relay.wss_ca_file", false)
-	}
-	if strings.TrimSpace(n.Relay.WSSServerName) != "" || strings.TrimSpace(n.Relay.WSSCAFile) != "" {
-		return errors.New("wireguard WSS exit must not receive entry verification settings")
-	}
-	if n.Relay.WSSSecure {
-		return errors.New("wireguard WSS exit must not receive the entry secure setting")
-	}
-	if err := validateWireGuardRuntimeFile(n.Relay.WSSCertFile, "relay.wss_cert_file", true); err != nil {
-		return err
-	}
-	return validateWireGuardRuntimeFile(n.Relay.WSSKeyFile, "relay.wss_key_file", true)
-}
-
-func validateWireGuardRuntimeFile(value, name string, required bool) error {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		if required {
-			return fmt.Errorf("wireguard WSS requires %s", name)
-		}
-		return nil
-	}
-	if len(value) > 1024 || strings.ContainsAny(value, "\x00\r\n") {
-		return fmt.Errorf("wireguard %s is invalid", name)
-	}
-	return nil
-}
-
-func validateWireGuardGostRuntimeSettings(n *panel.WireGuardNode) error {
-	if n == nil {
-		return errors.New("wireguard GOST runtime config is missing")
-	}
-	if wireGuardRelayBackend(n) == "gost" {
-		for _, value := range []struct {
-			name string
-			cidr string
-		}{
-			{name: "relay.tun_address", cidr: n.Relay.TunAddress},
-			{name: "relay.entry_tun_address", cidr: n.Relay.EntryTunAddress},
-			{name: "relay.exit_tun_address", cidr: n.Relay.ExitTunAddress},
-		} {
-			if strings.TrimSpace(value.cidr) == "" {
-				continue
-			}
-			ip, _, parseErr := net.ParseCIDR(value.cidr)
-			if parseErr != nil || ip.To4() == nil {
-				return fmt.Errorf("%s must be an IPv4 CIDR for the GOST relay runtime", value.name)
-			}
-		}
-		for _, value := range n.AllowedIPs {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				continue
-			}
-			if ip := net.ParseIP(value); ip != nil {
-				if ip.To4() == nil {
-					return errors.New("wireguard GOST relay runtime supports IPv4 AllowedIPs only")
-				}
-				continue
-			}
-			ip, _, parseErr := net.ParseCIDR(value)
-			if parseErr != nil || ip.To4() == nil {
-				return errors.New("wireguard GOST relay runtime supports IPv4 AllowedIPs only")
-			}
-		}
 	}
 	return nil
 }
@@ -1490,33 +769,6 @@ func interfaceName(tag string) string {
 	return "wg" + hex.EncodeToString(sum[:])[:13]
 }
 
-func gostTunName(tag string) string {
-	sum := sha1.Sum([]byte(tag + ":gost"))
-	return "gt" + hex.EncodeToString(sum[:])[:13]
-}
-
-func relayRoutingTable(tag string, configured int) int {
-	if configured > 0 {
-		return configured
-	}
-	sum := sha1.Sum([]byte(tag + ":table"))
-	return 30000 + int(sum[0])<<8 + int(sum[1])
-}
-
-func relayRoutingPriority(tag string, configured int) int {
-	if configured > 0 {
-		return configured
-	}
-	// Policy rules must run before the kernel's main-table rule at priority
-	// 32766. Routing table IDs may be greater than that, so they cannot also be
-	// used as rule priorities. Keep the generated priority in a separate,
-	// deterministic range that precedes main while leaving room for operator
-	// rules with lower numeric priorities.
-	sum := sha1.Sum([]byte(tag + ":priority"))
-	value := int(sum[0])<<8 | int(sum[1])
-	return 10000 + value%20000
-}
-
 func wireGuardMTU(n *panel.WireGuardNode) int {
 	if n != nil && n.MTU > 0 {
 		return n.MTU
@@ -1524,33 +776,10 @@ func wireGuardMTU(n *panel.WireGuardNode) int {
 	return 1280
 }
 
-func wireGuardRelayRole(n *panel.WireGuardNode) string {
-	if n == nil {
-		return "entry"
-	}
-	role := strings.ToLower(strings.TrimSpace(n.Relay.Role))
-	if role == "exit" {
-		return "exit"
-	}
-	return "entry"
-}
-
-func wireGuardRelayBackend(n *panel.WireGuardNode) string {
-	if n == nil {
-		return ""
-	}
-	backend := strings.ToLower(strings.TrimSpace(n.Relay.Backend))
-	if backend != "" {
-		return backend
-	}
-	if hasWireGuardRelayConfig(n.Relay) {
-		return "gost"
-	}
-	return ""
-}
-
 func hasWireGuardRelayConfig(relay panel.WireGuardRelay) bool {
-	return strings.TrimSpace(relay.Mode) != "" ||
+	return strings.TrimSpace(relay.Backend) != "" ||
+		len(relay.NetworkPolicy.Paths) > 0 ||
+		strings.TrimSpace(relay.Mode) != "" ||
 		strings.TrimSpace(relay.Role) != "" ||
 		strings.TrimSpace(relay.Server) != "" ||
 		relay.ServerPort != 0 ||
@@ -1571,105 +800,6 @@ func hasWireGuardRelayConfig(relay panel.WireGuardRelay) bool {
 		strings.TrimSpace(relay.WSSKeyFile) != "" ||
 		relay.ExitNAT ||
 		relay.EntryStats
-}
-
-func wireGuardGostMode(n *panel.WireGuardNode) (string, error) {
-	if n == nil {
-		return "relay+quic", nil
-	}
-	tunnelType := strings.ToLower(strings.TrimSpace(n.TunnelType))
-	mode := strings.ToLower(strings.TrimSpace(n.Relay.Mode))
-	if tunnelType == "" && mode != "" {
-		if strings.Contains(mode, "wss") {
-			tunnelType = "wss"
-		} else if strings.Contains(mode, "quic") {
-			tunnelType = "quic"
-		}
-	}
-	if n.Relay.WSSCompat {
-		tunnelType = "wss"
-	}
-	switch tunnelType {
-	case "", "quic":
-		return "relay+quic", nil
-	case "wss":
-		return "relay+wss", nil
-	default:
-		return "", fmt.Errorf("wireguard tunnel_type %q is not supported by first relay runtime", n.TunnelType)
-	}
-}
-
-func wireGuardWSSPath(n *panel.WireGuardNode) string {
-	if n == nil {
-		return "/ws"
-	}
-	path := strings.TrimSpace(n.Relay.WSSPath)
-	if path == "" {
-		return "/ws"
-	}
-	return path
-}
-
-func gostRelayEndpoint(n *panel.WireGuardNode, mode, host string, port int, listener bool) string {
-	endpoint := &url.URL{
-		Scheme: mode,
-		Host:   net.JoinHostPort(strings.TrimSpace(host), strconv.Itoa(port)),
-	}
-	query := url.Values{}
-	if listener {
-		query.Set("bind", "true")
-	}
-	if mode == "relay+wss" {
-		query.Set("path", wireGuardWSSPath(n))
-		if listener {
-			if certFile := strings.TrimSpace(n.Relay.WSSCertFile); certFile != "" {
-				query.Set("certFile", certFile)
-			}
-			if keyFile := strings.TrimSpace(n.Relay.WSSKeyFile); keyFile != "" {
-				query.Set("keyFile", keyFile)
-			}
-		} else {
-			if n.Relay.WSSSecure {
-				query.Set("secure", "true")
-			}
-			if serverName := strings.TrimSpace(n.Relay.WSSServerName); serverName != "" {
-				query.Set("serverName", serverName)
-			}
-			if caFile := strings.TrimSpace(n.Relay.WSSCAFile); caFile != "" {
-				query.Set("caFile", caFile)
-			}
-		}
-	}
-	endpoint.RawQuery = query.Encode()
-	return endpoint.String()
-}
-
-func relayTunAddress(n *panel.WireGuardNode, role string) string {
-	if n == nil {
-		return ""
-	}
-	if role == "exit" {
-		if v := strings.TrimSpace(n.Relay.ExitTunAddress); v != "" {
-			return v
-		}
-	} else if v := strings.TrimSpace(n.Relay.EntryTunAddress); v != "" {
-		return v
-	}
-	return strings.TrimSpace(n.Relay.TunAddress)
-}
-
-func relayTunIP(address string) string {
-	address = strings.TrimSpace(address)
-	if address == "" {
-		return ""
-	}
-	if strings.Contains(address, "/") {
-		ip, _, err := net.ParseCIDR(address)
-		if err == nil && ip != nil {
-			return ip.String()
-		}
-	}
-	return address
 }
 
 func peerAllowedIP(peerIP string) string {

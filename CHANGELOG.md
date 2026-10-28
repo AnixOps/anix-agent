@@ -77,6 +77,19 @@
   its own inter-hop connection). `contracts/anx` is synced with anx `public/` (`udp_lanes`,
   `LinkStat.udp_lane_*`, `Stats.udp`).
 
+### Removed
+
+- **gost.** The forward component's gost engine is gone (forward routes run on the network
+  model): the Agent stops `anixops-gost.service` and clears `/var/lib/anixops-gost` on start,
+  the updater deletes the bundled gost binary, and packages no longer carry gost.
+- **The `gost-mesh` official plugin** (`plugin/gostmesh`, `cmd/gost-mesh`) and its privileged
+  namespace acceptance job.
+- **The WireGuard dual-node relay** (entry/exit over a gost `relay+quic`/`relay+wss` tunnel,
+  entry policy routing, exit NAT, network-policy failover) and its acceptance job. A WireGuard
+  node that still carries `relay` settings is refused; single-node WireGuard is unchanged. The
+  `WireGuardConfig` keys `GostPath`, `GostRestartDelaySeconds`, `IPTablesPath` and
+  `SysctlPath` are no longer read.
+
 ## 5.0.0-rc.8 - 2026-10-27
 
 The eighth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.8. The anixcore core

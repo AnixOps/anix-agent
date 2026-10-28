@@ -63,11 +63,9 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 ## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.8 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
-真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
-可从签名包物化并逐次复验辅助运行时；`gost-mesh` 固定使用 GOST v3.2.6，
-提供 QUIC/WSS 聚合隧道、强制双向 TLS、源地址策略路由、健康检查和崩溃清理。
-TUIC 不属于 v1，因为该固定 GOST 版本不实现 TUIC。业务流量由内核网络栈或
-GOST 子进程承载，不经过 Supervisor 控制进程。
+真实的 `nftables-forward` 与 `nat-egress` 独立进程（`gost-mesh` 已随 gost 一起删除）。
+Supervisor 可从签名包物化并逐次复验辅助运行时。业务流量由内核网络栈承载，
+不经过 Supervisor 控制进程。
 
 `nftables-forward` 1.2.0 与 `nat-egress` 清单声明 `plugin.runtime-state` 和
 `plugin.cleanup`。Supervisor 为它们保留稳定的私有 ownership journal，并在崩溃、禁用、配置变更、升级和关闭
@@ -99,7 +97,7 @@ sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
 
 这些能力仍是预览：生产启用必须使用正式签名 Release，并完成 mark producer、
 FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、分批 canary
-和运维审批。当前 `gost-mesh` 证据来自隔离 namespace，不等同于跨地域生产验证。
+和运维审批。
 完整生命周期契约见 [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)。
 
 ## 默认路径

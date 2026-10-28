@@ -201,64 +201,6 @@ jobs:
             ./anix-agent-${{ matrix.asset_name }}.zip
             ./anix-agent-${{ matrix.asset_name }}.zip.dgst
 
-  wireguard-relay-integration:
-    name: privileged WireGuard relay acceptance (${{ matrix.tunnel_type }})
-    runs-on: ubuntu-24.04
-    needs: [test, tag-gate]
-    if: ${{ github.event_name == 'workflow_dispatch' || needs.tag-gate.outputs.is_release_tag == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        tunnel_type: [quic, wss]
-    steps:
-      - name: Checkout codebase
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.9"
-
-      - name: Install privileged network dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y iproute2 iptables wireguard-tools curl openssl python3
-          sudo modprobe wireguard || true
-          test -c /dev/net/tun
-
-      - name: Install pinned GOST v3
-        run: |
-          readonly gost_archive="$RUNNER_TEMP/gost_3.2.6_linux_amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$gost_archive" \
-            https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_amd64.tar.gz
-          echo "b39037b0380ea001fb3c0c28441c2e10bfc694f90682739a65b53e55dce5238b  $gost_archive" | sha256sum --check --strict
-          tar -xzf "$gost_archive" -C "$RUNNER_TEMP"
-          chmod 0755 "$RUNNER_TEMP/gost"
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/gost" -V
-
-      - name: Build WireGuard relay integration runner
-        run: |
-          GOEXPERIMENT=jsonv2 GOWORK=off go build -o wireguard-relay-integration ./cmd/wireguard-relay-integration
-
-      - name: Verify real WireGuard to GOST relay path
-        run: |
-          sudo env \
-            V2BX_WIREGUARD_INTEGRATION_BIN="${GITHUB_WORKSPACE}/wireguard-relay-integration" \
-            GOST_BIN="${RUNNER_TEMP}/gost" \
-            WIREGUARD_RELAY_TUNNEL_TYPE="${{ matrix.tunnel_type }}" \
-            WIREGUARD_INTEGRATION_LOG_DIR="${GITHUB_WORKSPACE}/wireguard-integration-artifacts" \
-            PATH="${PATH}:${RUNNER_TEMP}" \
-            bash scripts/wireguard_relay_integration.sh
-
-      - name: Upload WireGuard relay diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: wireguard-relay-integration-${{ matrix.tunnel_type }}-${{ github.run_id }}
-          path: wireguard-integration-artifacts
-          if-no-files-found: warn
-
   nftables-forward-integration:
     name: privileged nftables Forward acceptance
     runs-on: ubuntu-24.04
@@ -360,68 +302,9 @@ jobs:
           path: nat-egress-integration-artifacts
           if-no-files-found: warn
 
-  gost-mesh-integration:
-    name: privileged GOST Mesh acceptance (${{ matrix.transport }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    needs: [test, tag-gate]
-    if: ${{ github.event_name == 'workflow_dispatch' || needs.tag-gate.outputs.is_release_tag == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        transport: [quic, wss]
-    steps:
-      - name: Checkout codebase
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.9"
-
-      - name: Install privileged network dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y iproute2 nftables curl openssl python3 procps
-          test -c /dev/net/tun
-
-      - name: Install pinned GOST v3.2.6
-        shell: bash
-        run: |
-          readonly gost_archive="$RUNNER_TEMP/gost_3.2.6_linux_amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$gost_archive" \
-            https://github.com/go-gost/gost/releases/download/v3.2.6/gost_3.2.6_linux_amd64.tar.gz
-          echo "b39037b0380ea001fb3c0c28441c2e10bfc694f90682739a65b53e55dce5238b  $gost_archive" | sha256sum --check --strict
-          tar -xzf "$gost_archive" -C "$RUNNER_TEMP"
-          chmod 0755 "$RUNNER_TEMP/gost"
-          echo "a2aea24efb4597b5f57b35b8e1bbcc59f439b80723854d4371f6828b46682ffb  $RUNNER_TEMP/gost" | sha256sum --check --strict
-          "$RUNNER_TEMP/gost" -V
-
-      - name: Build GOST Mesh plugin
-        run: |
-          GOEXPERIMENT=jsonv2 GOWORK=off go build -trimpath -o gost-mesh ./cmd/gost-mesh
-
-      - name: Verify mTLS TCP, UDP, health, and cleanup
-        run: |
-          sudo env \
-            GOST_MESH_PLUGIN_BIN="${GITHUB_WORKSPACE}/gost-mesh" \
-            GOST_BIN="${RUNNER_TEMP}/gost" \
-            GOST_MESH_TRANSPORT="${{ matrix.transport }}" \
-            GOST_MESH_LOG_DIR="${GITHUB_WORKSPACE}/gost-mesh-integration-artifacts" \
-            PATH="${PATH}:${RUNNER_TEMP}" \
-            bash plugin/gostmesh/namespace_acceptance.sh
-
-      - name: Upload GOST Mesh diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gost-mesh-integration-${{ matrix.transport }}-${{ github.run_id }}
-          path: gost-mesh-integration-artifacts
-          if-no-files-found: warn
-
   release:
     if: needs.tag-gate.outputs.is_release_tag == 'true'
-    needs: [build, tag-gate, wireguard-relay-integration, nftables-forward-integration, forward-component-integration, nat-egress-integration, gost-mesh-integration]
+    needs: [build, tag-gate, nftables-forward-integration, forward-component-integration, nat-egress-integration]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
