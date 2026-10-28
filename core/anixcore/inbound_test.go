@@ -62,6 +62,12 @@ func TestVlessRealityNodesBecomeRealityInbounds(t *testing.T) {
 	if _, err := inboundConfig("vless-1", info, &conf.Options{}); err == nil {
 		t.Fatal("reality over ws should be refused")
 	}
+	info.VAllss.Network = "xhttp"
+	info.VAllss.NetworkSettings = json.RawMessage(`{"path": "/xh"}`)
+	inbound, err = inboundConfig("vless-1", info, &conf.Options{})
+	if err != nil || inbound["reality"] == nil || inbound["transport"] == nil {
+		t.Fatalf("reality over xhttp = %#v, %v", inbound, err)
+	}
 }
 
 func TestTransportsFollowTheNetworkSettings(t *testing.T) {
@@ -76,6 +82,11 @@ func TestTransportsFollowTheNetworkSettings(t *testing.T) {
 			map[string]any{"type": "ws", "path": "/ray", "max_early_data": 2048, "host": "cdn.example.com"}},
 		{"grpc", "grpc", `{"serviceName": "TunService"}`,
 			map[string]any{"type": "grpc", "service_name": "TunService"}},
+		{"httpupgrade", "httpupgrade", `{"path": "/up?ed=2048", "host": "cdn.example.com"}`,
+			map[string]any{"type": "httpupgrade", "path": "/up", "max_early_data": 2048, "host": "cdn.example.com"}},
+		{"xhttp", "xhttp", `{"path": "/xh", "host": "cdn.example.com", "mode": "packet-up", "extra": {}}`,
+			map[string]any{"type": "xhttp", "path": "/xh", "host": "cdn.example.com", "mode": "packet-up"}},
+		{"splithttp", "splithttp", `{"path": "/sh"}`, map[string]any{"type": "xhttp", "path": "/sh"}},
 	} {
 		info := &panel.NodeInfo{
 			Type:     "vmess",
@@ -96,7 +107,7 @@ func TestTransportsFollowTheNetworkSettings(t *testing.T) {
 		}
 	}
 
-	for _, network := range []string{"httpupgrade", "quic"} {
+	for _, network := range []string{"quic", "kcp"} {
 		info := &panel.NodeInfo{
 			Type: "trojan", Common: &panel.CommonNode{ServerPort: 443},
 			Trojan: &panel.TrojanNode{Network: network},
@@ -137,6 +148,24 @@ func TestQuicProtocolsNeedCertificates(t *testing.T) {
 	user, _ := apiUserFor(tuic, panel.UserInfo{Id: 1, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"})
 	if user.UUID == "" || user.Password != user.UUID {
 		t.Fatalf("tuic user = %+v", user)
+	}
+
+	anytls := &panel.NodeInfo{
+		Type:   "anytls",
+		Common: &panel.CommonNode{ServerPort: 8444},
+		AnyTls: &panel.AnyTlsNode{PaddingScheme: []string{"stop=2", "0=10-20"}},
+	}
+	inbound, err = inboundConfig("anytls", anytls, certOptions())
+	if err != nil || inbound["type"] != "anytls" || inbound["tls"] == nil ||
+		!reflect.DeepEqual(inbound["padding_scheme"], []string{"stop=2", "0=10-20"}) {
+		t.Fatalf("anytls inbound = %v, %v", inbound, err)
+	}
+	if _, err := inboundConfig("anytls", anytls, &conf.Options{}); err == nil {
+		t.Fatal("an anytls node without a certificate should be refused")
+	}
+	user, _ = apiUserFor(anytls, panel.UserInfo{Id: 2, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"})
+	if user.Password != "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11" {
+		t.Fatalf("anytls user = %+v", user)
 	}
 }
 
@@ -183,11 +212,34 @@ func TestIwanInbound(t *testing.T) {
 	}
 }
 
+func TestLegacyShadowsocksUsesUserPasswords(t *testing.T) {
+	for _, cipher := range []string{"aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305"} {
+		info := &panel.NodeInfo{
+			Type: "shadowsocks", Common: &panel.CommonNode{ServerPort: 8388},
+			Shadowsocks: &panel.ShadowsocksNode{Cipher: cipher, ServerKey: "ignored"},
+		}
+		inbound, err := inboundConfig("ss", info, &conf.Options{})
+		if err != nil {
+			t.Fatalf("%s: %v", cipher, err)
+		}
+		if inbound["method"] != cipher || inbound["password"] != nil {
+			t.Fatalf("%s: inbound = %#v", cipher, inbound)
+		}
+		user, err := apiUserFor(info, panel.UserInfo{Id: 7, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if user != (apiUser{Name: "7", Password: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"}) {
+			t.Fatalf("%s: user = %+v", cipher, user)
+		}
+	}
+}
+
 func TestUnsupportedNodesAreRefused(t *testing.T) {
 	for _, info := range []*panel.NodeInfo{
 		{Type: "anytls", Common: &panel.CommonNode{ServerPort: 1}},
 		{Type: "shadowsocks", Common: &panel.CommonNode{ServerPort: 1},
-			Shadowsocks: &panel.ShadowsocksNode{Cipher: "aes-128-gcm"}},
+			Shadowsocks: &panel.ShadowsocksNode{Cipher: "aes-128-cfb"}},
 		{Type: "shadowsocks", Common: &panel.CommonNode{ServerPort: 1},
 			Shadowsocks: &panel.ShadowsocksNode{Cipher: "2022-blake3-chacha20-poly1305"}},
 		{Type: "trojan"},

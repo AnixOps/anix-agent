@@ -58,6 +58,9 @@ type Core struct {
 	nodes  map[string]*node
 	// egress is the last configuration ApplyEgress sent, nil for none.
 	egress *panel.EgressConfig
+	// rules are the block rules last given to anixcore (syncRules), nil
+	// before the first.
+	rules *rulesConfig
 	// network is the last plan ApplyNetwork sent, nil for none, and
 	// ingresses its user ingresses by listen port.
 	network   json.RawMessage
@@ -92,7 +95,7 @@ func (c *Core) Type() string {
 }
 
 func (c *Core) Protocols() []string {
-	return []string{"shadowsocks", "trojan", "vless", "vmess", "hysteria2", "tuic", "iwan"}
+	return []string{"shadowsocks", "trojan", "vless", "vmess", "hysteria2", "tuic", "iwan", "anytls"}
 }
 
 func (c *Core) Start() error {
@@ -252,6 +255,10 @@ func (c *Core) replay() error {
 			failed = errors.Join(failed, err)
 		}
 	}
+	c.rules = nil
+	if err := c.syncRules(); err != nil {
+		failed = errors.Join(failed, err)
+	}
 	return failed
 }
 
@@ -322,6 +329,9 @@ func (c *Core) AddNode(tag string, info *panel.NodeInfo, options *conf.Options) 
 		}
 	}
 	c.nodes[tag] = n
+	if err := c.syncRules(); err != nil {
+		log.WithField("core", coreType).WithError(err).Error("apply block rules")
+	}
 	return nil
 }
 
@@ -342,7 +352,7 @@ func (c *Core) create(tag string, n *node) error {
 	for _, user := range n.users {
 		users = append(users, user)
 	}
-	inbound["users"] = users
+	inbound["users"] = c.client.forKernel(users)
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 	if err := c.client.addInbound(ctx, inbound); err != nil {
@@ -360,6 +370,9 @@ func (c *Core) DelNode(tag string) error {
 		return nil
 	}
 	delete(c.nodes, tag)
+	if err := c.syncRules(); err != nil {
+		log.WithField("core", coreType).WithError(err).Error("apply block rules")
+	}
 	if !n.created {
 		return nil
 	}
