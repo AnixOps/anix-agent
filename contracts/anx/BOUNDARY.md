@@ -33,19 +33,20 @@ anx-node version
 anx-server keygen [--x25519-only] <key-file>
 anx-server userkey
 anx-server run --key <file> --sni <name>[,<name>…] [--listen <addr>] [--mgmt <addr>]
-               [--bare-listen <addr>] [--quic-listen <addr>] [--faketcp-listen <ipv4:port>] [--mptcp]
+               [--bare-listen <addr>] [--quic-listen <addr>] [--quic-sockbuf <bytes>] [--quic-dgram-buf <bytes>]
+               [--faketcp-listen <ipv4:port>] [--mptcp]
                [--dest <host:port>] [--users <file>] [--user <hex>[:<name>]]…
                [--alpn h2,http/1.1] [--max-streams N] [--require-device] [--no-enroll] [--shape-plain]
                [--state <file>]
 ```
 
-`--key` 与 `--sni` 必填，`--listen` 默认 `0.0.0.0:443`，不给 `--mgmt` 就不开管理接口。退出码：0 成功；1 运行失败；`anx-server` 未知子命令为 2。
+`--key` 与 `--sni` 必填，`--listen` 默认 `0.0.0.0:443`，不给 `--mgmt` 就不开管理接口。`--quic-sockbuf` 是 `--quic-listen` 那个 UDP socket 的收发缓冲字节数（受主机 `net.core.rmem_max` / `wmem_max` 截断，启动时 stderr 打出实际值），`--quic-dgram-buf` 是每连接的 UDP 数据报接收缓冲字节数；都是 0 / 不给 = 默认。退出码：0 成功；1 运行失败；`anx-server` 未知子命令为 2。
 
 ## 3. 指标
 
-`Stats`：`handshake_failures`、`fallbacks`、`replay_rejects`、`probe_signatures`，以及按地区的 `regions[].{region, attempts, successes}`。
+`Stats`：`handshake_failures`、`fallbacks`、`replay_rejects`、`probe_signatures`，按地区的 `regions[].{region, attempts, successes}`，以及 UDP 中继计数 `udp.{from_client, forwarded, forward_errors, from_upstream, to_client, to_client_errors}`。
 
-`LinkStats` 每条链路：`link_id`、`default_route`、`connected`、`carrier`、`switches`、`probes[].{carrier, ok, handshake_ms}`、`rtt_ms`、`sent_packets`、`lost_packets`、`draining`、`egress`、`mptcp`、`fec_repairs_sent`、`fec_recovered`、`rebinds`、`routed_users`。
+`LinkStats` 每条链路：`link_id`、`default_route`、`connected`、`carrier`、`switches`、`probes[].{carrier, ok, handshake_ms}`、`rtt_ms`、`sent_packets`、`lost_packets`、`draining`、`egress`、`mptcp`、`fec_repairs_sent`、`fec_recovered`、`rebinds`、`routed_users`、`udp_lane_connected`、`udp_lane_carrier`。`Link` 可带 `udp_lanes`（0 | 1）。
 
 `Stats` 与 `GetTraffic` 的计数器单调递增，请求带 `reset = true` 时读后清零。
 

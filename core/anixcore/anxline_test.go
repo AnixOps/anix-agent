@@ -121,7 +121,7 @@ func TestDialingAnxLineEndsAreAnxNodeLinks(t *testing.T) {
 	}
 	link := line.links["tr-jp"]
 	if link.GetServerPublic() != "PUB-1" || len(link.GetLinkKey()) != 32 || link.GetQuicAddr() != "203.0.113.20:8443" ||
-		strings.Join(link.GetPolicy().GetOrder(), ",") != "c2,c1" {
+		strings.Join(link.GetPolicy().GetOrder(), ",") != "c2,c1" || link.GetUdpLanes() != 1 {
 		t.Fatalf("link = %v", link)
 	}
 	if api.calls[len(api.calls)-1] != "PUT /v1/network" {

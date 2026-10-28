@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
@@ -137,7 +138,12 @@ func (l listener) args() []string {
 		}
 	}
 	if l.QUIC != "" {
-		args = append(args, "--quic-listen", l.QUIC)
+		// UDP relayed over QUIC is dropped in the listener's socket buffer
+		// under load (anx ANX-LINE-ONBOARDING §6): a large socket buffer,
+		// which the host's net.core.rmem_max/wmem_max must allow
+		// (RaiseSocketBuffers), and a larger DATAGRAM buffer.
+		args = append(args, "--quic-listen", l.QUIC,
+			"--quic-sockbuf", strconv.Itoa(QUICSocketBuffer), "--quic-dgram-buf", strconv.Itoa(QUICDatagramBuffer))
 	}
 	if l.FakeTCP != "" {
 		args = append(args, "--faketcp-listen", l.FakeTCP)

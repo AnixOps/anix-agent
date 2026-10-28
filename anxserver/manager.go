@@ -74,6 +74,9 @@ type Manager struct {
 	Run     Runner
 	// RST installs the fake-TCP RST rules; nil leaves the firewall alone.
 	RST func(links []anxline.Link) error
+	// Buffers lets the host's sockets have QUICSocketBuffer bytes before a
+	// QUIC listener starts; nil leaves the host alone.
+	Buffers func() error
 
 	mu      sync.Mutex
 	public  string
@@ -147,6 +150,17 @@ func (m *Manager) Apply(accepts []Accept) error {
 	var failed error
 	if err := m.applyRST(accepts); err != nil {
 		failed = fmt.Errorf("fake-TCP RST rules: %w", err)
+	}
+	if m.Buffers != nil {
+		for l := range groups {
+			if l.QUIC != "" {
+				if err := m.Buffers(); err != nil {
+					// anx-server still runs, with the buffer the kernel allows.
+					log.WithError(err).Warn("Could not raise the host's socket buffer limits for anx-server's QUIC listener")
+				}
+				break
+			}
+		}
 	}
 	if m.servers == nil {
 		m.servers = map[listener]*server{}

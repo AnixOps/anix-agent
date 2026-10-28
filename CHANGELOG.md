@@ -50,6 +50,13 @@
   `AnxLineApiAddress`. When the Agent also accepts anx_line, the kind is listed once with both
   executors, and a plan whose dial or accept end this host cannot run is refused. Needs anx-node
   from anx#95 or later.
+- **anx_line UDP under load.** An accepting anx-server with a QUIC listener runs with
+  `--quic-sockbuf 8388608 --quic-dgram-buf 1048576`, and the Agent raises the host's
+  `net.core.rmem_max` / `wmem_max` to at least 8 MiB first (a higher value is kept), so relayed
+  UDP is not dropped in the listener's socket buffer (anx ANX-LINE-ONBOARDING §6; anx-server
+  prints the buffer the kernel gave on stderr). Dialing links ask for `udp_lanes = 1` (UDP on
+  its own inter-hop connection). `contracts/anx` is synced with anx `public/` (`udp_lanes`,
+  `LinkStat.udp_lane_*`, `Stats.udp`).
 
 ## 5.0.0-rc.8 - 2026-10-27
 

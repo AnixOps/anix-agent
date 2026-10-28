@@ -1022,6 +1022,92 @@ func (x *RegionStat) GetSuccesses() uint64 {
 	return 0
 }
 
+// UDP relay counters: received from clients, forwarded upstream ok / failed,
+// received from upstream, sent back to clients ok / failed.
+type UdpRelayStats struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	FromClient     uint64                 `protobuf:"varint,1,opt,name=from_client,json=fromClient,proto3" json:"from_client,omitempty"`
+	Forwarded      uint64                 `protobuf:"varint,2,opt,name=forwarded,proto3" json:"forwarded,omitempty"`
+	ForwardErrors  uint64                 `protobuf:"varint,3,opt,name=forward_errors,json=forwardErrors,proto3" json:"forward_errors,omitempty"`
+	FromUpstream   uint64                 `protobuf:"varint,4,opt,name=from_upstream,json=fromUpstream,proto3" json:"from_upstream,omitempty"`
+	ToClient       uint64                 `protobuf:"varint,5,opt,name=to_client,json=toClient,proto3" json:"to_client,omitempty"`
+	ToClientErrors uint64                 `protobuf:"varint,6,opt,name=to_client_errors,json=toClientErrors,proto3" json:"to_client_errors,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *UdpRelayStats) Reset() {
+	*x = UdpRelayStats{}
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UdpRelayStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UdpRelayStats) ProtoMessage() {}
+
+func (x *UdpRelayStats) ProtoReflect() protoreflect.Message {
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UdpRelayStats.ProtoReflect.Descriptor instead.
+func (*UdpRelayStats) Descriptor() ([]byte, []int) {
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *UdpRelayStats) GetFromClient() uint64 {
+	if x != nil {
+		return x.FromClient
+	}
+	return 0
+}
+
+func (x *UdpRelayStats) GetForwarded() uint64 {
+	if x != nil {
+		return x.Forwarded
+	}
+	return 0
+}
+
+func (x *UdpRelayStats) GetForwardErrors() uint64 {
+	if x != nil {
+		return x.ForwardErrors
+	}
+	return 0
+}
+
+func (x *UdpRelayStats) GetFromUpstream() uint64 {
+	if x != nil {
+		return x.FromUpstream
+	}
+	return 0
+}
+
+func (x *UdpRelayStats) GetToClient() uint64 {
+	if x != nil {
+		return x.ToClient
+	}
+	return 0
+}
+
+func (x *UdpRelayStats) GetToClientErrors() uint64 {
+	if x != nil {
+		return x.ToClientErrors
+	}
+	return 0
+}
+
 type StatsResponse struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	HandshakeFailures uint64                 `protobuf:"varint,1,opt,name=handshake_failures,json=handshakeFailures,proto3" json:"handshake_failures,omitempty"`
@@ -1029,13 +1115,14 @@ type StatsResponse struct {
 	ReplayRejects     uint64                 `protobuf:"varint,3,opt,name=replay_rejects,json=replayRejects,proto3" json:"replay_rejects,omitempty"`
 	ProbeSignatures   uint64                 `protobuf:"varint,4,opt,name=probe_signatures,json=probeSignatures,proto3" json:"probe_signatures,omitempty"`
 	Regions           []*RegionStat          `protobuf:"bytes,5,rep,name=regions,proto3" json:"regions,omitempty"`
+	Udp               *UdpRelayStats         `protobuf:"bytes,6,opt,name=udp,proto3" json:"udp,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *StatsResponse) Reset() {
 	*x = StatsResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[19]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1134,7 @@ func (x *StatsResponse) String() string {
 func (*StatsResponse) ProtoMessage() {}
 
 func (x *StatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[19]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1147,7 @@ func (x *StatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatsResponse.ProtoReflect.Descriptor instead.
 func (*StatsResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{19}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *StatsResponse) GetHandshakeFailures() uint64 {
@@ -1098,6 +1185,13 @@ func (x *StatsResponse) GetRegions() []*RegionStat {
 	return nil
 }
 
+func (x *StatsResponse) GetUdp() *UdpRelayStats {
+	if x != nil {
+		return x.Udp
+	}
+	return nil
+}
+
 type Listener struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Address string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
@@ -1109,7 +1203,7 @@ type Listener struct {
 
 func (x *Listener) Reset() {
 	*x = Listener{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[20]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1121,7 +1215,7 @@ func (x *Listener) String() string {
 func (*Listener) ProtoMessage() {}
 
 func (x *Listener) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[20]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1134,7 +1228,7 @@ func (x *Listener) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Listener.ProtoReflect.Descriptor instead.
 func (*Listener) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{20}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Listener) GetAddress() string {
@@ -1160,7 +1254,7 @@ type RotateListenersRequest struct {
 
 func (x *RotateListenersRequest) Reset() {
 	*x = RotateListenersRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[21]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1266,7 @@ func (x *RotateListenersRequest) String() string {
 func (*RotateListenersRequest) ProtoMessage() {}
 
 func (x *RotateListenersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[21]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1279,7 @@ func (x *RotateListenersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateListenersRequest.ProtoReflect.Descriptor instead.
 func (*RotateListenersRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{21}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RotateListenersRequest) GetListeners() []*Listener {
@@ -1204,7 +1298,7 @@ type RotateListenersResponse struct {
 
 func (x *RotateListenersResponse) Reset() {
 	*x = RotateListenersResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[22]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1216,7 +1310,7 @@ func (x *RotateListenersResponse) String() string {
 func (*RotateListenersResponse) ProtoMessage() {}
 
 func (x *RotateListenersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[22]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1229,7 +1323,7 @@ func (x *RotateListenersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateListenersResponse.ProtoReflect.Descriptor instead.
 func (*RotateListenersResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{22}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RotateListenersResponse) GetActive() []*Listener {
@@ -1249,7 +1343,7 @@ type SetIngressPoolRequest struct {
 
 func (x *SetIngressPoolRequest) Reset() {
 	*x = SetIngressPoolRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[23]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1261,7 +1355,7 @@ func (x *SetIngressPoolRequest) String() string {
 func (*SetIngressPoolRequest) ProtoMessage() {}
 
 func (x *SetIngressPoolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[23]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1274,7 +1368,7 @@ func (x *SetIngressPoolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetIngressPoolRequest.ProtoReflect.Descriptor instead.
 func (*SetIngressPoolRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{23}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SetIngressPoolRequest) GetAddresses() []string {
@@ -1292,7 +1386,7 @@ type SetIngressPoolResponse struct {
 
 func (x *SetIngressPoolResponse) Reset() {
 	*x = SetIngressPoolResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[24]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1304,7 +1398,7 @@ func (x *SetIngressPoolResponse) String() string {
 func (*SetIngressPoolResponse) ProtoMessage() {}
 
 func (x *SetIngressPoolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[24]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1317,7 +1411,7 @@ func (x *SetIngressPoolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetIngressPoolResponse.ProtoReflect.Descriptor instead.
 func (*SetIngressPoolResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{24}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{25}
 }
 
 type IssueDeviceRequest struct {
@@ -1332,7 +1426,7 @@ type IssueDeviceRequest struct {
 
 func (x *IssueDeviceRequest) Reset() {
 	*x = IssueDeviceRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[25]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1344,7 +1438,7 @@ func (x *IssueDeviceRequest) String() string {
 func (*IssueDeviceRequest) ProtoMessage() {}
 
 func (x *IssueDeviceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[25]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1357,7 +1451,7 @@ func (x *IssueDeviceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueDeviceRequest.ProtoReflect.Descriptor instead.
 func (*IssueDeviceRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{25}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *IssueDeviceRequest) GetUserId() []byte {
@@ -1391,7 +1485,7 @@ type IssueDeviceResponse struct {
 
 func (x *IssueDeviceResponse) Reset() {
 	*x = IssueDeviceResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[26]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1403,7 +1497,7 @@ func (x *IssueDeviceResponse) String() string {
 func (*IssueDeviceResponse) ProtoMessage() {}
 
 func (x *IssueDeviceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[26]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1416,7 +1510,7 @@ func (x *IssueDeviceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueDeviceResponse.ProtoReflect.Descriptor instead.
 func (*IssueDeviceResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{26}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *IssueDeviceResponse) GetDeviceId() []byte {
@@ -1442,7 +1536,7 @@ type RevokeDeviceRequest struct {
 
 func (x *RevokeDeviceRequest) Reset() {
 	*x = RevokeDeviceRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[27]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1454,7 +1548,7 @@ func (x *RevokeDeviceRequest) String() string {
 func (*RevokeDeviceRequest) ProtoMessage() {}
 
 func (x *RevokeDeviceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[27]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1467,7 +1561,7 @@ func (x *RevokeDeviceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeDeviceRequest.ProtoReflect.Descriptor instead.
 func (*RevokeDeviceRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{27}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RevokeDeviceRequest) GetDeviceId() []byte {
@@ -1485,7 +1579,7 @@ type RevokeDeviceResponse struct {
 
 func (x *RevokeDeviceResponse) Reset() {
 	*x = RevokeDeviceResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[28]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1497,7 +1591,7 @@ func (x *RevokeDeviceResponse) String() string {
 func (*RevokeDeviceResponse) ProtoMessage() {}
 
 func (x *RevokeDeviceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[28]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1510,7 +1604,7 @@ func (x *RevokeDeviceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeDeviceResponse.ProtoReflect.Descriptor instead.
 func (*RevokeDeviceResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{28}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{29}
 }
 
 type ListDevicesRequest struct {
@@ -1522,7 +1616,7 @@ type ListDevicesRequest struct {
 
 func (x *ListDevicesRequest) Reset() {
 	*x = ListDevicesRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[29]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1534,7 +1628,7 @@ func (x *ListDevicesRequest) String() string {
 func (*ListDevicesRequest) ProtoMessage() {}
 
 func (x *ListDevicesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[29]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1547,7 +1641,7 @@ func (x *ListDevicesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDevicesRequest.ProtoReflect.Descriptor instead.
 func (*ListDevicesRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{29}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ListDevicesRequest) GetUserId() []byte {
@@ -1569,7 +1663,7 @@ type Device struct {
 
 func (x *Device) Reset() {
 	*x = Device{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[30]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1581,7 +1675,7 @@ func (x *Device) String() string {
 func (*Device) ProtoMessage() {}
 
 func (x *Device) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[30]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1594,7 +1688,7 @@ func (x *Device) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Device.ProtoReflect.Descriptor instead.
 func (*Device) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{30}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Device) GetDeviceId() []byte {
@@ -1634,7 +1728,7 @@ type ListDevicesResponse struct {
 
 func (x *ListDevicesResponse) Reset() {
 	*x = ListDevicesResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[31]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1646,7 +1740,7 @@ func (x *ListDevicesResponse) String() string {
 func (*ListDevicesResponse) ProtoMessage() {}
 
 func (x *ListDevicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[31]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1659,7 +1753,7 @@ func (x *ListDevicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDevicesResponse.ProtoReflect.Descriptor instead.
 func (*ListDevicesResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{31}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ListDevicesResponse) GetDevices() []*Device {
@@ -1679,7 +1773,7 @@ type SetDeviceLimitRequest struct {
 
 func (x *SetDeviceLimitRequest) Reset() {
 	*x = SetDeviceLimitRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[32]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1691,7 +1785,7 @@ func (x *SetDeviceLimitRequest) String() string {
 func (*SetDeviceLimitRequest) ProtoMessage() {}
 
 func (x *SetDeviceLimitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[32]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1704,7 +1798,7 @@ func (x *SetDeviceLimitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDeviceLimitRequest.ProtoReflect.Descriptor instead.
 func (*SetDeviceLimitRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{32}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *SetDeviceLimitRequest) GetUserId() []byte {
@@ -1729,7 +1823,7 @@ type SetDeviceLimitResponse struct {
 
 func (x *SetDeviceLimitResponse) Reset() {
 	*x = SetDeviceLimitResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[33]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1741,7 +1835,7 @@ func (x *SetDeviceLimitResponse) String() string {
 func (*SetDeviceLimitResponse) ProtoMessage() {}
 
 func (x *SetDeviceLimitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[33]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1754,7 +1848,7 @@ func (x *SetDeviceLimitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDeviceLimitResponse.ProtoReflect.Descriptor instead.
 func (*SetDeviceLimitResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{33}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{34}
 }
 
 type RotateIntermediateCaRequest struct {
@@ -1765,7 +1859,7 @@ type RotateIntermediateCaRequest struct {
 
 func (x *RotateIntermediateCaRequest) Reset() {
 	*x = RotateIntermediateCaRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[34]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1777,7 +1871,7 @@ func (x *RotateIntermediateCaRequest) String() string {
 func (*RotateIntermediateCaRequest) ProtoMessage() {}
 
 func (x *RotateIntermediateCaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[34]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1790,7 +1884,7 @@ func (x *RotateIntermediateCaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateIntermediateCaRequest.ProtoReflect.Descriptor instead.
 func (*RotateIntermediateCaRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{34}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{35}
 }
 
 type RotateIntermediateCaResponse struct {
@@ -1802,7 +1896,7 @@ type RotateIntermediateCaResponse struct {
 
 func (x *RotateIntermediateCaResponse) Reset() {
 	*x = RotateIntermediateCaResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[35]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1814,7 +1908,7 @@ func (x *RotateIntermediateCaResponse) String() string {
 func (*RotateIntermediateCaResponse) ProtoMessage() {}
 
 func (x *RotateIntermediateCaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[35]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1827,7 +1921,7 @@ func (x *RotateIntermediateCaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateIntermediateCaResponse.ProtoReflect.Descriptor instead.
 func (*RotateIntermediateCaResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{35}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *RotateIntermediateCaResponse) GetCaPublicKey() []byte {
@@ -1871,7 +1965,7 @@ type LinePolicy struct {
 
 func (x *LinePolicy) Reset() {
 	*x = LinePolicy{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[36]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1883,7 +1977,7 @@ func (x *LinePolicy) String() string {
 func (*LinePolicy) ProtoMessage() {}
 
 func (x *LinePolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[36]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1896,7 +1990,7 @@ func (x *LinePolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinePolicy.ProtoReflect.Descriptor instead.
 func (*LinePolicy) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{36}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *LinePolicy) GetOrder() []string {
@@ -2021,14 +2115,16 @@ type Link struct {
 	// This node's default egress link.
 	DefaultRoute bool `protobuf:"varint,9,opt,name=default_route,json=defaultRoute,proto3" json:"default_route,omitempty"`
 	// Required for l2: SNI, one of the egress node's server_names.
-	ServerName    string `protobuf:"bytes,10,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
+	ServerName string `protobuf:"bytes,10,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
+	// 0 = UDP shares the link's connection with TCP; 1 = UDP uses a separate connection. >1 rejected.
+	UdpLanes      uint32 `protobuf:"varint,11,opt,name=udp_lanes,json=udpLanes,proto3" json:"udp_lanes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Link) Reset() {
 	*x = Link{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[37]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2040,7 +2136,7 @@ func (x *Link) String() string {
 func (*Link) ProtoMessage() {}
 
 func (x *Link) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[37]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2053,7 +2149,7 @@ func (x *Link) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Link.ProtoReflect.Descriptor instead.
 func (*Link) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{37}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *Link) GetLinkId() string {
@@ -2126,6 +2222,13 @@ func (x *Link) GetServerName() string {
 	return ""
 }
 
+func (x *Link) GetUdpLanes() uint32 {
+	if x != nil {
+		return x.UdpLanes
+	}
+	return 0
+}
+
 type AddLinksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Links         []*Link                `protobuf:"bytes,1,rep,name=links,proto3" json:"links,omitempty"`
@@ -2135,7 +2238,7 @@ type AddLinksRequest struct {
 
 func (x *AddLinksRequest) Reset() {
 	*x = AddLinksRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[38]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2147,7 +2250,7 @@ func (x *AddLinksRequest) String() string {
 func (*AddLinksRequest) ProtoMessage() {}
 
 func (x *AddLinksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[38]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2160,7 +2263,7 @@ func (x *AddLinksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddLinksRequest.ProtoReflect.Descriptor instead.
 func (*AddLinksRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{38}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *AddLinksRequest) GetLinks() []*Link {
@@ -2179,7 +2282,7 @@ type AddLinksResponse struct {
 
 func (x *AddLinksResponse) Reset() {
 	*x = AddLinksResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[39]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2191,7 +2294,7 @@ func (x *AddLinksResponse) String() string {
 func (*AddLinksResponse) ProtoMessage() {}
 
 func (x *AddLinksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[39]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2204,7 +2307,7 @@ func (x *AddLinksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddLinksResponse.ProtoReflect.Descriptor instead.
 func (*AddLinksResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{39}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *AddLinksResponse) GetAdded() uint32 {
@@ -2223,7 +2326,7 @@ type RemoveLinksRequest struct {
 
 func (x *RemoveLinksRequest) Reset() {
 	*x = RemoveLinksRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[40]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2235,7 +2338,7 @@ func (x *RemoveLinksRequest) String() string {
 func (*RemoveLinksRequest) ProtoMessage() {}
 
 func (x *RemoveLinksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[40]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2248,7 +2351,7 @@ func (x *RemoveLinksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveLinksRequest.ProtoReflect.Descriptor instead.
 func (*RemoveLinksRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{40}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *RemoveLinksRequest) GetLinkIds() []string {
@@ -2267,7 +2370,7 @@ type RemoveLinksResponse struct {
 
 func (x *RemoveLinksResponse) Reset() {
 	*x = RemoveLinksResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[41]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2279,7 +2382,7 @@ func (x *RemoveLinksResponse) String() string {
 func (*RemoveLinksResponse) ProtoMessage() {}
 
 func (x *RemoveLinksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[41]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2292,7 +2395,7 @@ func (x *RemoveLinksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveLinksResponse.ProtoReflect.Descriptor instead.
 func (*RemoveLinksResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{41}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *RemoveLinksResponse) GetRemoved() uint32 {
@@ -2314,7 +2417,7 @@ type RotateLinkKeyRequest struct {
 
 func (x *RotateLinkKeyRequest) Reset() {
 	*x = RotateLinkKeyRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[42]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2326,7 +2429,7 @@ func (x *RotateLinkKeyRequest) String() string {
 func (*RotateLinkKeyRequest) ProtoMessage() {}
 
 func (x *RotateLinkKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[42]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2339,7 +2442,7 @@ func (x *RotateLinkKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateLinkKeyRequest.ProtoReflect.Descriptor instead.
 func (*RotateLinkKeyRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{42}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *RotateLinkKeyRequest) GetLinkId() string {
@@ -2371,7 +2474,7 @@ type RotateLinkKeyResponse struct {
 
 func (x *RotateLinkKeyResponse) Reset() {
 	*x = RotateLinkKeyResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[43]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2383,7 +2486,7 @@ func (x *RotateLinkKeyResponse) String() string {
 func (*RotateLinkKeyResponse) ProtoMessage() {}
 
 func (x *RotateLinkKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[43]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2396,7 +2499,7 @@ func (x *RotateLinkKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateLinkKeyResponse.ProtoReflect.Descriptor instead.
 func (*RotateLinkKeyResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{43}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{44}
 }
 
 // Traffic from user_id leaves through link_id.
@@ -2410,7 +2513,7 @@ type LinkRoute struct {
 
 func (x *LinkRoute) Reset() {
 	*x = LinkRoute{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[44]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2422,7 +2525,7 @@ func (x *LinkRoute) String() string {
 func (*LinkRoute) ProtoMessage() {}
 
 func (x *LinkRoute) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[44]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2435,7 +2538,7 @@ func (x *LinkRoute) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkRoute.ProtoReflect.Descriptor instead.
 func (*LinkRoute) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{44}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *LinkRoute) GetUserId() []byte {
@@ -2463,7 +2566,7 @@ type SetLinkRoutesRequest struct {
 
 func (x *SetLinkRoutesRequest) Reset() {
 	*x = SetLinkRoutesRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[45]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2475,7 +2578,7 @@ func (x *SetLinkRoutesRequest) String() string {
 func (*SetLinkRoutesRequest) ProtoMessage() {}
 
 func (x *SetLinkRoutesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[45]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2488,7 +2591,7 @@ func (x *SetLinkRoutesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLinkRoutesRequest.ProtoReflect.Descriptor instead.
 func (*SetLinkRoutesRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{45}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *SetLinkRoutesRequest) GetRoutes() []*LinkRoute {
@@ -2506,7 +2609,7 @@ type SetLinkRoutesResponse struct {
 
 func (x *SetLinkRoutesResponse) Reset() {
 	*x = SetLinkRoutesResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[46]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2518,7 +2621,7 @@ func (x *SetLinkRoutesResponse) String() string {
 func (*SetLinkRoutesResponse) ProtoMessage() {}
 
 func (x *SetLinkRoutesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[46]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2531,7 +2634,7 @@ func (x *SetLinkRoutesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLinkRoutesResponse.ProtoReflect.Descriptor instead.
 func (*SetLinkRoutesResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{46}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{47}
 }
 
 type LinkStatsRequest struct {
@@ -2542,7 +2645,7 @@ type LinkStatsRequest struct {
 
 func (x *LinkStatsRequest) Reset() {
 	*x = LinkStatsRequest{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[47]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2554,7 +2657,7 @@ func (x *LinkStatsRequest) String() string {
 func (*LinkStatsRequest) ProtoMessage() {}
 
 func (x *LinkStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[47]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2567,7 +2670,7 @@ func (x *LinkStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkStatsRequest.ProtoReflect.Descriptor instead.
 func (*LinkStatsRequest) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{47}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{48}
 }
 
 type CarrierProbe struct {
@@ -2581,7 +2684,7 @@ type CarrierProbe struct {
 
 func (x *CarrierProbe) Reset() {
 	*x = CarrierProbe{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[48]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2593,7 +2696,7 @@ func (x *CarrierProbe) String() string {
 func (*CarrierProbe) ProtoMessage() {}
 
 func (x *CarrierProbe) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[48]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2606,7 +2709,7 @@ func (x *CarrierProbe) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CarrierProbe.ProtoReflect.Descriptor instead.
 func (*CarrierProbe) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{48}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *CarrierProbe) GetCarrier() string {
@@ -2653,13 +2756,16 @@ type LinkStat struct {
 	FecRecovered   uint64 `protobuf:"varint,14,opt,name=fec_recovered,json=fecRecovered,proto3" json:"fec_recovered,omitempty"`
 	Rebinds        uint64 `protobuf:"varint,15,opt,name=rebinds,proto3" json:"rebinds,omitempty"`
 	RoutedUsers    uint32 `protobuf:"varint,16,opt,name=routed_users,json=routedUsers,proto3" json:"routed_users,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// State of the separate UDP connection when udp_lanes = 1; false / empty otherwise.
+	UdpLaneConnected bool   `protobuf:"varint,17,opt,name=udp_lane_connected,json=udpLaneConnected,proto3" json:"udp_lane_connected,omitempty"`
+	UdpLaneCarrier   string `protobuf:"bytes,18,opt,name=udp_lane_carrier,json=udpLaneCarrier,proto3" json:"udp_lane_carrier,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *LinkStat) Reset() {
 	*x = LinkStat{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[49]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2671,7 +2777,7 @@ func (x *LinkStat) String() string {
 func (*LinkStat) ProtoMessage() {}
 
 func (x *LinkStat) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[49]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2684,7 +2790,7 @@ func (x *LinkStat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkStat.ProtoReflect.Descriptor instead.
 func (*LinkStat) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{49}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *LinkStat) GetLinkId() string {
@@ -2799,6 +2905,20 @@ func (x *LinkStat) GetRoutedUsers() uint32 {
 	return 0
 }
 
+func (x *LinkStat) GetUdpLaneConnected() bool {
+	if x != nil {
+		return x.UdpLaneConnected
+	}
+	return false
+}
+
+func (x *LinkStat) GetUdpLaneCarrier() string {
+	if x != nil {
+		return x.UdpLaneCarrier
+	}
+	return ""
+}
+
 type LinkStatsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Links         []*LinkStat            `protobuf:"bytes,1,rep,name=links,proto3" json:"links,omitempty"`
@@ -2808,7 +2928,7 @@ type LinkStatsResponse struct {
 
 func (x *LinkStatsResponse) Reset() {
 	*x = LinkStatsResponse{}
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[50]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2820,7 +2940,7 @@ func (x *LinkStatsResponse) String() string {
 func (*LinkStatsResponse) ProtoMessage() {}
 
 func (x *LinkStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[50]
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2833,7 +2953,7 @@ func (x *LinkStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkStatsResponse.ProtoReflect.Descriptor instead.
 func (*LinkStatsResponse) Descriptor() ([]byte, []int) {
-	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{50}
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *LinkStatsResponse) GetLinks() []*LinkStat {
@@ -2908,12 +3028,21 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\x06region\x18\x01 \x01(\tR\x06region\x12\x1a\n" +
 	"\battempts\x18\x02 \x01(\x04R\battempts\x12\x1c\n" +
 	"\tsuccesses\x18\x03 \x01(\x04R\tsuccesses\"\xe1\x01\n" +
+	"\rUdpRelayStats\x12\x1f\n" +
+	"\vfrom_client\x18\x01 \x01(\x04R\n" +
+	"fromClient\x12\x1c\n" +
+	"\tforwarded\x18\x02 \x01(\x04R\tforwarded\x12%\n" +
+	"\x0eforward_errors\x18\x03 \x01(\x04R\rforwardErrors\x12#\n" +
+	"\rfrom_upstream\x18\x04 \x01(\x04R\ffromUpstream\x12\x1b\n" +
+	"\tto_client\x18\x05 \x01(\x04R\btoClient\x12(\n" +
+	"\x10to_client_errors\x18\x06 \x01(\x04R\x0etoClientErrors\"\x8f\x02\n" +
 	"\rStatsResponse\x12-\n" +
 	"\x12handshake_failures\x18\x01 \x01(\x04R\x11handshakeFailures\x12\x1c\n" +
 	"\tfallbacks\x18\x02 \x01(\x04R\tfallbacks\x12%\n" +
 	"\x0ereplay_rejects\x18\x03 \x01(\x04R\rreplayRejects\x12)\n" +
 	"\x10probe_signatures\x18\x04 \x01(\x04R\x0fprobeSignatures\x121\n" +
-	"\aregions\x18\x05 \x03(\v2\x17.anx.mgmt.v1.RegionStatR\aregions\"<\n" +
+	"\aregions\x18\x05 \x03(\v2\x17.anx.mgmt.v1.RegionStatR\aregions\x12,\n" +
+	"\x03udp\x18\x06 \x01(\v2\x1a.anx.mgmt.v1.UdpRelayStatsR\x03udp\"<\n" +
 	"\bListener\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x16\n" +
 	"\x06jacket\x18\x02 \x01(\tR\x06jacket\"M\n" +
@@ -2967,7 +3096,7 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\vport_hop_ms\x18\f \x01(\rR\tportHopMs\x12,\n" +
 	"\x12quic_ack_frequency\x18\r \x01(\bR\x10quicAckFrequency\x12/\n" +
 	"\x14quic_mtu_upper_bound\x18\x0e \x01(\rR\x11quicMtuUpperBound\x12(\n" +
-	"\x10quic_initial_mtu\x18\x0f \x01(\rR\x0equicInitialMtu\"\xc9\x02\n" +
+	"\x10quic_initial_mtu\x18\x0f \x01(\rR\x0equicInitialMtu\"\xe6\x02\n" +
 	"\x04Link\x12\x17\n" +
 	"\alink_id\x18\x01 \x01(\tR\x06linkId\x12\x19\n" +
 	"\blink_key\x18\x02 \x01(\fR\alinkKey\x12#\n" +
@@ -2980,7 +3109,8 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\rdefault_route\x18\t \x01(\bR\fdefaultRoute\x12\x1f\n" +
 	"\vserver_name\x18\n" +
 	" \x01(\tR\n" +
-	"serverName\":\n" +
+	"serverName\x12\x1b\n" +
+	"\tudp_lanes\x18\v \x01(\rR\budpLanes\":\n" +
 	"\x0fAddLinksRequest\x12'\n" +
 	"\x05links\x18\x01 \x03(\v2\x11.anx.mgmt.v1.LinkR\x05links\"(\n" +
 	"\x10AddLinksResponse\x12\x14\n" +
@@ -3004,7 +3134,7 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\fCarrierProbe\x12\x18\n" +
 	"\acarrier\x18\x01 \x01(\tR\acarrier\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12!\n" +
-	"\fhandshake_ms\x18\x03 \x01(\rR\vhandshakeMs\"\x82\x04\n" +
+	"\fhandshake_ms\x18\x03 \x01(\rR\vhandshakeMs\"\xda\x04\n" +
 	"\bLinkStat\x12\x17\n" +
 	"\alink_id\x18\x01 \x01(\tR\x06linkId\x12#\n" +
 	"\rdefault_route\x18\x02 \x01(\bR\fdefaultRoute\x12\x1c\n" +
@@ -3022,7 +3152,9 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\x10fec_repairs_sent\x18\r \x01(\x04R\x0efecRepairsSent\x12#\n" +
 	"\rfec_recovered\x18\x0e \x01(\x04R\ffecRecovered\x12\x18\n" +
 	"\arebinds\x18\x0f \x01(\x04R\arebinds\x12!\n" +
-	"\frouted_users\x18\x10 \x01(\rR\vroutedUsers\"@\n" +
+	"\frouted_users\x18\x10 \x01(\rR\vroutedUsers\x12,\n" +
+	"\x12udp_lane_connected\x18\x11 \x01(\bR\x10udpLaneConnected\x12(\n" +
+	"\x10udp_lane_carrier\x18\x12 \x01(\tR\x0eudpLaneCarrier\"@\n" +
 	"\x11LinkStatsResponse\x12+\n" +
 	"\x05links\x18\x01 \x03(\v2\x15.anx.mgmt.v1.LinkStatR\x05links2\xc0\f\n" +
 	"\n" +
@@ -3060,7 +3192,7 @@ func file_anx_mgmt_v1_mgmt_proto_rawDescGZIP() []byte {
 	return file_anx_mgmt_v1_mgmt_proto_rawDescData
 }
 
-var file_anx_mgmt_v1_mgmt_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
+var file_anx_mgmt_v1_mgmt_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_anx_mgmt_v1_mgmt_proto_goTypes = []any{
 	(*User)(nil),                         // 0: anx.mgmt.v1.User
 	(*AddUsersRequest)(nil),              // 1: anx.mgmt.v1.AddUsersRequest
@@ -3081,38 +3213,39 @@ var file_anx_mgmt_v1_mgmt_proto_goTypes = []any{
 	(*PushShapeProfileResponse)(nil),     // 16: anx.mgmt.v1.PushShapeProfileResponse
 	(*StatsRequest)(nil),                 // 17: anx.mgmt.v1.StatsRequest
 	(*RegionStat)(nil),                   // 18: anx.mgmt.v1.RegionStat
-	(*StatsResponse)(nil),                // 19: anx.mgmt.v1.StatsResponse
-	(*Listener)(nil),                     // 20: anx.mgmt.v1.Listener
-	(*RotateListenersRequest)(nil),       // 21: anx.mgmt.v1.RotateListenersRequest
-	(*RotateListenersResponse)(nil),      // 22: anx.mgmt.v1.RotateListenersResponse
-	(*SetIngressPoolRequest)(nil),        // 23: anx.mgmt.v1.SetIngressPoolRequest
-	(*SetIngressPoolResponse)(nil),       // 24: anx.mgmt.v1.SetIngressPoolResponse
-	(*IssueDeviceRequest)(nil),           // 25: anx.mgmt.v1.IssueDeviceRequest
-	(*IssueDeviceResponse)(nil),          // 26: anx.mgmt.v1.IssueDeviceResponse
-	(*RevokeDeviceRequest)(nil),          // 27: anx.mgmt.v1.RevokeDeviceRequest
-	(*RevokeDeviceResponse)(nil),         // 28: anx.mgmt.v1.RevokeDeviceResponse
-	(*ListDevicesRequest)(nil),           // 29: anx.mgmt.v1.ListDevicesRequest
-	(*Device)(nil),                       // 30: anx.mgmt.v1.Device
-	(*ListDevicesResponse)(nil),          // 31: anx.mgmt.v1.ListDevicesResponse
-	(*SetDeviceLimitRequest)(nil),        // 32: anx.mgmt.v1.SetDeviceLimitRequest
-	(*SetDeviceLimitResponse)(nil),       // 33: anx.mgmt.v1.SetDeviceLimitResponse
-	(*RotateIntermediateCaRequest)(nil),  // 34: anx.mgmt.v1.RotateIntermediateCaRequest
-	(*RotateIntermediateCaResponse)(nil), // 35: anx.mgmt.v1.RotateIntermediateCaResponse
-	(*LinePolicy)(nil),                   // 36: anx.mgmt.v1.LinePolicy
-	(*Link)(nil),                         // 37: anx.mgmt.v1.Link
-	(*AddLinksRequest)(nil),              // 38: anx.mgmt.v1.AddLinksRequest
-	(*AddLinksResponse)(nil),             // 39: anx.mgmt.v1.AddLinksResponse
-	(*RemoveLinksRequest)(nil),           // 40: anx.mgmt.v1.RemoveLinksRequest
-	(*RemoveLinksResponse)(nil),          // 41: anx.mgmt.v1.RemoveLinksResponse
-	(*RotateLinkKeyRequest)(nil),         // 42: anx.mgmt.v1.RotateLinkKeyRequest
-	(*RotateLinkKeyResponse)(nil),        // 43: anx.mgmt.v1.RotateLinkKeyResponse
-	(*LinkRoute)(nil),                    // 44: anx.mgmt.v1.LinkRoute
-	(*SetLinkRoutesRequest)(nil),         // 45: anx.mgmt.v1.SetLinkRoutesRequest
-	(*SetLinkRoutesResponse)(nil),        // 46: anx.mgmt.v1.SetLinkRoutesResponse
-	(*LinkStatsRequest)(nil),             // 47: anx.mgmt.v1.LinkStatsRequest
-	(*CarrierProbe)(nil),                 // 48: anx.mgmt.v1.CarrierProbe
-	(*LinkStat)(nil),                     // 49: anx.mgmt.v1.LinkStat
-	(*LinkStatsResponse)(nil),            // 50: anx.mgmt.v1.LinkStatsResponse
+	(*UdpRelayStats)(nil),                // 19: anx.mgmt.v1.UdpRelayStats
+	(*StatsResponse)(nil),                // 20: anx.mgmt.v1.StatsResponse
+	(*Listener)(nil),                     // 21: anx.mgmt.v1.Listener
+	(*RotateListenersRequest)(nil),       // 22: anx.mgmt.v1.RotateListenersRequest
+	(*RotateListenersResponse)(nil),      // 23: anx.mgmt.v1.RotateListenersResponse
+	(*SetIngressPoolRequest)(nil),        // 24: anx.mgmt.v1.SetIngressPoolRequest
+	(*SetIngressPoolResponse)(nil),       // 25: anx.mgmt.v1.SetIngressPoolResponse
+	(*IssueDeviceRequest)(nil),           // 26: anx.mgmt.v1.IssueDeviceRequest
+	(*IssueDeviceResponse)(nil),          // 27: anx.mgmt.v1.IssueDeviceResponse
+	(*RevokeDeviceRequest)(nil),          // 28: anx.mgmt.v1.RevokeDeviceRequest
+	(*RevokeDeviceResponse)(nil),         // 29: anx.mgmt.v1.RevokeDeviceResponse
+	(*ListDevicesRequest)(nil),           // 30: anx.mgmt.v1.ListDevicesRequest
+	(*Device)(nil),                       // 31: anx.mgmt.v1.Device
+	(*ListDevicesResponse)(nil),          // 32: anx.mgmt.v1.ListDevicesResponse
+	(*SetDeviceLimitRequest)(nil),        // 33: anx.mgmt.v1.SetDeviceLimitRequest
+	(*SetDeviceLimitResponse)(nil),       // 34: anx.mgmt.v1.SetDeviceLimitResponse
+	(*RotateIntermediateCaRequest)(nil),  // 35: anx.mgmt.v1.RotateIntermediateCaRequest
+	(*RotateIntermediateCaResponse)(nil), // 36: anx.mgmt.v1.RotateIntermediateCaResponse
+	(*LinePolicy)(nil),                   // 37: anx.mgmt.v1.LinePolicy
+	(*Link)(nil),                         // 38: anx.mgmt.v1.Link
+	(*AddLinksRequest)(nil),              // 39: anx.mgmt.v1.AddLinksRequest
+	(*AddLinksResponse)(nil),             // 40: anx.mgmt.v1.AddLinksResponse
+	(*RemoveLinksRequest)(nil),           // 41: anx.mgmt.v1.RemoveLinksRequest
+	(*RemoveLinksResponse)(nil),          // 42: anx.mgmt.v1.RemoveLinksResponse
+	(*RotateLinkKeyRequest)(nil),         // 43: anx.mgmt.v1.RotateLinkKeyRequest
+	(*RotateLinkKeyResponse)(nil),        // 44: anx.mgmt.v1.RotateLinkKeyResponse
+	(*LinkRoute)(nil),                    // 45: anx.mgmt.v1.LinkRoute
+	(*SetLinkRoutesRequest)(nil),         // 46: anx.mgmt.v1.SetLinkRoutesRequest
+	(*SetLinkRoutesResponse)(nil),        // 47: anx.mgmt.v1.SetLinkRoutesResponse
+	(*LinkStatsRequest)(nil),             // 48: anx.mgmt.v1.LinkStatsRequest
+	(*CarrierProbe)(nil),                 // 49: anx.mgmt.v1.CarrierProbe
+	(*LinkStat)(nil),                     // 50: anx.mgmt.v1.LinkStat
+	(*LinkStatsResponse)(nil),            // 51: anx.mgmt.v1.LinkStatsResponse
 }
 var file_anx_mgmt_v1_mgmt_proto_depIdxs = []int32{
 	0,  // 0: anx.mgmt.v1.AddUsersRequest.users:type_name -> anx.mgmt.v1.User
@@ -3121,57 +3254,58 @@ var file_anx_mgmt_v1_mgmt_proto_depIdxs = []int32{
 	11, // 3: anx.mgmt.v1.SetJacketRequest.reality:type_name -> anx.mgmt.v1.RealityJacket
 	12, // 4: anx.mgmt.v1.SetJacketRequest.h2:type_name -> anx.mgmt.v1.H2Jacket
 	18, // 5: anx.mgmt.v1.StatsResponse.regions:type_name -> anx.mgmt.v1.RegionStat
-	20, // 6: anx.mgmt.v1.RotateListenersRequest.listeners:type_name -> anx.mgmt.v1.Listener
-	20, // 7: anx.mgmt.v1.RotateListenersResponse.active:type_name -> anx.mgmt.v1.Listener
-	30, // 8: anx.mgmt.v1.ListDevicesResponse.devices:type_name -> anx.mgmt.v1.Device
-	36, // 9: anx.mgmt.v1.Link.policy:type_name -> anx.mgmt.v1.LinePolicy
-	37, // 10: anx.mgmt.v1.AddLinksRequest.links:type_name -> anx.mgmt.v1.Link
-	44, // 11: anx.mgmt.v1.SetLinkRoutesRequest.routes:type_name -> anx.mgmt.v1.LinkRoute
-	48, // 12: anx.mgmt.v1.LinkStat.probes:type_name -> anx.mgmt.v1.CarrierProbe
-	49, // 13: anx.mgmt.v1.LinkStatsResponse.links:type_name -> anx.mgmt.v1.LinkStat
-	1,  // 14: anx.mgmt.v1.Management.AddUsers:input_type -> anx.mgmt.v1.AddUsersRequest
-	3,  // 15: anx.mgmt.v1.Management.RemoveUsers:input_type -> anx.mgmt.v1.RemoveUsersRequest
-	5,  // 16: anx.mgmt.v1.Management.GetTraffic:input_type -> anx.mgmt.v1.GetTrafficRequest
-	8,  // 17: anx.mgmt.v1.Management.GetOnline:input_type -> anx.mgmt.v1.GetOnlineRequest
-	13, // 18: anx.mgmt.v1.Management.SetJacket:input_type -> anx.mgmt.v1.SetJacketRequest
-	15, // 19: anx.mgmt.v1.Management.PushShapeProfile:input_type -> anx.mgmt.v1.PushShapeProfileRequest
-	17, // 20: anx.mgmt.v1.Management.Stats:input_type -> anx.mgmt.v1.StatsRequest
-	21, // 21: anx.mgmt.v1.Management.RotateListeners:input_type -> anx.mgmt.v1.RotateListenersRequest
-	23, // 22: anx.mgmt.v1.Management.SetIngressPool:input_type -> anx.mgmt.v1.SetIngressPoolRequest
-	25, // 23: anx.mgmt.v1.Management.IssueDevice:input_type -> anx.mgmt.v1.IssueDeviceRequest
-	27, // 24: anx.mgmt.v1.Management.RevokeDevice:input_type -> anx.mgmt.v1.RevokeDeviceRequest
-	29, // 25: anx.mgmt.v1.Management.ListDevices:input_type -> anx.mgmt.v1.ListDevicesRequest
-	32, // 26: anx.mgmt.v1.Management.SetDeviceLimit:input_type -> anx.mgmt.v1.SetDeviceLimitRequest
-	34, // 27: anx.mgmt.v1.Management.RotateIntermediateCa:input_type -> anx.mgmt.v1.RotateIntermediateCaRequest
-	38, // 28: anx.mgmt.v1.Management.AddLinks:input_type -> anx.mgmt.v1.AddLinksRequest
-	40, // 29: anx.mgmt.v1.Management.RemoveLinks:input_type -> anx.mgmt.v1.RemoveLinksRequest
-	42, // 30: anx.mgmt.v1.Management.RotateLinkKey:input_type -> anx.mgmt.v1.RotateLinkKeyRequest
-	47, // 31: anx.mgmt.v1.Management.LinkStats:input_type -> anx.mgmt.v1.LinkStatsRequest
-	45, // 32: anx.mgmt.v1.Management.SetLinkRoutes:input_type -> anx.mgmt.v1.SetLinkRoutesRequest
-	2,  // 33: anx.mgmt.v1.Management.AddUsers:output_type -> anx.mgmt.v1.AddUsersResponse
-	4,  // 34: anx.mgmt.v1.Management.RemoveUsers:output_type -> anx.mgmt.v1.RemoveUsersResponse
-	7,  // 35: anx.mgmt.v1.Management.GetTraffic:output_type -> anx.mgmt.v1.GetTrafficResponse
-	10, // 36: anx.mgmt.v1.Management.GetOnline:output_type -> anx.mgmt.v1.GetOnlineResponse
-	14, // 37: anx.mgmt.v1.Management.SetJacket:output_type -> anx.mgmt.v1.SetJacketResponse
-	16, // 38: anx.mgmt.v1.Management.PushShapeProfile:output_type -> anx.mgmt.v1.PushShapeProfileResponse
-	19, // 39: anx.mgmt.v1.Management.Stats:output_type -> anx.mgmt.v1.StatsResponse
-	22, // 40: anx.mgmt.v1.Management.RotateListeners:output_type -> anx.mgmt.v1.RotateListenersResponse
-	24, // 41: anx.mgmt.v1.Management.SetIngressPool:output_type -> anx.mgmt.v1.SetIngressPoolResponse
-	26, // 42: anx.mgmt.v1.Management.IssueDevice:output_type -> anx.mgmt.v1.IssueDeviceResponse
-	28, // 43: anx.mgmt.v1.Management.RevokeDevice:output_type -> anx.mgmt.v1.RevokeDeviceResponse
-	31, // 44: anx.mgmt.v1.Management.ListDevices:output_type -> anx.mgmt.v1.ListDevicesResponse
-	33, // 45: anx.mgmt.v1.Management.SetDeviceLimit:output_type -> anx.mgmt.v1.SetDeviceLimitResponse
-	35, // 46: anx.mgmt.v1.Management.RotateIntermediateCa:output_type -> anx.mgmt.v1.RotateIntermediateCaResponse
-	39, // 47: anx.mgmt.v1.Management.AddLinks:output_type -> anx.mgmt.v1.AddLinksResponse
-	41, // 48: anx.mgmt.v1.Management.RemoveLinks:output_type -> anx.mgmt.v1.RemoveLinksResponse
-	43, // 49: anx.mgmt.v1.Management.RotateLinkKey:output_type -> anx.mgmt.v1.RotateLinkKeyResponse
-	50, // 50: anx.mgmt.v1.Management.LinkStats:output_type -> anx.mgmt.v1.LinkStatsResponse
-	46, // 51: anx.mgmt.v1.Management.SetLinkRoutes:output_type -> anx.mgmt.v1.SetLinkRoutesResponse
-	33, // [33:52] is the sub-list for method output_type
-	14, // [14:33] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	19, // 6: anx.mgmt.v1.StatsResponse.udp:type_name -> anx.mgmt.v1.UdpRelayStats
+	21, // 7: anx.mgmt.v1.RotateListenersRequest.listeners:type_name -> anx.mgmt.v1.Listener
+	21, // 8: anx.mgmt.v1.RotateListenersResponse.active:type_name -> anx.mgmt.v1.Listener
+	31, // 9: anx.mgmt.v1.ListDevicesResponse.devices:type_name -> anx.mgmt.v1.Device
+	37, // 10: anx.mgmt.v1.Link.policy:type_name -> anx.mgmt.v1.LinePolicy
+	38, // 11: anx.mgmt.v1.AddLinksRequest.links:type_name -> anx.mgmt.v1.Link
+	45, // 12: anx.mgmt.v1.SetLinkRoutesRequest.routes:type_name -> anx.mgmt.v1.LinkRoute
+	49, // 13: anx.mgmt.v1.LinkStat.probes:type_name -> anx.mgmt.v1.CarrierProbe
+	50, // 14: anx.mgmt.v1.LinkStatsResponse.links:type_name -> anx.mgmt.v1.LinkStat
+	1,  // 15: anx.mgmt.v1.Management.AddUsers:input_type -> anx.mgmt.v1.AddUsersRequest
+	3,  // 16: anx.mgmt.v1.Management.RemoveUsers:input_type -> anx.mgmt.v1.RemoveUsersRequest
+	5,  // 17: anx.mgmt.v1.Management.GetTraffic:input_type -> anx.mgmt.v1.GetTrafficRequest
+	8,  // 18: anx.mgmt.v1.Management.GetOnline:input_type -> anx.mgmt.v1.GetOnlineRequest
+	13, // 19: anx.mgmt.v1.Management.SetJacket:input_type -> anx.mgmt.v1.SetJacketRequest
+	15, // 20: anx.mgmt.v1.Management.PushShapeProfile:input_type -> anx.mgmt.v1.PushShapeProfileRequest
+	17, // 21: anx.mgmt.v1.Management.Stats:input_type -> anx.mgmt.v1.StatsRequest
+	22, // 22: anx.mgmt.v1.Management.RotateListeners:input_type -> anx.mgmt.v1.RotateListenersRequest
+	24, // 23: anx.mgmt.v1.Management.SetIngressPool:input_type -> anx.mgmt.v1.SetIngressPoolRequest
+	26, // 24: anx.mgmt.v1.Management.IssueDevice:input_type -> anx.mgmt.v1.IssueDeviceRequest
+	28, // 25: anx.mgmt.v1.Management.RevokeDevice:input_type -> anx.mgmt.v1.RevokeDeviceRequest
+	30, // 26: anx.mgmt.v1.Management.ListDevices:input_type -> anx.mgmt.v1.ListDevicesRequest
+	33, // 27: anx.mgmt.v1.Management.SetDeviceLimit:input_type -> anx.mgmt.v1.SetDeviceLimitRequest
+	35, // 28: anx.mgmt.v1.Management.RotateIntermediateCa:input_type -> anx.mgmt.v1.RotateIntermediateCaRequest
+	39, // 29: anx.mgmt.v1.Management.AddLinks:input_type -> anx.mgmt.v1.AddLinksRequest
+	41, // 30: anx.mgmt.v1.Management.RemoveLinks:input_type -> anx.mgmt.v1.RemoveLinksRequest
+	43, // 31: anx.mgmt.v1.Management.RotateLinkKey:input_type -> anx.mgmt.v1.RotateLinkKeyRequest
+	48, // 32: anx.mgmt.v1.Management.LinkStats:input_type -> anx.mgmt.v1.LinkStatsRequest
+	46, // 33: anx.mgmt.v1.Management.SetLinkRoutes:input_type -> anx.mgmt.v1.SetLinkRoutesRequest
+	2,  // 34: anx.mgmt.v1.Management.AddUsers:output_type -> anx.mgmt.v1.AddUsersResponse
+	4,  // 35: anx.mgmt.v1.Management.RemoveUsers:output_type -> anx.mgmt.v1.RemoveUsersResponse
+	7,  // 36: anx.mgmt.v1.Management.GetTraffic:output_type -> anx.mgmt.v1.GetTrafficResponse
+	10, // 37: anx.mgmt.v1.Management.GetOnline:output_type -> anx.mgmt.v1.GetOnlineResponse
+	14, // 38: anx.mgmt.v1.Management.SetJacket:output_type -> anx.mgmt.v1.SetJacketResponse
+	16, // 39: anx.mgmt.v1.Management.PushShapeProfile:output_type -> anx.mgmt.v1.PushShapeProfileResponse
+	20, // 40: anx.mgmt.v1.Management.Stats:output_type -> anx.mgmt.v1.StatsResponse
+	23, // 41: anx.mgmt.v1.Management.RotateListeners:output_type -> anx.mgmt.v1.RotateListenersResponse
+	25, // 42: anx.mgmt.v1.Management.SetIngressPool:output_type -> anx.mgmt.v1.SetIngressPoolResponse
+	27, // 43: anx.mgmt.v1.Management.IssueDevice:output_type -> anx.mgmt.v1.IssueDeviceResponse
+	29, // 44: anx.mgmt.v1.Management.RevokeDevice:output_type -> anx.mgmt.v1.RevokeDeviceResponse
+	32, // 45: anx.mgmt.v1.Management.ListDevices:output_type -> anx.mgmt.v1.ListDevicesResponse
+	34, // 46: anx.mgmt.v1.Management.SetDeviceLimit:output_type -> anx.mgmt.v1.SetDeviceLimitResponse
+	36, // 47: anx.mgmt.v1.Management.RotateIntermediateCa:output_type -> anx.mgmt.v1.RotateIntermediateCaResponse
+	40, // 48: anx.mgmt.v1.Management.AddLinks:output_type -> anx.mgmt.v1.AddLinksResponse
+	42, // 49: anx.mgmt.v1.Management.RemoveLinks:output_type -> anx.mgmt.v1.RemoveLinksResponse
+	44, // 50: anx.mgmt.v1.Management.RotateLinkKey:output_type -> anx.mgmt.v1.RotateLinkKeyResponse
+	51, // 51: anx.mgmt.v1.Management.LinkStats:output_type -> anx.mgmt.v1.LinkStatsResponse
+	47, // 52: anx.mgmt.v1.Management.SetLinkRoutes:output_type -> anx.mgmt.v1.SetLinkRoutesResponse
+	34, // [34:53] is the sub-list for method output_type
+	15, // [15:34] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_anx_mgmt_v1_mgmt_proto_init() }
@@ -3189,7 +3323,7 @@ func file_anx_mgmt_v1_mgmt_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_anx_mgmt_v1_mgmt_proto_rawDesc), len(file_anx_mgmt_v1_mgmt_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   51,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
