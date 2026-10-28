@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Relay hops of `anx_line` transports.** When the plan forwards an accepted transport into a
+  dialing `anx_line` transport (`forwarding[].transport_id`), the accepting anx-server holds
+  that link (`AddLinks`) and routes the accepted link's user there (`SetLinkRoutes`), so a
+  multi-hop route passes the device without leaving it; the relayed transport is reported
+  with the process. A dialing transport only relay hops use is anx-server's, not anx-node's,
+  so a relay-only device needs no anx-node.
+- **Port forwards of the network model (anixcore core).** Each of the plan's `port_forwards`
+  (forward rules moved off gost) runs as an anixcore `forward` inbound tagged
+  `forward-<id>`, added after the plan: its traffic leaves by `egress:<id>` or, into a
+  dialing `anx_line` transport, by `anx-line:<transport id>` (anx-node), and the targets are
+  dialed at the last hop. One target is sent as `server`/`server_port`; several as `targets`,
+  which needs an anixcore with balancing (networkcore #139). A changed forward is replaced, a
+  gone one removed, and a restarted anixcore gets them again after the plan. The status
+  carries each forward's cumulative bytes (`NetworkStatus.port_forwards`). anixcore's
+  `PUT /v1/network` no longer receives the port forwards.
 - **ANX-Line host support (`AnxLine`, Linux).** For fake-TCP carriers the Agent installs the
   nftables rules that drop the kernel's RST segments (`table ip anixops_anx_line`; the rules
   are templates from the configuration, defaults per ANX-Line spec §4.2). For multipath links

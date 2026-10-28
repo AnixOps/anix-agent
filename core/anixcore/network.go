@@ -12,6 +12,7 @@ import (
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 var _ vCore.NetworkApplier = (*Core)(nil)
@@ -74,6 +75,10 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 	if err != nil {
 		return nil, err
 	}
+	forwards, err := forwardInbounds(plan)
+	if err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.client == nil {
@@ -93,8 +98,14 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 	if len(plan.GetIngresses())+len(plan.GetEgresses())+len(plan.GetPaths()) > 0 {
 		c.network = body
 	}
-	c.ingresses = userIngresses(plan)
+	// The forwards go in after the plan: they leave by its egresses.
+	c.wantedForwards = forwards
 	var failed error
+	if err := c.syncForwards(forwards); err != nil {
+		failed = err
+	}
+	answer.PortForwards = forwardStatus(c.client, c.heldForwards())
+	c.ingresses = userIngresses(plan)
 	for tag, n := range c.nodes {
 		ingress := c.ingressOf(n)
 		if ingress == n.ingress {
@@ -114,7 +125,7 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 // NetworkStatus implements vCore.NetworkApplier.
 func (c *Core) NetworkStatus() (*networkv1.NetworkStatus, error) {
 	c.mu.Lock()
-	client, line, links := c.client, c.line, c.heldLinks()
+	client, line, links, forwards := c.client, c.line, c.heldLinks(), c.heldForwards()
 	c.mu.Unlock()
 	if client == nil {
 		return nil, errors.New("anixcore: the core is not started")
@@ -127,14 +138,20 @@ func (c *Core) NetworkStatus() (*networkv1.NetworkStatus, error) {
 	}
 	status := answer.status()
 	status.Components = append(status.Components, linkStatus(line, links)...)
+	status.PortForwards = forwardStatus(client, forwards)
 	return status, nil
 }
 
 // networkBody is plan as anixcore reads it: protojson with proto names,
-// `{}` for no plan.
+// `{}` for no plan, without the port forwards, which run as inbounds
+// (forward.go).
 func networkBody(plan *networkv1.NetworkPlan) (json.RawMessage, error) {
 	if plan == nil {
 		return json.RawMessage(`{}`), nil
+	}
+	if len(plan.GetPortForwards()) > 0 {
+		plan = proto.Clone(plan).(*networkv1.NetworkPlan)
+		plan.PortForwards = nil
 	}
 	encoded, err := networkPlanJSON.Marshal(plan)
 	if err != nil {

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
 )
@@ -41,6 +42,10 @@ type Accept struct {
 	ServerName string
 	// Sources are the egress source addresses, at most one per family.
 	Sources []netip.Addr
+	// Next is the ANX-Line link accepted traffic is relayed into when the
+	// plan forwards the transport into a dialing anx_line transport (a
+	// relay hop), nil when it leaves by an egress.
+	Next *anxmgmtpb.Link
 }
 
 // Accepts answers the anx_line transports plan has this device accept, in
@@ -49,6 +54,10 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 	egresses := map[string]*networkv1.Egress{}
 	for _, egress := range plan.GetEgresses() {
 		egresses[egress.GetId()] = egress
+	}
+	transports := map[string]*networkv1.Transport{}
+	for _, transport := range plan.GetTransports() {
+		transports[transport.GetId()] = transport
 	}
 	forwarded := map[string]*networkv1.Forwarding{}
 	for _, forwarding := range plan.GetForwarding() {
@@ -78,7 +87,17 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 		}
 		if forwarding := forwarded[transport.GetId()]; forwarding != nil {
 			if next := forwarding.GetTransportId(); next != "" {
-				return nil, fmt.Errorf("transport %s: forwarding into transport %s is not run by this Agent", transport.GetId(), next)
+				into := transports[next]
+				if into.GetKind() != network.TransportAnxLine || into.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_DIAL {
+					return nil, fmt.Errorf("transport %s: forwarded into transport %q, which is not a dialing anx_line transport of the plan", transport.GetId(), next)
+				}
+				link, err := DialLink(into)
+				if err != nil {
+					return nil, err
+				}
+				accept.Next = link
+				accepts = append(accepts, accept)
+				continue
 			}
 			id := forwarding.GetEgressId()
 			egress := egresses[id]
@@ -97,6 +116,49 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 	}
 	sort.Slice(accepts, func(i, j int) bool { return accepts[i].Transport < accepts[j].Transport })
 	return accepts, nil
+}
+
+// DialLink answers the ANX-Line link of a dialing anx_line transport: the
+// kernel names its outbound by the transport id (`anx-line:<id>`), so the
+// link id is the transport id.
+func DialLink(transport *networkv1.Transport) (*anxmgmtpb.Link, error) {
+	settings := transport.GetAnxLine()
+	key, err := hex.DecodeString(settings.GetLinkKey())
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("transport %s: the link key is not 32 bytes of hex", transport.GetId())
+	}
+	link := &anxmgmtpb.Link{
+		LinkId: transport.GetId(), LinkKey: key, ServerPublic: settings.GetServerPublic(),
+		QuicAddr: settings.GetQuicAddr(), FaketcpAddr: settings.GetFaketcpAddr(), TcpAddr: settings.GetTcpAddr(),
+		Egress: settings.GetEgress(), ServerName: settings.GetServerName(),
+		// UDP on a connection of its own, apart from bulk TCP (anx
+		// ANX-LINE-ONBOARDING §3, TBD-L15).
+		UdpLanes: 1,
+	}
+	if len(settings.GetCarrierOrder()) > 0 || settings.GetMultipath() || settings.GetFec() {
+		link.Policy = &anxmgmtpb.LinePolicy{
+			Order: append([]string(nil), settings.GetCarrierOrder()...), Multipath: settings.GetMultipath(), Fec: settings.GetFec(),
+		}
+	}
+	return link, nil
+}
+
+// Relayed answers the dialing transports of plan that only relay hops use
+// (forwarding into them): anx-server dials them, not the core.
+func Relayed(plan *networkv1.NetworkPlan) map[string]bool {
+	relayed := map[string]bool{}
+	for _, forwarding := range plan.GetForwarding() {
+		if next := forwarding.GetTransportId(); next != "" {
+			relayed[next] = true
+		}
+	}
+	for _, path := range plan.GetPaths() {
+		delete(relayed, path.GetTransportId())
+	}
+	for _, forward := range plan.GetPortForwards() {
+		delete(relayed, forward.GetTransportId())
+	}
+	return relayed
 }
 
 // listener is what a process is started with: transports that share it

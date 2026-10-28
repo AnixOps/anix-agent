@@ -286,12 +286,17 @@ func (c *networkComponent) lineRoles(plan *networkv1.NetworkPlan) error {
 			coreDials = true
 		}
 	}
+	relayed := anxserver.Relayed(plan)
 	for _, transport := range plan.GetTransports() {
 		if transport.GetKind() != network.TransportAnxLine {
 			continue
 		}
 		switch transport.GetRole() {
 		case networkv1.TransportRole_TRANSPORT_ROLE_DIAL:
+			if relayed[transport.GetId()] {
+				// anx-server dials it, with the hop that relays into it.
+				continue
+			}
 			if !coreDials {
 				return fmt.Errorf("transport %s: dialing anx_line needs anx-node as the core (AnixcoreConfig.AnxLine)", transport.GetId())
 			}

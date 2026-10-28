@@ -2,11 +2,11 @@ package anixcore
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
 
+	"github.com/AnixOps/anix-agent/v5/anxserver"
 	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
@@ -37,31 +37,19 @@ var connectLine = func(addr string) (anxmgmtpb.ManagementClient, func() error, e
 	return anxmgmtpb.NewManagementClient(conn), conn.Close, nil
 }
 
-// dialLinks answers the links of plan's dialing anx_line ends, by id.
+// dialLinks answers the links of plan's dialing anx_line ends, by id;
+// transports only relay hops use are anx-server's (anxserver.Relayed).
 func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, error) {
+	relayed := anxserver.Relayed(plan)
 	links := map[string]*anxmgmtpb.Link{}
 	for _, transport := range plan.GetTransports() {
-		if transport.GetKind() != network.TransportAnxLine || transport.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_DIAL {
+		if transport.GetKind() != network.TransportAnxLine || transport.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_DIAL ||
+			relayed[transport.GetId()] {
 			continue
 		}
-		settings := transport.GetAnxLine()
-		key, err := hex.DecodeString(settings.GetLinkKey())
-		if err != nil || len(key) != 32 {
-			return nil, fmt.Errorf("transport %s: the link key is not 32 bytes of hex", transport.GetId())
-		}
-		link := &anxmgmtpb.Link{
-			// The kernel names the outbound by the transport id.
-			LinkId: transport.GetId(), LinkKey: key, ServerPublic: settings.GetServerPublic(),
-			QuicAddr: settings.GetQuicAddr(), FaketcpAddr: settings.GetFaketcpAddr(), TcpAddr: settings.GetTcpAddr(),
-			Egress: settings.GetEgress(), ServerName: settings.GetServerName(),
-			// UDP on a connection of its own, apart from bulk TCP (anx
-			// ANX-LINE-ONBOARDING §3, TBD-L15).
-			UdpLanes: 1,
-		}
-		if len(settings.GetCarrierOrder()) > 0 || settings.GetMultipath() || settings.GetFec() {
-			link.Policy = &anxmgmtpb.LinePolicy{
-				Order: append([]string(nil), settings.GetCarrierOrder()...), Multipath: settings.GetMultipath(), Fec: settings.GetFec(),
-			}
+		link, err := anxserver.DialLink(transport)
+		if err != nil {
+			return nil, err
 		}
 		links[link.GetLinkId()] = link
 	}

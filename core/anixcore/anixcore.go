@@ -69,6 +69,10 @@ type Core struct {
 	lineClose   func() error
 	links       map[string]*anxmgmtpb.Link
 	wantedLinks map[string]*anxmgmtpb.Link
+	// forwards are the forward inbounds anixcore runs for the plan's port
+	// forwards, wantedForwards those of the last plan, by tag.
+	forwards       map[string]map[string]any
+	wantedForwards map[string]map[string]any
 
 	process *exec.Cmd
 	stop    chan struct{}
@@ -231,6 +235,11 @@ func (c *Core) replay() error {
 		if _, err := c.putNetwork(c.network); err != nil {
 			failed = errors.Join(failed, err)
 		}
+	}
+	// Forwards after the plan: they leave by its egresses.
+	c.forwards = nil
+	if err := c.syncForwards(c.wantedForwards); err != nil {
+		failed = errors.Join(failed, err)
 	}
 	for tag, n := range c.nodes {
 		n.created = false
