@@ -8,6 +8,7 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/networkroute"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
@@ -73,7 +74,15 @@ func devicePlan(generation uint64, egressKind string) *networkv1.NetworkPlan {
 	return plan
 }
 
+// withoutRouting makes the components of the test have no policy routing.
+func withoutRouting(t *testing.T) {
+	previous := networkRouting
+	networkRouting = func() *networkroute.Manager { return nil }
+	t.Cleanup(func() { networkRouting = previous })
+}
+
 func TestNetworkComponentNeedsACoreThatRunsTheModel(t *testing.T) {
+	withoutRouting(t)
 	assert.Nil(t, newNetworkComponent(1, &fakeNetworkCore{}))
 	assert.Nil(t, newNetworkComponent(1, struct{ vCore.Core }{}))
 	component := newNetworkComponent(1, &fakeNetworkCore{kinds: networkKinds()})
@@ -90,6 +99,7 @@ func TestNetworkComponentNeedsACoreThatRunsTheModel(t *testing.T) {
 // document without the member leave the core as it is; a plan for another
 // device or a kind the core does not run is refused before the core.
 func TestNetworkComponentAppliesNewPlansOnly(t *testing.T) {
+	withoutRouting(t)
 	core := &fakeNetworkCore{kinds: networkKinds()}
 	component := newNetworkComponent(1, core)
 
@@ -127,4 +137,44 @@ func TestNetworkComponentAppliesNewPlansOnly(t *testing.T) {
 	require.NoError(t, component.apply(networkSnapshot(t, empty)))
 	require.Len(t, core.applied, 2)
 	assert.Empty(t, core.applied[1].GetPaths())
+}
+
+// With policy routing the Agent runs dedicated_ip egresses: the routes go
+// in before the core gets the plan, and a plan without them removes them.
+func TestNetworkComponentRoutesAddressSources(t *testing.T) {
+	var calls []string
+	previous := networkRouting
+	networkRouting = func() *networkroute.Manager {
+		return &networkroute.Manager{IP: "ip", Run: func(name string, args ...string) ([]byte, error) {
+			if args[0] == "-j" {
+				return []byte("[]"), nil
+			}
+			calls = append(calls, strings.Join(args, " "))
+			return nil, nil
+		}}
+	}
+	t.Cleanup(func() { networkRouting = previous })
+
+	core := &fakeNetworkCore{kinds: networkKinds()}
+	component := newNetworkComponent(1, core)
+	require.NotNil(t, component)
+	assert.Len(t, component.caps.GetKinds(), 3, "dedicated_ip is the Agent's")
+
+	plan := devicePlan(1, network.EgressDedicatedIP)
+	plan.Lines[0].GatewayV4 = "198.51.100.1"
+	plan.Egresses[0].Source = "198.51.100.10"
+	network.Stamp(plan, network.Generation{})
+	require.NoError(t, component.apply(networkSnapshot(t, plan)))
+	require.Len(t, core.applied, 1)
+	assert.Equal(t, []string{
+		"-4 route replace default via 198.51.100.1 dev eth0 src 198.51.100.10 table 20000",
+		"-4 rule add from 198.51.100.10/32 table 20000 priority 20000",
+	}, calls)
+
+	calls = nil
+	empty := &networkv1.NetworkPlan{DeviceRef: "proxy-1"}
+	network.Stamp(empty, network.Generation{Generation: 1, Hash: plan.GetHash()})
+	require.NoError(t, component.apply(networkSnapshot(t, empty)))
+	assert.Empty(t, calls, "no rule of the range was there to remove")
+	require.Len(t, core.applied, 2)
 }

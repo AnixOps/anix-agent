@@ -26,8 +26,8 @@ var _ vCore.NetworkApplier = (*Core)(nil)
 
 // networkKinds are the components anixcore runs (node-runtime network.rs):
 // ingresses of either kind and egresses leaving from the device's own
-// address. Policy routing for egresses on other lines and the anx_line
-// transport ends are not run yet.
+// address. The Agent adds dedicated_ip where it can route (node
+// network.go); the anx_line transport ends are not run yet.
 var networkKinds = []*networkv1.KindSupport{
 	{Component: networkv1.Component_COMPONENT_INGRESS, Kind: network.IngressDirect, Versions: []uint32{1}, Executor: coreType},
 	{Component: networkv1.Component_COMPONENT_INGRESS, Kind: network.IngressNAT, Versions: []uint32{1}, Executor: coreType},
