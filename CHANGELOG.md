@@ -36,9 +36,20 @@
   exit are started again with their links. The server key is generated once
   (`/var/lib/anixops-agent/anx-server`) and its public half is reported in the network status
   (`public_keys`, also before the device has a plan), which is what the dialing ends' plans wait
-  for. Fake-TCP listeners get their RST rules in `table ip anixops_anx_line_net`. Dialing ends
-  and forwarding from a transport into another transport are refused for now. The
+  for. Fake-TCP listeners get their RST rules in `table ip anixops_anx_line_net`. Forwarding
+  from a transport into another transport is refused for now. The
   `--egress-source` flag needs anx-server from anx#93 or later.
+- **Dialing ends of `anx_line` transports (`AnixcoreConfig.AnxLine`, anx-node).** With
+  `"AnxLine": true` the anixcore core treats `BinaryPath` as anx-node. It lists the `anx_line`
+  transport kind and turns each transport the plan has the device dial into an ANX-Line link
+  (`AddLinks` on anx-node's `anx_line.mgmt_listen`, link id = transport id, so paths leave by
+  `anx-line:<transport id>`). Links go in before the plan that uses them, a changed link is
+  replaced, a gone one removed, and a restarted anx-node gets its links before its plan. Each
+  link is reported as a transport component with its carrier and RTT once connected. A started
+  anx-node gets its management API on a loopback port; an anx-node that runs on its own needs
+  `AnxLineApiAddress`. When the Agent also accepts anx_line, the kind is listed once with both
+  executors, and a plan whose dial or accept end this host cannot run is refused. Needs anx-node
+  from anx#95 or later.
 
 ## 5.0.0-rc.8 - 2026-10-27
 

@@ -194,7 +194,8 @@ func TestNetworkComponentRoutesAddressSources(t *testing.T) {
 }
 
 // With anx-server the Agent accepts anx_line transports: their server
-// runs beside the core's plan, and a dialing end is refused.
+// runs beside the core's plan, and a dialing end is refused without
+// anx-node as the core.
 func TestNetworkComponentAcceptsAnxLine(t *testing.T) {
 	withoutRouting(t)
 	launched := make(chan []string, 1)
@@ -265,6 +266,27 @@ func TestNetworkComponentAcceptsAnxLine(t *testing.T) {
 	dial.Transports[0].GetAnxLine().ServerPublic = "SERVER-PUBLIC"
 	network.Stamp(dial, network.Generation{Generation: 1, Hash: plan.GetHash()})
 	err = component.apply(networkSnapshot(t, dial))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "accepting end")
+	require.ErrorIs(t, err, agentapi.ErrConfigInvalid)
+	assert.Contains(t, err.Error(), "needs anx-node")
+}
+
+// A core that dials anx_line (anx-node) and an Agent that accepts it list
+// the kind once, with both executors.
+func TestNetworkComponentListsAnxLineOnce(t *testing.T) {
+	withoutRouting(t)
+	previous := networkServers
+	networkServers = func() *anxserver.Manager { return &anxserver.Manager{Binary: "anx-server", Dir: t.TempDir()} }
+	t.Cleanup(func() { networkServers = previous })
+	core := &fakeNetworkCore{kinds: append(networkKinds(), &networkv1.KindSupport{
+		Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: "anixcore"})}
+	component := newNetworkComponent(1, core)
+	require.NotNil(t, component)
+	t.Cleanup(component.close)
+	capability, err := component.HelloCapability()
+	require.NoError(t, err)
+	caps, _, err := network.DeviceCapabilitiesFromHello([]*agentv1pb.Capability{capability}, "proxy-1")
+	require.NoError(t, err)
+	require.Len(t, caps.GetKinds(), 3)
+	assert.Equal(t, "anixcore,agent", caps.GetKinds()[2].GetExecutor())
+	assert.Equal(t, "anixcore", core.kinds[2].GetExecutor(), "the core's own list is not changed")
 }

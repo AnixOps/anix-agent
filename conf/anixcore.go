@@ -19,6 +19,13 @@ type AnixcoreConfig struct {
 	// RestartDelaySeconds is the pause before restarting an anixcore that
 	// exited; its nodes and users are added again.
 	RestartDelaySeconds int64 `json:"RestartDelaySeconds"`
+	// AnxLine says BinaryPath is anx-node: the core then runs the dialing
+	// ends of the network model's anx_line transports as anx-node's
+	// ANX-Line links. A started anx-node gets its ANX-Line management API
+	// on a loopback port; one that runs on its own (ApiAddress) names it in
+	// AnxLineApiAddress (its `anx_line.mgmt_listen`).
+	AnxLine           bool   `json:"AnxLine"`
+	AnxLineApiAddress string `json:"AnxLineApiAddress"`
 }
 
 func NewAnixcoreConfig() *AnixcoreConfig {

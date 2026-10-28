@@ -70,8 +70,9 @@ func TestAccepts(t *testing.T) {
 
 	dial := acceptPlan()
 	dial.Transports[0].Role = networkv1.TransportRole_TRANSPORT_ROLE_DIAL
-	_, err = Accepts(dial)
-	assert.ErrorContains(t, err, "accepting end")
+	dialed, err := Accepts(dial)
+	require.NoError(t, err)
+	assert.Len(t, dialed, 1, "the dialing end is not anx-server's")
 
 	onward := acceptPlan()
 	onward.Forwarding[0].Next = &networkv1.Forwarding_TransportId{TransportId: "tr-w"}

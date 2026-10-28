@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
@@ -61,6 +62,13 @@ type Core struct {
 	// ingresses its user ingresses by listen port.
 	network   json.RawMessage
 	ingresses map[int]string
+	// line is anx-node's ANX-Line management client (AnxLine), nil
+	// otherwise; links are the links it holds, wantedLinks those of the
+	// last plan.
+	line        anxmgmtpb.ManagementClient
+	lineClose   func() error
+	links       map[string]*anxmgmtpb.Link
+	wantedLinks map[string]*anxmgmtpb.Link
 
 	process *exec.Cmd
 	stop    chan struct{}
@@ -85,6 +93,14 @@ func (c *Core) Protocols() []string {
 
 func (c *Core) Start() error {
 	if c.config.ApiAddress != "" && c.config.ApiToken != "" {
+		if c.config.AnxLine {
+			if c.config.AnxLineApiAddress == "" {
+				return errors.New("anixcore: AnxLine with ApiAddress needs AnxLineApiAddress")
+			}
+			if err := c.connectLine(c.config.AnxLineApiAddress); err != nil {
+				return err
+			}
+		}
 		c.client = newClient(c.config.ApiAddress, c.config.ApiToken)
 		return c.waitReady()
 	}
@@ -93,6 +109,22 @@ func (c *Core) Start() error {
 	}
 	c.stop = make(chan struct{})
 	return c.launch()
+}
+
+// connectLine opens the ANX-Line management client at addr; anx-node
+// starts without links.
+func (c *Core) connectLine(addr string) error {
+	line, closeLine, err := connectLine(addr)
+	if err != nil {
+		return fmt.Errorf("anx-node ANX-Line management api: %w", err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lineClose != nil {
+		_ = c.lineClose()
+	}
+	c.line, c.lineClose, c.links = line, closeLine, nil
+	return nil
 }
 
 // launch starts an anixcore process with a fresh token and API port.
@@ -109,10 +141,18 @@ func (c *Core) launch() error {
 		return fmt.Errorf("anixcore runtime dir: %w", err)
 	}
 	path := filepath.Join(c.config.RuntimeDir, "anixcore.json")
-	document, err := json.Marshal(map[string]any{
+	config := map[string]any{
 		"management":            map[string]any{"listen": address, "token": token},
 		"allow_private_targets": c.config.AllowPrivateTargets,
-	})
+	}
+	lineAddress := ""
+	if c.config.AnxLine {
+		if lineAddress, err = freeLoopbackAddress(); err != nil {
+			return err
+		}
+		config["anx_line"] = map[string]any{"mgmt_listen": lineAddress}
+	}
+	document, err := json.Marshal(config)
 	if err != nil {
 		return err
 	}
@@ -139,6 +179,12 @@ func (c *Core) launch() error {
 	if err := c.waitReady(); err != nil {
 		_ = process.Process.Kill()
 		return err
+	}
+	if lineAddress != "" {
+		if err := c.connectLine(lineAddress); err != nil {
+			_ = process.Process.Kill()
+			return err
+		}
 	}
 	return nil
 }
@@ -176,6 +222,11 @@ func (c *Core) replay() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var failed error
+	// Links first: the plan's paths leave by them.
+	c.links = nil
+	if err := c.syncLinks(c.wantedLinks); err != nil {
+		failed = errors.Join(failed, err)
+	}
 	if c.network != nil {
 		if _, err := c.putNetwork(c.network); err != nil {
 			failed = errors.Join(failed, err)
@@ -226,6 +277,10 @@ func (c *Core) Close() error {
 	c.mu.Lock()
 	process, exited := c.process, c.exited
 	c.process = nil
+	if c.lineClose != nil {
+		_ = c.lineClose()
+		c.line, c.lineClose = nil, nil
+	}
 	c.mu.Unlock()
 	if process == nil {
 		return nil

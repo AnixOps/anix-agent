@@ -43,8 +43,7 @@ type Accept struct {
 }
 
 // Accepts answers the anx_line transports plan has this device accept, in
-// transport id order. A dialing anx_line end is refused: the Agent does
-// not run it.
+// transport id order.
 func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 	egresses := map[string]*networkv1.Egress{}
 	for _, egress := range plan.GetEgresses() {
@@ -60,7 +59,8 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 			continue
 		}
 		if transport.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_ACCEPT {
-			return nil, fmt.Errorf("transport %s: this Agent runs only the accepting end of anx_line", transport.GetId())
+			// The dialing end is the core's (anx-node).
+			continue
 		}
 		settings := transport.GetAnxLine()
 		key, err := hex.DecodeString(settings.GetLinkKey())

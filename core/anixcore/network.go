@@ -28,7 +28,7 @@ var _ vCore.NetworkApplier = (*Core)(nil)
 // ingresses of either kind and egresses leaving from the device's own
 // address. The Agent adds dedicated_ip where it can route, and the
 // accepting anx_line ends where anx-server is installed (node network.go);
-// the dialing ends are not run yet.
+// anx-node (AnxLine) dials anx_line transports (anxline.go).
 var networkKinds = []*networkv1.KindSupport{
 	{Component: networkv1.Component_COMPONENT_INGRESS, Kind: network.IngressDirect, Versions: []uint32{1}, Executor: coreType},
 	{Component: networkv1.Component_COMPONENT_INGRESS, Kind: network.IngressNAT, Versions: []uint32{1}, Executor: coreType},
@@ -56,6 +56,9 @@ type kernelNetworkStatus struct {
 
 // NetworkKinds implements vCore.NetworkApplier.
 func (c *Core) NetworkKinds() []*networkv1.KindSupport {
+	if c.config.AnxLine {
+		return append(append([]*networkv1.KindSupport(nil), networkKinds...), lineKind)
+	}
 	return networkKinds
 }
 
@@ -67,15 +70,25 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 	if err != nil {
 		return nil, err
 	}
+	links, err := dialLinks(plan)
+	if err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.client == nil {
 		return nil, errors.New("anixcore: the core is not started")
 	}
+	// The links go in first: the plan's paths leave by them.
+	if err := c.syncLinks(links); err != nil {
+		return nil, err
+	}
+	c.wantedLinks = links
 	answer, err := c.putNetwork(body)
 	if err != nil {
 		return nil, err
 	}
+	answer.Components = append(answer.Components, linkStatus(c.line, c.heldLinks())...)
 	c.network = nil
 	if len(plan.GetIngresses())+len(plan.GetEgresses())+len(plan.GetPaths()) > 0 {
 		c.network = body
@@ -101,7 +114,7 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 // NetworkStatus implements vCore.NetworkApplier.
 func (c *Core) NetworkStatus() (*networkv1.NetworkStatus, error) {
 	c.mu.Lock()
-	client := c.client
+	client, line, links := c.client, c.line, c.heldLinks()
 	c.mu.Unlock()
 	if client == nil {
 		return nil, errors.New("anixcore: the core is not started")
@@ -112,7 +125,9 @@ func (c *Core) NetworkStatus() (*networkv1.NetworkStatus, error) {
 	if err := client.getNetwork(ctx, &answer); err != nil {
 		return nil, networkError(err)
 	}
-	return answer.status(), nil
+	status := answer.status()
+	status.Components = append(status.Components, linkStatus(line, links)...)
+	return status, nil
 }
 
 // networkBody is plan as anixcore reads it: protojson with proto names,
