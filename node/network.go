@@ -3,12 +3,15 @@ package node
 import (
 	"errors"
 	"fmt"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/networkroute"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
@@ -28,11 +31,32 @@ import (
 // networkStatusInterval spaces out the status reports between plans.
 var networkStatusInterval = time.Minute
 
+// networkRouting answers the policy-routing manager of the host, nil when
+// it has none (not Linux, or no ip command): the Agent then runs no egress
+// that needs routing.
+var networkRouting = func() *networkroute.Manager {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	path, err := exec.LookPath("ip")
+	if err != nil {
+		return nil
+	}
+	return &networkroute.Manager{IP: path, Run: networkroute.Run}
+}
+
+// routedEgressKinds are the egress kinds the Agent runs itself when it can
+// route: the core binds the source, the Agent's policy routing sends it out
+// of its line.
+var routedEgressKinds = []string{network.EgressDedicatedIP}
+
 // networkComponent runs one device's plan on the core.
 type networkComponent struct {
 	device  string
 	applier vCore.NetworkApplier
 	caps    *networkv1.DeviceCapabilities
+	// routes installs the egresses' policy routing, nil without it.
+	routes *networkroute.Manager
 
 	mu         sync.Mutex
 	client     *agentapi.Client
@@ -58,9 +82,18 @@ func newNetworkComponent(nodeID int, core vCore.Core) *networkComponent {
 	for _, kind := range applier.NetworkKinds() {
 		kinds = append(kinds, proto.Clone(kind).(*networkv1.KindSupport))
 	}
+	caps := &networkv1.DeviceCapabilities{DeviceRef: device, Kinds: kinds}
+	routes := networkRouting()
+	if routes != nil {
+		routes.First, routes.Last = network.RoutingRange(caps)
+		for _, kind := range routedEgressKinds {
+			caps.Kinds = append(caps.Kinds, &networkv1.KindSupport{
+				Component: networkv1.Component_COMPONENT_EGRESS, Kind: kind, Versions: []uint32{1}, Executor: "agent",
+			})
+		}
+	}
 	return &networkComponent{
-		device: device, applier: applier,
-		caps: &networkv1.DeviceCapabilities{DeviceRef: device, Kinds: kinds},
+		device: device, applier: applier, caps: caps, routes: routes,
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{}),
 	}
 }
@@ -158,6 +191,9 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	if current != nil && current.GetHash() == plan.GetHash() && current.GetGeneration() == plan.GetGeneration() {
 		return nil
 	}
+	if err := c.route(plan); err != nil {
+		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), err)
+	}
 	status, applyErr := c.applier.ApplyNetwork(plan)
 	if status == nil && applyErr != nil {
 		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), applyErr)
@@ -172,6 +208,23 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), applyErr)
 	}
 	return nil
+}
+
+// route installs plan's policy routing before the core binds the egress
+// sources. Without routing, a plan that needs it is refused.
+func (c *networkComponent) route(plan *networkv1.NetworkPlan) error {
+	first, last := network.RoutingRange(c.caps)
+	routes, err := networkroute.Routes(plan, first, last)
+	if err != nil {
+		return agentapi.InvalidConfig(err)
+	}
+	if c.routes == nil {
+		if len(routes) > 0 {
+			return fmt.Errorf("egress %s needs policy routing, which this host has not (it needs Linux and the ip command)", routes[0].Egress)
+		}
+		return nil
+	}
+	return c.routes.Apply(routes)
 }
 
 // report sends status, or the core's status read now, for the plan the

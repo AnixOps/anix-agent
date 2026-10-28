@@ -20,6 +20,13 @@
   egress in use) is reported after each plan and every minute. A restarted anixcore gets the
   plan again before its inbounds. One node per Agent drives the plan. Needs an anixcore with
   `/v1/network` (networkcore 785d750 or later) and AnixOps Control with `network.v1`.
+- **Policy routing for network-model egresses (Linux).** An egress whose source is an address
+  (not `auto`) gets `ip route replace default [via <gateway>] dev <line interface> src
+  <source> table <T>` and `ip rule add from <source> table <T> priority <P>` before anixcore
+  gets the plan, so it leaves through its own line. Tables and priorities come from the
+  egress's `routing` or the lowest free numbers of the Agent's range (20000–20999); every rule
+  in that range is the Agent's, and the ones a new plan no longer has are deleted with their
+  tables. With routing the Agent also lists the `dedicated_ip` egress kind.
 
 ## 5.0.0-rc.8 - 2026-10-27
 
