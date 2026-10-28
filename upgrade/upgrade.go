@@ -59,7 +59,8 @@ const (
 	UpdaterPathUnit = "anixops-agent-updater.path"
 	// AgentUnit is the Agent's unit, which the updater restarts.
 	AgentUnit = "anix-agent.service"
-	// GostUnit is gost's unit, which nothing here restarts.
+	// GostUnit is the unit of the removed gost, which the uninstaller
+	// still removes.
 	GostUnit = "anixops-gost.service"
 	// RelayUnit is the experimental anixops relay's unit, which nothing here
 	// restarts either.
@@ -74,7 +75,8 @@ const (
 	// PrevBinary is the binary kept for a rollback, PrevRecord its record.
 	PrevBinary = "anix-agent.prev"
 	PrevRecord = "anix-agent.prev.json"
-	// GostBinary is the pinned gost in LibDir and in the release zip.
+	// GostBinary is the gost earlier releases put in LibDir; the updater
+	// removes it.
 	GostBinary = "gost"
 
 	// HandOffSchema is HandOff.Schema.
@@ -86,14 +88,6 @@ const (
 	maxRecordBytes  = 64 << 10
 	maxBinaryBytes  = 512 << 20
 )
-
-// PinnedGostSHA256 is the SHA-256 of the gost binary every Agent release
-// ships, per GOARCH (H20: release.yml GOST_LINUX_*_BINARY_SHA256, gost
-// 3.2.6). The updater stages a release's gost only when it is this one.
-var PinnedGostSHA256 = map[string]string{
-	"amd64": "a2aea24efb4597b5f57b35b8e1bbcc59f439b80723854d4371f6828b46682ffb",
-	"arm64": "343c3e003996ca0437b9cc47dd1500cd0475ba09f5a5f17e50851854e06a1ca7",
-}
 
 // Error codes the updater writes to result.json besides the agentcontrol
 // UpgradeError* codes.
@@ -173,12 +167,13 @@ type Result struct {
 	TargetVersion   string `json:"target_version,omitempty"`
 	PreviousVersion string `json:"previous_version,omitempty"`
 	// Version is what the updater ran as (the installed release).
-	Version    string `json:"version,omitempty"`
-	Outcome    string `json:"outcome"`
-	ErrorCode  string `json:"error_code,omitempty"`
-	Error      string `json:"error,omitempty"`
-	GostStaged bool   `json:"gost_staged,omitempty"`
-	FinishedMS int64  `json:"finished_at_unix_ms"`
+	Version   string `json:"version,omitempty"`
+	Outcome   string `json:"outcome"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Error     string `json:"error,omitempty"`
+	// GostRemoved is whether the updater deleted the retired gost binary.
+	GostRemoved bool  `json:"gost_removed,omitempty"`
+	FinishedMS  int64 `json:"finished_at_unix_ms"`
 }
 
 var (

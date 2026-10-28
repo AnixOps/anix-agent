@@ -9,8 +9,7 @@ import (
 	"github.com/AnixOps/anix-control/sdk/forward/driver/anixops"
 )
 
-// anixopsDriver is the anixops driver behind a switch, as gostDriver is:
-// built with the node's link certificate (the TLS_TCP and QUIC carriers) or
+// anixopsDriver is the anixops driver behind a switch: built with the node's link certificate (the TLS_TCP and QUIC carriers) or
 // without (PLAIN only). Render is a function of the driver's configuration,
 // so when the node gains or loses its link certificate (H28) the component
 // rebuilds the driver and applies the state again. Every driver instance reads

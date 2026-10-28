@@ -38,7 +38,7 @@ func newApplyFixture(t *testing.T) *applyFixture {
 	writeFile(t, filepath.Join(f.lib, BinaryName), f.old, 0o755)
 	writeFile(t, filepath.Join(f.lib, GostBinary), []byte("old gost"), 0o755)
 	f.applier = &Applier{
-		Request: filepath.Join(f.dir, RequestFile), LibDir: f.lib, Version: "v4.1.0", Arch: "amd64", PublicKey: f.key.public,
+		Request: filepath.Join(f.dir, RequestFile), LibDir: f.lib, Version: "v4.1.0", PublicKey: f.key.public,
 		Systemctl: fakeSystemctl(t, root, f.lib, f.log), StayUp: 30 * time.Millisecond, Poll: 5 * time.Millisecond,
 	}
 	return f
@@ -104,29 +104,20 @@ func (f *applyFixture) result(t *testing.T) Result {
 	return result
 }
 
-func withPinnedGost(t *testing.T, sum string) {
-	t.Helper()
-	previous := PinnedGostSHA256["amd64"]
-	PinnedGostSHA256["amd64"] = sum
-	t.Cleanup(func() { PinnedGostSHA256["amd64"] = previous })
-}
-
 func TestApplyInstallsKeepsThePreviousAndRestartsOnlyTheAgent(t *testing.T) {
 	f := newApplyFixture(t)
 	newAgent := fakeAgent("v4.2.0", false)
-	gost := []byte("pinned gost 3.2.6")
-	withPinnedGost(t, digest(gost))
 	f.stage(t, "v4.2.0", releaseZip(t,
 		zipEntry{name: "LICENSE", data: []byte("license")},
 		zipEntry{name: "V2bX", data: []byte(BinaryName), symlink: true},
 		zipEntry{name: BinaryName, data: newAgent},
-		zipEntry{name: GostBinary, data: gost},
+		zipEntry{name: GostBinary, data: []byte("a gost of an older release")},
 	))
 	result, err := f.applier.Apply(context.Background())
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if result.Outcome != OutcomeInstalled || !result.GostStaged {
+	if result.Outcome != OutcomeInstalled || !result.GostRemoved {
 		t.Fatalf("result: %+v", result)
 	}
 	if string(readFile(t, filepath.Join(f.lib, BinaryName))) != string(newAgent) {
@@ -139,8 +130,8 @@ func TestApplyInstallsKeepsThePreviousAndRestartsOnlyTheAgent(t *testing.T) {
 	if err != nil || record.Version != "v4.1.0" || record.SHA256 != digest(f.old) {
 		t.Fatalf("prev record: %+v %v", record, err)
 	}
-	if string(readFile(t, filepath.Join(f.lib, GostBinary))) != string(gost) {
-		t.Fatal("the pinned gost is staged for gost's next start")
+	if exists(filepath.Join(f.lib, GostBinary)) {
+		t.Fatal("the retired gost is removed, and a release's gost is not installed")
 	}
 	if f.restarts(t) != 1 {
 		t.Fatalf("one restart: %v", f.systemctlCalls(t))
@@ -162,24 +153,9 @@ func TestApplyInstallsKeepsThePreviousAndRestartsOnlyTheAgent(t *testing.T) {
 	}
 }
 
-func TestApplyKeepsTheInstalledGostUnlessTheReleaseCarriesThePinnedOne(t *testing.T) {
-	f := newApplyFixture(t)
-	withPinnedGost(t, digest([]byte("the pinned one")))
-	f.stage(t, "v4.2.0", releaseZip(t, zipEntry{name: BinaryName, data: fakeAgent("v4.2.0", false)}, zipEntry{name: GostBinary, data: []byte("another gost")}))
-	result, err := f.applier.Apply(context.Background())
-	if err != nil || result.GostStaged {
-		t.Fatalf("apply: %+v %v", result, err)
-	}
-	if string(readFile(t, filepath.Join(f.lib, GostBinary))) != "old gost" {
-		t.Fatal("an unpinned gost is not installed")
-	}
-}
-
 func TestApplyReinstatesThePreviousBinaryWhenTheNewAgentDoesNotStayUp(t *testing.T) {
 	f := newApplyFixture(t)
-	gost := []byte("pinned gost")
-	withPinnedGost(t, digest(gost))
-	f.stage(t, "v4.2.0", releaseZip(t, zipEntry{name: BinaryName, data: fakeAgent("v4.2.0", true)}, zipEntry{name: GostBinary, data: gost}))
+	f.stage(t, "v4.2.0", releaseZip(t, zipEntry{name: BinaryName, data: fakeAgent("v4.2.0", true)}))
 	result, err := f.applier.Apply(context.Background())
 	if err == nil || result.Outcome != OutcomeRestored || ErrorCode(err, "") != ErrorStartFailed {
 		t.Fatalf("apply: %+v %v", result, err)
@@ -191,7 +167,7 @@ func TestApplyReinstatesThePreviousBinaryWhenTheNewAgentDoesNotStayUp(t *testing
 		t.Fatalf("restarted, then restarted with the previous binary: %v", f.systemctlCalls(t))
 	}
 	if string(readFile(t, filepath.Join(f.lib, GostBinary))) != "old gost" {
-		t.Fatal("gost is staged only with an Agent that stayed up")
+		t.Fatal("gost is removed only with an Agent that stayed up")
 	}
 	if written := f.result(t); written.Outcome != OutcomeRestored || written.ErrorCode != ErrorStartFailed {
 		t.Fatalf("result.json: %+v", written)
@@ -342,8 +318,7 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
-// The compiled-in release key and gost digests are the ones the release
-// workflow pins.
+// The compiled-in release key is the one the release workflow pins.
 func TestPinsMatchTheReleaseWorkflow(t *testing.T) {
 	workflow := string(readFile(t, filepath.Join("..", ".github", "workflows", "release.yml")))
 	pin := func(name string) string {
@@ -355,9 +330,6 @@ func TestPinsMatchTheReleaseWorkflow(t *testing.T) {
 	}
 	if got := pin("ANIXOPS_OFFICIAL_PUBLIC_KEY"); got != OfficialPublicKey {
 		t.Errorf("release key %s, release.yml %s", OfficialPublicKey, got)
-	}
-	if PinnedGostSHA256["amd64"] != pin("GOST_LINUX_AMD64_BINARY_SHA256") || PinnedGostSHA256["arm64"] != pin("GOST_LINUX_ARM64_BINARY_SHA256") {
-		t.Errorf("pinned gost %v differs from release.yml", PinnedGostSHA256)
 	}
 	if key := officialKey(); len(key) != 32 {
 		t.Error("the official key decodes to a raw Ed25519 key")

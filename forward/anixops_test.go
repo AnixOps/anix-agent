@@ -36,7 +36,6 @@ func TestBuildDriversAnixOps(t *testing.T) {
 	settings := func(mod func(*AnixOpsSettings)) Settings {
 		s := Settings{
 			Nftables: NftablesSettings{Disable: true},
-			Gost:     GostSettings{Disable: true},
 			AnixOps:  AnixOpsSettings{Enable: true, Binary: binary, Systemctl: systemctl, Dir: dir, RuntimeDir: runtime},
 		}
 		if mod != nil {
@@ -46,7 +45,7 @@ func TestBuildDriversAnixOps(t *testing.T) {
 	}
 
 	t.Run("off by default: listed as unavailable, no driver", func(t *testing.T) {
-		d, err := BuildDrivers(t.Context(), Settings{Nftables: NftablesSettings{Disable: true}, Gost: GostSettings{Disable: true}})
+		d, err := BuildDrivers(t.Context(), Settings{Nftables: NftablesSettings{Disable: true}})
 		if err != nil {
 			t.Fatal(err)
 		}

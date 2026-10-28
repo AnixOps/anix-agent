@@ -40,10 +40,7 @@ func NewForwardComponent(cfg *conf.ForwardConfig, nodes []conf.NodeConfig) (*for
 			Disable: cfg.Nftables.Disable, NFT: cfg.Nftables.NFT, TC: cfg.Nftables.TC, MarkMask: cfg.Nftables.MarkMask,
 			LimitInterfaces: cfg.Nftables.LimitInterfaces, MSSClampInterfaces: cfg.Nftables.MSSClampInterfaces,
 		},
-		Gost: forward.GostSettings{
-			Disable: cfg.Gost.Disable, Binary: cfg.Gost.Binary, Dir: cfg.Gost.Dir, RuntimeDir: cfg.Gost.RuntimeDir,
-			ManualLinkCertificates: cfg.Gost.ManualLinkCertificates,
-		},
+		Gost: forward.GostSettings{Dir: cfg.Gost.Dir},
 		AnixOps: forward.AnixOpsSettings{
 			Enable: cfg.AnixOps.Enable, Binary: cfg.AnixOps.Binary, Dir: cfg.AnixOps.Dir, RuntimeDir: cfg.AnixOps.RuntimeDir,
 			ManualLinkCertificates: cfg.AnixOps.ManualLinkCertificates,

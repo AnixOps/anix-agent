@@ -10,7 +10,6 @@ import (
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
 	"github.com/AnixOps/anix-control/sdk/forward/driver"
 	"github.com/AnixOps/anix-control/sdk/forward/driver/anixops"
-	"github.com/AnixOps/anix-control/sdk/forward/driver/gost"
 	"github.com/AnixOps/anix-control/sdk/forward/driver/nftables"
 	"github.com/AnixOps/anix-control/sdk/forward/leastconn"
 	log "github.com/sirupsen/logrus"
@@ -46,27 +45,16 @@ type NftablesSettings struct {
 	MSSClampInterfaces []string
 }
 
-// GostSettings configure the gost driver (H20): the pinned gost the
-// Agent's package ships, run as anixops-gost.service.
+// GostSettings locate the gost the Agent ran before gost was removed (the
+// network model replaced it): RetireGost stops its unit and clears its
+// directory.
 type GostSettings struct {
-	Disable bool
-	// Binary is gost; empty is gost.DefaultBinary.
-	Binary string
-	// SS and Systemctl are the binaries; empty runs them from PATH.
-	SS, Systemctl string
-	// Unit is the systemd unit; empty is anixops-gost.service.
+	// Dir is gost's directory; empty is DefaultGostDir.
+	Dir string
+	// Unit is gost's systemd unit; empty is DefaultGostUnit.
 	Unit string
-	// Dir and RuntimeDir default to gost.DefaultDir and
-	// gost.DefaultRuntimeDir.
-	Dir, RuntimeDir string
-	// LinkCert, LinkKey and LinkCA are the node's forward link certificate,
-	// its key and the link CA, readable by gost (H28). Empty uses the
-	// defaults under Dir/tls; while the files are missing gost carries RAW
-	// links only.
-	LinkCert, LinkKey, LinkCA string
-	// ManualLinkCertificates leaves the link files to the operator: the
-	// Agent does not ask Control for them (H28).
-	ManualLinkCertificates bool
+	// Systemctl is the binary; empty runs it from PATH.
+	Systemctl string
 }
 
 // AnixOpsSettings configure the experimental anixops driver (H22): the
@@ -107,13 +95,12 @@ type Drivers struct {
 	Retired          *Retired
 	Sources          map[forwardv1.Engine]leastconn.Source
 	LinkCertificates bool
-	// Links keeps the drivers' link certificate from Control (H28): the
-	// gost driver's directory first, the anixops relay's as a mirror of it
-	// (or on its own on a node without gost); nil when neither wants it.
+	// Links keeps the drivers' link certificate from Control (H28) in the
+	// anixops relay's directory; nil when it does not want it.
 	Links *LinkOptions
 }
 
-// BuildDrivers probes the host once (nftables.Probe, gost.Probe), at start,
+// BuildDrivers probes the host once (nftables.Probe, anixops.Probe), at start,
 // and registers each engine the host can run. An engine it cannot run is
 // listed in Unavailable with the reason, so Control knows before planning.
 // The probes change nothing on the host.
@@ -167,74 +154,8 @@ func BuildDrivers(ctx context.Context, settings Settings) (*Drivers, error) {
 		}
 	}
 
-	if settings.Gost.Disable {
-		unavailable(forwardv1.Engine_ENGINE_GOST, "disabled in the Agent configuration")
-	} else {
-		runner := gost.ExecRunner{Gost: settings.Gost.Binary, SS: settings.Gost.SS, Systemctl: settings.Gost.Systemctl}
-		if runner.Gost == "" {
-			runner.Gost = gost.DefaultBinary
-		}
-		sup := gost.SystemdSupervisor{Runner: runner, Unit: settings.Gost.Unit}
-		base := gost.DefaultConfig()
-		if settings.Gost.Dir != "" {
-			base.Dir = settings.Gost.Dir
-			base.LinkCert, base.LinkKey, base.LinkCA = base.Dir+"/tls/link.crt", base.Dir+"/tls/link.key", base.Dir+"/tls/link-ca.crt"
-		}
-		if settings.Gost.RuntimeDir != "" {
-			base.RuntimeDir = settings.Gost.RuntimeDir
-		}
-		if settings.Gost.LinkCert != "" || settings.Gost.LinkKey != "" || settings.Gost.LinkCA != "" {
-			base.LinkCert, base.LinkKey, base.LinkCA = settings.Gost.LinkCert, settings.Gost.LinkKey, settings.Gost.LinkCA
-		}
-		cfg, rep, err := gost.Probe(ctx, runner, sup, base)
-		if err != nil {
-			return nil, fmt.Errorf("forward: probe gost: %w", err)
-		}
-		if rep != nil {
-			logReport(forwardv1.Engine_ENGINE_GOST, rep.Missing, rep.Warnings)
-		}
-		if cfg.Version == "" {
-			unavailable(forwardv1.Engine_ENGINE_GOST, cfg.Unavailable)
-		} else {
-			// The probe drops the link paths while the files are missing;
-			// the component switches them on once the link certificate
-			// arrives (H28).
-			withLinks := cfg
-			withLinks.LinkCert, withLinks.LinkKey, withLinks.LinkCA = base.LinkCert, base.LinkKey, base.LinkCA
-			withoutLinks := cfg
-			withoutLinks.LinkCert, withoutLinks.LinkKey, withoutLinks.LinkCA = "", "", ""
-			build := func(links bool) (*gost.Driver, error) {
-				c := withoutLinks
-				if links {
-					c = withLinks
-				}
-				return gost.New(c, gost.WithRunner(runner), gost.WithSupervisor(sup), gost.WithRetiredCounters(out.Retired.Add))
-			}
-			d, err := newGostDriver(cfg.LinkCert != "", build)
-			if err != nil {
-				return nil, fmt.Errorf("forward: gost driver: %w", err)
-			}
-			if err := out.Registry.Register(d); err != nil {
-				return nil, err
-			}
-			if !settings.Gost.ManualLinkCertificates && base.LinkCert != "" {
-				consumers = append(consumers, linkConsumer{
-					dir:        filepath.Dir(base.LinkCert),
-					group:      gost.DefaultUser,
-					enabled:    cfg.LinkCert != "",
-					setEnabled: d.setLinks,
-					reload: func(ctx context.Context) error {
-						st, err := sup.Status(ctx)
-						if err != nil || !st.Running {
-							// gost reads the files when it starts.
-							return err
-						}
-						return sup.Reload(ctx)
-					},
-				})
-			}
-		}
-	}
+	RetireGost(ctx, settings.Gost)
+	unavailable(forwardv1.Engine_ENGINE_GOST, "removed: gost routes run on the network model")
 
 	if !settings.AnixOps.Enable {
 		unavailable(forwardv1.Engine_ENGINE_ANIXOPS, "experimental: not enabled in the Agent configuration (Forward.AnixOps.Enable)")
@@ -300,8 +221,8 @@ func BuildDrivers(ctx context.Context, settings Settings) (*Drivers, error) {
 		}
 	}
 
-	// The first consumer keeps the link certificate (gost's directory when
-	// gost wants it); the others get a copy of every file.
+	// The first consumer keeps the link certificate; the others get a copy
+	// of every file.
 	if len(consumers) > 0 {
 		first := consumers[0]
 		out.LinkCertificates = first.enabled

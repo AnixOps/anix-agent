@@ -159,7 +159,7 @@ VERSION_FILE="${INSTALL_DIR}/.release-version"
 mkdir -p "${install_fixture}" "${tmp_dir}"
 printf '#!/bin/sh\nexit 0\n' >"${install_fixture}/anix-agent"
 chmod 0755 "${install_fixture}/anix-agent"
-printf '%s\n' pinned-gost >"${install_fixture}/gost"
+printf '%s\n' stale-gost >"${install_fixture}/gost"
 printf '%s\n' production-template >"${install_fixture}/config.production.json"
 printf '%s\n' development-template >"${install_fixture}/config.json"
 touch "${test_root}/release-fixture.zip"
@@ -180,9 +180,21 @@ install_files "${test_root}/release-fixture.zip" "v9.9.9"
 [[ "$(cat "${CONFIG_DIR}/config.json")" == "production-template" ]]
 [[ "$(stat -c '%a' "${CONFIG_DIR}/config.json")" == "600" ]]
 [[ "$(cat "${VERSION_FILE}")" == "v9.9.9" ]]
-# The pinned gost of the release (H20) goes where anixops-gost.service runs it.
-[[ "$(cat "${GOST_BINARY}")" == "pinned-gost" ]]
-[[ "$(stat -c '%a' "${GOST_BINARY}")" == "755" ]]
+# gost was removed: a gost in an older package is not installed.
+[[ ! -e "${GOST_BINARY}" ]]
+
+# retire_gost removes what an earlier install set up for gost.
+GOST_DIR="${test_root}/var/lib/anixops-gost"
+mkdir -p "${SYSTEMD_UNIT_DIR}" "${GOST_DIR}/tls" "$(dirname "${GOST_BINARY}")"
+printf '[Service]\n' >"${SYSTEMD_UNIT_DIR}/anixops-gost.service"
+printf '{}\n' >"${GOST_DIR}/gost.json"
+printf '%s\n' old-gost >"${GOST_BINARY}"
+systemctl() { :; }
+userdel() { :; }
+groupdel() { :; }
+retire_gost >/dev/null
+[[ ! -e "${SYSTEMD_UNIT_DIR}/anixops-gost.service" && ! -e "${GOST_DIR}" && ! -e "${GOST_BINARY}" ]]
+unset -f systemctl userdel groupdel
 
 # A node installed by Control's O1 installer (user anixops-agent, sandboxed)
 # is never switched back to the root layout.

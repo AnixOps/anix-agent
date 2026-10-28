@@ -15,8 +15,7 @@ func TestProxyNodeDiagnosticsRunOnEveryProxyNode(t *testing.T) {
 	assert.Nil(t, plain.Forward, "a node that does not forward runs no forward check")
 
 	forwarding := proxyNodeDiagnostics(&forward.Component{})
-	assert.Equal(t, map[string]string{"anix-agent": "anix-agent.service", "gost": forward.DefaultGostUnit}, forwarding.Units)
+	assert.Equal(t, map[string]string{"anix-agent": "anix-agent.service"}, forwarding.Units)
 	assert.Equal(t, diagnostic.AgentService, forwarding.Self)
 	assert.NotNil(t, forwarding.Forward)
-	assert.Contains(t, forwarding.NoRestart, "gost", "the forward component keeps managing gost")
 }
