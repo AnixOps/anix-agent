@@ -390,23 +390,23 @@ func TestSupervisorMaterializesAndRotatesPrivateSecretFiles(t *testing.T) {
 	root := t.TempDir()
 	supervisor, err := NewSupervisor(Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
 	require.NoError(t, err)
-	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("secret-runtime"), "gost-mesh", "1.0.0"))
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("secret-runtime"), "mesh-demo", "1.0.0"))
 	require.NoError(t, err)
 
 	firstReference := "secret://mesh-edge@1/client.key"
 	firstConfig := []byte(`{"tls":{"key_file":"` + firstReference + `"}}`)
 	_, err = supervisor.Handle(context.Background(), "plugin.configure", testSecretEnvelope(
-		"configure-secret-v1", "gost-mesh", "1.0.0", 1, firstConfig, map[string]string{firstReference: "private-key-v1"},
+		"configure-secret-v1", "mesh-demo", "1.0.0", 1, firstConfig, map[string]string{firstReference: "private-key-v1"},
 	))
 	require.NoError(t, err)
-	firstPath := filepath.Join(root, "gost-mesh", "1.0.0", "private", "secrets", "mesh-edge", "1", "client.key")
+	firstPath := filepath.Join(root, "mesh-demo", "1.0.0", "private", "secrets", "mesh-edge", "1", "client.key")
 	contents, err := os.ReadFile(firstPath)
 	require.NoError(t, err)
 	require.Equal(t, "private-key-v1", string(contents))
 	info, err := os.Stat(firstPath)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	runtimeConfig, err := os.ReadFile(filepath.Join(root, "gost-mesh", "1.0.0", "config.json"))
+	runtimeConfig, err := os.ReadFile(filepath.Join(root, "mesh-demo", "1.0.0", "config.json"))
 	require.NoError(t, err)
 	require.JSONEq(t, `{"tls":{"key_file":"`+firstPath+`"}}`, string(runtimeConfig))
 	require.NotContains(t, string(runtimeConfig), "private-key-v1")
@@ -414,12 +414,12 @@ func TestSupervisorMaterializesAndRotatesPrivateSecretFiles(t *testing.T) {
 	secondReference := "secret://mesh-edge@2/client.key"
 	secondConfig := []byte(`{"tls":{"key_file":"` + secondReference + `"}}`)
 	_, err = supervisor.Handle(context.Background(), "plugin.configure", testSecretEnvelope(
-		"configure-secret-v2", "gost-mesh", "1.0.0", 2, secondConfig, map[string]string{secondReference: "private-key-v2"},
+		"configure-secret-v2", "mesh-demo", "1.0.0", 2, secondConfig, map[string]string{secondReference: "private-key-v2"},
 	))
 	require.NoError(t, err)
 	_, err = os.Stat(firstPath)
 	require.ErrorIs(t, err, os.ErrNotExist)
-	secondPath := filepath.Join(root, "gost-mesh", "1.0.0", "private", "secrets", "mesh-edge", "2", "client.key")
+	secondPath := filepath.Join(root, "mesh-demo", "1.0.0", "private", "secrets", "mesh-edge", "2", "client.key")
 	contents, err = os.ReadFile(secondPath)
 	require.NoError(t, err)
 	require.Equal(t, "private-key-v2", string(contents))
@@ -434,7 +434,7 @@ func TestSupervisorMaterializesAndRotatesPrivateSecretFiles(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stateBytes, &persisted))
 	require.Equal(t, []SecretMaterialAudit{{Reference: secondReference, SHA256: hex.EncodeToString(secondDigest[:])}}, persisted.Journal["configure-secret-v2"].SecretMaterials)
 
-	replayed := testSecretEnvelope("configure-secret-v2", "gost-mesh", "1.0.0", 2, secondConfig, map[string]string{secondReference: "changed-private-key"})
+	replayed := testSecretEnvelope("configure-secret-v2", "mesh-demo", "1.0.0", 2, secondConfig, map[string]string{secondReference: "changed-private-key"})
 	_, err = supervisor.Handle(context.Background(), "plugin.configure", replayed)
 	require.ErrorContains(t, err, "operation_id is already bound")
 }
@@ -446,28 +446,28 @@ func TestSupervisorSecretConfigureFailureRestoresConfigAndRemovesNewMaterial(t *
 	runner := &configRecordingRunner{}
 	supervisor, err := NewSupervisor(Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: failingHealth{err: errors.New("injected health failure")}})
 	require.NoError(t, err)
-	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("secret-rollback"), "gost-mesh", "1.0.0"))
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("secret-rollback"), "mesh-demo", "1.0.0"))
 	require.NoError(t, err)
 	oldConfig := []byte(`{"mode":"old"}`)
-	_, err = supervisor.Handle(context.Background(), "plugin.configure", testEnvelope("configure-old-secret-test", "gost-mesh", "1.0.0", 1, oldConfig))
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", testEnvelope("configure-old-secret-test", "mesh-demo", "1.0.0", 1, oldConfig))
 	require.NoError(t, err)
 	// Enable must fail with this health checker, so swap in a healthy checker
 	// for the existing process and then fail only the replacement start.
 	supervisor.health = &fakeHealth{}
-	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-old-secret-test", "gost-mesh", "1.0.0", 2, nil))
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-old-secret-test", "mesh-demo", "1.0.0", 2, nil))
 	require.NoError(t, err)
 	supervisor.health = failingHealth{err: errors.New("injected health failure")}
 
 	reference := "secret://mesh-edge@3/client.key"
 	newConfig := []byte(`{"tls":{"key_file":"` + reference + `"}}`)
 	_, err = supervisor.Handle(context.Background(), "plugin.configure", testSecretEnvelope(
-		"configure-failing-secret", "gost-mesh", "1.0.0", 3, newConfig, map[string]string{reference: "new-private-key"},
+		"configure-failing-secret", "mesh-demo", "1.0.0", 3, newConfig, map[string]string{reference: "new-private-key"},
 	))
 	require.ErrorContains(t, err, "injected health failure")
-	stored, readErr := os.ReadFile(filepath.Join(root, "gost-mesh", "1.0.0", "config.json"))
+	stored, readErr := os.ReadFile(filepath.Join(root, "mesh-demo", "1.0.0", "config.json"))
 	require.NoError(t, readErr)
 	require.Equal(t, oldConfig, stored)
-	secretPath := filepath.Join(root, "gost-mesh", "1.0.0", "private", "secrets", "mesh-edge", "3", "client.key")
+	secretPath := filepath.Join(root, "mesh-demo", "1.0.0", "private", "secrets", "mesh-edge", "3", "client.key")
 	_, statErr := os.Stat(secretPath)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
@@ -581,14 +581,14 @@ func TestSupervisorRejectsTamperedArtifactAndInlineSecret(t *testing.T) {
 	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}})
 	require.NoError(t, err)
 
-	request := signedRequest(t, privateKey, []byte("expected"), "gost-mesh", "1.0.0")
+	request := signedRequest(t, privateKey, []byte("expected"), "mesh-demo", "1.0.0")
 	request.Artifact = []byte("tampered")
 	_, err = supervisor.Install(context.Background(), request)
 	require.ErrorContains(t, err, "hash mismatch")
 
-	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("expected"), "gost-mesh", "1.0.0"))
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("expected"), "mesh-demo", "1.0.0"))
 	require.NoError(t, err)
-	_, err = supervisor.Handle(context.Background(), "plugin.configure", testEnvelope("configure-secret", "gost-mesh", "1.0.0", 1, []byte(`{"apiKey":"inline-secret"}`)))
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", testEnvelope("configure-secret", "mesh-demo", "1.0.0", 1, []byte(`{"apiKey":"inline-secret"}`)))
 	require.ErrorContains(t, err, "reference secrets")
 }
 
@@ -983,10 +983,10 @@ func TestManifestSharedNegativeFixtures(t *testing.T) {
 
 func TestManifestContractValidation(t *testing.T) {
 	base := Manifest{
-		ID: "gost-mesh", Name: "GOST Mesh", Version: "1.0.0", APIVersion: pluginAPIVersion,
+		ID: "mesh-demo", Name: "Mesh Demo", Version: "1.0.0", APIVersion: pluginAPIVersion,
 		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{"linux/amd64"},
 		ArtifactSHA256: strings.Repeat("a", sha256.Size*2), Dependencies: []string{"machine-telemetry"},
-		Conflicts: []string{"legacy-gost"}, Entrypoints: map[string]string{"health": "bin/health"},
+		Conflicts: []string{"legacy-mesh"}, Entrypoints: map[string]string{"health": "bin/health"},
 	}
 	require.NoError(t, base.validateForRuntime("linux", "amd64"))
 
@@ -999,7 +999,7 @@ func TestManifestContractValidation(t *testing.T) {
 		{name: "unsafe version", mutate: func(m *Manifest) { m.Version = "../1.0.0" }, wantErr: "safe path"},
 		{name: "wrong architecture", mutate: func(m *Manifest) { m.Architectures = []string{"windows/amd64"} }, wantErr: "does not support"},
 		{name: "duplicate architecture", mutate: func(m *Manifest) { m.Architectures = []string{"amd64", "amd64"} }, wantErr: "duplicate"},
-		{name: "self dependency", mutate: func(m *Manifest) { m.Dependencies = []string{"gost-mesh"} }, wantErr: "depend on itself"},
+		{name: "self dependency", mutate: func(m *Manifest) { m.Dependencies = []string{"mesh-demo"} }, wantErr: "depend on itself"},
 		{name: "duplicate dependency", mutate: func(m *Manifest) { m.Dependencies = []string{"wireguard", "wireguard"} }, wantErr: "duplicate"},
 		{name: "dependency conflict overlap", mutate: func(m *Manifest) { m.Dependencies, m.Conflicts = []string{"wireguard"}, []string{"wireguard"} }, wantErr: "both a dependency"},
 		{name: "entrypoint traversal", mutate: func(m *Manifest) { m.Entrypoints = map[string]string{"health": "../bin/health"} }, wantErr: "relative path"},
@@ -1230,15 +1230,15 @@ func TestUpdateFailureAutomaticallyRestoresOldVersion(t *testing.T) {
 	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
-	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("one"), "gost-mesh", "1.0.0"))
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("one"), "mesh-demo", "1.0.0"))
 	require.NoError(t, err)
-	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-old", "gost-mesh", "1.0.0", 1, []byte(`{}`)))
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-old", "mesh-demo", "1.0.0", 1, []byte(`{}`)))
 	require.NoError(t, err)
-	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("two"), "gost-mesh", "2.0.0"))
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("two"), "mesh-demo", "2.0.0"))
 	require.NoError(t, err)
-	_, err = supervisor.Handle(context.Background(), "plugin.update", testEnvelope("update-fail", "gost-mesh", "2.0.0", 2, []byte(`{}`)))
+	_, err = supervisor.Handle(context.Background(), "plugin.update", testEnvelope("update-fail", "mesh-demo", "2.0.0", 2, []byte(`{}`)))
 	require.ErrorContains(t, err, "injected start failure")
-	stateJSON, inspectErr := supervisor.inspect("gost-mesh")
+	stateJSON, inspectErr := supervisor.inspect("mesh-demo")
 	require.NoError(t, inspectErr)
 	require.Contains(t, string(stateJSON), `"desired_version":"1.0.0"`)
 	require.Contains(t, string(stateJSON), `"enabled":true`)

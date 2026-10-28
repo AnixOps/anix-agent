@@ -31,7 +31,6 @@ jobs:
           bash -n scripts/test_manager_uninstall.sh
           bash -n plugin/nftablesforward/namespace_acceptance.sh
           bash -n plugin/nategress/namespace_acceptance.sh
-          bash -n plugin/gostmesh/namespace_acceptance.sh
           bash scripts/install.sh --help >/dev/null
           bash scripts/anix-agent.sh --help >/dev/null
           bash scripts/V2bX.sh --help >/dev/null

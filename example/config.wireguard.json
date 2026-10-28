@@ -10,11 +10,7 @@
       "WGPath": "wg",
       "IPPath": "ip",
       "TCPath": "tc",
-      "IPTablesPath": "iptables",
-      "SysctlPath": "sysctl",
-      "GostPath": "gost",
-      "OnlineHandshakeTimeoutSeconds": 180,
-      "GostRestartDelaySeconds": 3
+      "OnlineHandshakeTimeoutSeconds": 180
     }
   ],
   "Nodes": [
