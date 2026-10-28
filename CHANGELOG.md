@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 5.0.0-rc.11 - 2026-10-28
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.11 (Control rc.9 and rc.10 kept
+Agent rc.8). The Agent runs the device network model on anixcore (ANX relay lines, port
+forwards with their policy, egress policy routing) and no longer carries gost: the gost forward
+engine, gost-mesh and the WireGuard gost relay are gone, and an upgrade removes the old gost
+units. Upgrade the Agent before Control.
+
 ### Added
 
 - **anixcore first when installed.** Release builds now compile in the anixcore core. A node whose

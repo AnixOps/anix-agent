@@ -333,7 +333,7 @@ upgrade such a node by running its install command from Control again.
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
 
 ```bash
-export VERSION=v5.0.0-rc.8
+export VERSION=v5.0.0-rc.11
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -382,7 +382,7 @@ the wizard reports success. Never paste API keys into public logs or support tic
 Install an exact stable or prerelease tag with the same command:
 
 ```bash
-sudo anix-agent update v5.0.0-rc.8
+sudo anix-agent update v5.0.0-rc.11
 sudo anix-agent status
 ```
 

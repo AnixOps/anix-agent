@@ -25,10 +25,13 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 5.0.0-rc.8 范围
+## 5.0.0-rc.11 范围
 
-`v5.0.0-rc.8` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
-5.0.0-rc.8 使用同一版本号（H25），是 5.0 的第八个候选版本。相对 rc.7：anixcore 内核承载 Panabit iWAN
+`v5.0.0-rc.11` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+5.0.0-rc.11 使用同一版本号（H25）。相对 rc.8：Agent 在 anixcore 上运行设备网络模型（`network.v1`：
+ANX 中转线路、端口转发及其策略、出口策略路由），不再带 gost（转发引擎、gost-mesh 与 WireGuard gost
+中转均已移除，升级时自动清理旧的 gost 单元）；装有 anixcore 时优先用它承载节点，不支持的节点逐个回落到
+Xray/sing-box。rc.8 起 anixcore 内核承载 Panabit iWAN
 节点（`iwan` 入站，UDP 三层隧道）。rc.7 起节点上探测 REALITY 目标站
 （`reality.probe`，含一次真实 REALITY 握手），供 Control 排名、推荐和自动切换目标站；anixcore 内核
 执行域名出口分流；出口中转入站不再报限速器错误。rc.6 起 Xray 内核执行 Control 下发的域名出口分流
@@ -60,7 +63,7 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.8 发布范围）
+## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.11 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward` 与 `nat-egress` 独立进程（`gost-mesh` 已随 gost 一起删除）。
@@ -128,7 +131,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v5.0.0-rc.8
+export VERSION=v5.0.0-rc.11
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
