@@ -54,6 +54,10 @@
 //     health.interval_ms (5 s) with timeout_ms (2 s); failure_threshold (3)
 //     failures open the breaker for open_ms (30 s), then one trial; a hop
 //     never loses its last upstream (H21);
+//   - vantage probes (L4, vantage.go): the entry addresses of other routes
+//     the state names (vantage_probes), global unicast only, dialled every
+//     interval_ms (30 s); judged after 3 dials in a row and reported for
+//     Control's entry HA;
 //   - reconcile, every DefaultReconcileInterval (5 s) and after an apply or
 //     a breaker change: Observe every driver, EnforceQuotas (gost's soft
 //     quota) and assert the health selection through SetUpstreams where

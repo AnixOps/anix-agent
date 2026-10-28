@@ -145,6 +145,8 @@ type Component struct {
 	selection map[driver.HopKey][]driver.Upstream
 	rotation  map[driver.HopKey][]driver.Upstream
 	logged    map[string]string
+	// Vantage probes (vantage.go): per probe, its hysteresis.
+	vantage map[vantageKey]*vantageState
 
 	reportWake    chan struct{}
 	reconcileWake chan struct{}
@@ -202,6 +204,7 @@ func New(opts Options) (*Component, error) {
 		opts: opts, nodeRef: nodeRef, store: store,
 		logger:    log.WithFields(log.Fields{"component": "forward", "node": nodeRef}),
 		health:    map[upstreamKey]*upstreamState{},
+		vantage:   map[vantageKey]*vantageState{},
 		selection: map[driver.HopKey][]driver.Upstream{},
 		rotation:  map[driver.HopKey][]driver.Upstream{},
 		logged:    map[string]string{},

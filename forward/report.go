@@ -105,7 +105,7 @@ func encodeReport(report *forwardv1.NodeForwardReport) (*agentv1pb.PackageReport
 		return message, nil
 	}
 	trimmed := proto.Clone(report).(*forwardv1.NodeForwardReport)
-	trimmed.Health = nil
+	trimmed.Health, trimmed.Vantage = nil, nil
 	if message, err2 := wire.Report(trimmed); err2 == nil {
 		return message, nil
 	}
@@ -208,5 +208,6 @@ func (c *Component) Report(ctx context.Context) *forwardv1.NodeForwardReport {
 		}
 	}
 	report.Health = health
+	report.Vantage = c.vantageResults()
 	return report
 }
