@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"syscall"
 
+	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
@@ -137,6 +138,16 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 				return nil
 			}
 		}
+	}
+
+	// ANX-Line host support (fake-TCP RST rules, MPTCP path switching).
+	if c.AnxLine.Enabled() {
+		anxLine, err := anxline.Start(*c.AnxLine, anxline.Options{})
+		if err != nil {
+			log.WithField("err", err).Error("Start ANX-Line host support failed")
+			return fmt.Errorf("start ANX-Line host support: %w", err)
+		}
+		defer anxLine.Close()
 	}
 
 	vc, err := vCore.NewForConfig(c.CoresConfig, len(c.NodeConfig))

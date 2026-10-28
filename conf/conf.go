@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/common/json5"
 
 	"encoding/json/v2"
@@ -17,6 +18,9 @@ type Conf struct {
 	NodeConfig  []NodeConfig `json:"Nodes"`
 	// Forward turns on the forward component (forward.go).
 	Forward *ForwardConfig `json:"Forward"`
+	// AnxLine is the host side of ANX-Line links: fake-TCP RST rules and
+	// MPTCP path switching (anxline).
+	AnxLine *anxline.Config `json:"AnxLine"`
 }
 
 func New() *Conf {
@@ -56,6 +60,9 @@ func (p *Conf) LoadFromPath(filePath string) error {
 		return err
 	}
 	if err = p.Forward.Validate(); err != nil {
+		return err
+	}
+	if err = p.AnxLine.Validate(); err != nil {
 		return err
 	}
 	if err = p.ValidateForProduction(); err != nil {
