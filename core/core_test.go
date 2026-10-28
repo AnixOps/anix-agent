@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -13,11 +14,15 @@ type fakeCore struct {
 	kind      string
 	protocols []string
 	nodes     []string
+	refuse    error
 }
 
 func (f *fakeCore) Start() error { return nil }
 func (f *fakeCore) Close() error { return nil }
 func (f *fakeCore) AddNode(tag string, _ *panel.NodeInfo, _ *conf.Options) error {
+	if f.refuse != nil {
+		return f.refuse
+	}
 	f.nodes = append(f.nodes, tag)
 	return nil
 }
@@ -134,4 +139,42 @@ func TestSelectorAppliesEgressOnTheFirstCoreThatRunsIt(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, onlySing.(EgressApplier).ApplyEgress(nil), "nothing to run")
 	require.ErrorIs(t, onlySing.(EgressApplier).ApplyEgress(config), ErrEgressUnsupported)
+}
+
+func TestDefaultCoresPutAnInstalledAnixcoreFirst(t *testing.T) {
+	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"vless", "iwan"}}
+	xray := &fakeCore{kind: "xray", protocols: []string{"vless"}}
+	sing := &fakeCore{kind: "sing", protocols: []string{"vless", "hysteria"}}
+	withCores(t, map[string]*fakeCore{"anixcore": anixcore, "xray": xray, "sing": sing})
+	installed := anixcoreInstalled
+	t.Cleanup(func() { anixcoreInstalled = installed })
+
+	order := func() []string {
+		defaults, err := DefaultCoreConfigs()
+		require.NoError(t, err)
+		var types []string
+		for _, config := range defaults {
+			types = append(types, config.Type)
+		}
+		return types
+	}
+	anixcoreInstalled = func() bool { return true }
+	require.Equal(t, []string{"anixcore", "xray", "sing"}, order())
+	anixcoreInstalled = func() bool { return false }
+	require.Equal(t, []string{"xray", "sing"}, order(), "an anixcore without its binary is left out")
+}
+
+func TestSelectorHandsARefusedNodeToTheNextCore(t *testing.T) {
+	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"hysteria2"}, refuse: errors.New("port hopping is not supported")}
+	sing := &fakeCore{kind: "sing", protocols: []string{"hysteria2"}}
+	withCores(t, map[string]*fakeCore{"anixcore": anixcore, "sing": sing})
+	selector, err := NewSelector([]conf.CoreConfig{{Type: "anixcore"}, {Type: "sing"}})
+	require.NoError(t, err)
+	require.NoError(t, selector.AddNode("h", &panel.NodeInfo{Type: "hysteria2"}, &conf.Options{RawOptions: []byte(`{}`)}))
+	require.Equal(t, []string{"h"}, sing.nodes)
+
+	sing.refuse = errors.New("bad")
+	err = selector.AddNode("x", &panel.NodeInfo{Type: "hysteria2"}, &conf.Options{RawOptions: []byte(`{}`)})
+	require.ErrorContains(t, err, "port hopping")
+	require.ErrorContains(t, err, "bad")
 }

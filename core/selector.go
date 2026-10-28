@@ -10,6 +10,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
+	log "github.com/sirupsen/logrus"
 )
 
 // ErrNodeNotFound is answered for a tag the core does not run. A caller
@@ -81,6 +82,9 @@ func isSupported(protocol string, protocols []string) bool {
 }
 
 func (s *Selector) AddNode(tag string, info *panel.NodeInfo, option *conf.Options) error {
+	if len(option.CoreName) == 0 && len(option.Core) == 0 {
+		return s.addByProtocol(tag, info, option)
+	}
 	var core Core
 	if len(option.CoreName) > 0 {
 		// use name to select core
@@ -88,30 +92,15 @@ func (s *Selector) AddNode(tag string, info *panel.NodeInfo, option *conf.Option
 			core = c
 		}
 	} else {
-		// use type to select core: the first in configuration order
 		for _, key := range s.order {
-			c := s.cores[key]
-			if len(option.Core) == 0 {
-				if !isSupported(info.Type, c.Protocols()) {
-					continue
-				}
-			} else if option.Core != c.Type() {
-				continue
+			if c := s.cores[key]; option.Core == c.Type() {
+				core = c
+				break
 			}
-			core = c
-			break
 		}
 	}
 	if core == nil {
 		return errors.New("the node type is not support")
-	}
-	if len(option.Core) == 0 {
-		option.Core = core.Type()
-		err := option.UnmarshalJSON(option.RawOptions)
-		if err != nil {
-			return fmt.Errorf("unmarshal option error: %s", err)
-		}
-		option.RawOptions = nil
 	}
 	err := core.AddNode(tag, info, option)
 	if err != nil {
@@ -119,6 +108,36 @@ func (s *Selector) AddNode(tag string, info *panel.NodeInfo, option *conf.Option
 	}
 	s.nodes.Store(tag, core)
 	return nil
+}
+
+// addByProtocol runs the node on the first core in configuration order that
+// serves its protocol. A core that refuses the node (anixcore, for a setting
+// it does not have yet) hands it to the next one.
+func (s *Selector) addByProtocol(tag string, info *panel.NodeInfo, option *conf.Options) error {
+	raw := option.RawOptions
+	var refused error
+	for _, key := range s.order {
+		core := s.cores[key]
+		if !isSupported(info.Type, core.Protocols()) {
+			continue
+		}
+		option.Core = core.Type()
+		if err := option.UnmarshalJSON(raw); err != nil {
+			return fmt.Errorf("unmarshal option error: %s", err)
+		}
+		option.RawOptions = nil
+		err := core.AddNode(tag, info, option)
+		if err == nil {
+			s.nodes.Store(tag, core)
+			return nil
+		}
+		refused = errors.Join(refused, fmt.Errorf("%s: %w", core.Type(), err))
+		log.WithFields(log.Fields{"tag": tag, "core": core.Type()}).WithError(err).Warn("core refused the node; trying the next core that serves its protocol")
+	}
+	if refused != nil {
+		return refused
+	}
+	return errors.New("the node type is not support")
 }
 
 func (s *Selector) DelNode(tag string) error {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
+	"slices"
 	"sort"
 
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -43,7 +45,16 @@ func RegisteredCore() []string {
 
 // defaultCorePreference orders the compiled-in cores of a configuration
 // that lists none: a protocol more than one core serves runs on the first.
-var defaultCorePreference = []string{"xray", "sing", "hysteria2", "wireguard"}
+// anixcore, our own kernel, comes first once its binary is installed
+// (anixcoreInstalled); until then it is left out.
+var defaultCorePreference = []string{"anixcore", "xray", "sing", "hysteria2", "wireguard"}
+
+// anixcoreInstalled reports whether the anixcore binary of the default
+// configuration can be found.
+var anixcoreInstalled = func() bool {
+	_, err := exec.LookPath(conf.NewAnixcoreConfig().BinaryPath)
+	return err == nil
+}
 
 // DefaultCoreConfigs are the cores of a node whose configuration comes from
 // Control's stream (the O1 installer writes "Cores": []): every compiled-in
@@ -51,13 +62,19 @@ var defaultCorePreference = []string{"xray", "sing", "hysteria2", "wireguard"}
 // the stream's configuration runs on the core that serves its protocol.
 func DefaultCoreConfigs() ([]conf.CoreConfig, error) {
 	names := RegisteredCore()
+	preference := defaultCorePreference
+	if !anixcoreInstalled() {
+		// A compiled-in anixcore without its binary would fail to start.
+		preference = preference[1:]
+		names = slices.DeleteFunc(names, func(name string) bool { return name == "anixcore" })
+	}
 	rank := func(name string) int {
-		for i, preferred := range defaultCorePreference {
+		for i, preferred := range preference {
 			if preferred == name {
 				return i
 			}
 		}
-		return len(defaultCorePreference)
+		return len(preference)
 	}
 	sort.Slice(names, func(i, j int) bool {
 		if rank(names[i]) != rank(names[j]) {
