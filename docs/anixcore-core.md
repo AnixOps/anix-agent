@@ -37,6 +37,15 @@ anixcore 是外部程序，节点上没有安装时不应影响其他内核。
   `RestartDelaySeconds` 重启，并重新下发全部节点和用户。
 - 同时设置 `ApiAddress` 和 `ApiToken` 时不启动进程，直接连接已在运行的 anixcore
   （例如由 systemd 管理）。
+- `"AnxLine": true` 表示 `BinaryPath` 是 anx-node（anx 仓库的入口节点程序，配置与
+  anixcore 同构）。内核随后列出 `anx_line` 传输，网络模型计划里本设备拨号（dial）的
+  anx_line 传输会变成 anx-node 的 ANX-Line 链路：在下发计划之前用 ANX-Line 管理 API
+  `AddLinks` 加入，链路 id 等于传输 id，路径经 `anx-line:<传输 id>` 出站。传输变化时
+  删掉旧链路再加新的，计划里没有了就删除；anx-node 重启后先补回链路，再下发计划。
+  由 Agent 启动时，生成的配置带 `anx_line.mgmt_listen`（`127.0.0.1` 随机端口）；连接
+  自行运行的 anx-node（`ApiAddress`）时，必须用 `AnxLineApiAddress` 给出它的
+  `anx_line.mgmt_listen`。接收（accept）端由 Agent 自己拉起 anx-server，见
+  CHANGELOG。
 
 ## 节点映射
 

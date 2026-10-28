@@ -122,9 +122,15 @@ func newNetworkComponent(nodeID int, core vCore.Core) *networkComponent {
 	}
 	servers := networkServers()
 	if servers != nil {
-		caps.Kinds = append(caps.Kinds, &networkv1.KindSupport{
-			Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: "agent",
-		})
+		// A kind is listed once: where the core dials anx_line, its entry
+		// names both executors.
+		if kind := lineKind(caps); kind != nil {
+			kind.Executor += ",agent"
+		} else {
+			caps.Kinds = append(caps.Kinds, &networkv1.KindSupport{
+				Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: "agent",
+			})
+		}
 	}
 	return &networkComponent{
 		device: device, applier: applier, caps: caps, routes: routes, servers: servers,
@@ -222,6 +228,9 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	if unsupported := network.Unsupported(plan, c.caps); len(unsupported) > 0 {
 		return fmt.Errorf("network plan: this Agent does not run %s", strings.Join(unsupported, ", "))
 	}
+	if err := c.lineRoles(plan); err != nil {
+		return agentapi.InvalidConfig(fmt.Errorf("network plan: %w", err))
+	}
 	var accepts []anxserver.Accept
 	if c.servers != nil {
 		if accepts, err = anxserver.Accepts(plan); err != nil {
@@ -252,6 +261,44 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	c.report(status)
 	if applyErr != nil {
 		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), applyErr)
+	}
+	return nil
+}
+
+// lineKind answers caps's anx_line transport entry, nil without one.
+func lineKind(caps *networkv1.DeviceCapabilities) *networkv1.KindSupport {
+	for _, kind := range caps.GetKinds() {
+		if kind.GetComponent() == networkv1.Component_COMPONENT_TRANSPORT && kind.GetKind() == network.TransportAnxLine {
+			return kind
+		}
+	}
+	return nil
+}
+
+// lineRoles refuses the anx_line ends this device cannot run: the core
+// dials (anx-node), anx-server accepts, and the capabilities list the kind
+// once for both.
+func (c *networkComponent) lineRoles(plan *networkv1.NetworkPlan) error {
+	coreDials := false
+	for _, kind := range c.applier.NetworkKinds() {
+		if kind.GetComponent() == networkv1.Component_COMPONENT_TRANSPORT && kind.GetKind() == network.TransportAnxLine {
+			coreDials = true
+		}
+	}
+	for _, transport := range plan.GetTransports() {
+		if transport.GetKind() != network.TransportAnxLine {
+			continue
+		}
+		switch transport.GetRole() {
+		case networkv1.TransportRole_TRANSPORT_ROLE_DIAL:
+			if !coreDials {
+				return fmt.Errorf("transport %s: dialing anx_line needs anx-node as the core (AnixcoreConfig.AnxLine)", transport.GetId())
+			}
+		case networkv1.TransportRole_TRANSPORT_ROLE_ACCEPT:
+			if c.servers == nil {
+				return fmt.Errorf("transport %s: accepting anx_line needs anx-server on this host", transport.GetId())
+			}
+		}
 	}
 	return nil
 }
