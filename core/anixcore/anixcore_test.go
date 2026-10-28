@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,7 @@ type fakeAPI struct {
 	calls    []string
 	egress   []map[string]any
 	network  []map[string]any
+	rules    []rulesConfig
 	features []string
 }
 
@@ -55,6 +57,11 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &egress)
 		f.egress = append(f.egress, egress)
 		reply(200, map[string]any{"routes": []int{}, "relays": []any{}})
+	case r.Method == "PUT" && r.URL.Path == "/v1/rules":
+		var rules rulesConfig
+		_ = json.Unmarshal(body, &rules)
+		f.rules = append(f.rules, rules)
+		reply(200, rules)
 	case r.Method == "PUT" && r.URL.Path == "/v1/network":
 		var plan map[string]any
 		_ = json.Unmarshal(body, &plan)
@@ -386,5 +393,75 @@ func TestUserLimitsGoOnlyToKernelsThatTakeThem(t *testing.T) {
 			t.Fatalf("features %v: user = %+v", features, got)
 		}
 		_ = core.Close()
+	}
+}
+
+func TestBlockRulesOfAllNodesGoToKernelsThatTakeThem(t *testing.T) {
+	vmess := func(port int, rules panel.Rules) *panel.NodeInfo {
+		return &panel.NodeInfo{
+			Type:   "vmess",
+			Common: &panel.CommonNode{ServerPort: port},
+			VAllss: &panel.VAllssNode{Network: "tcp"},
+			Rules:  rules,
+		}
+	}
+
+	api, server := newFakeAPI(t)
+	api.features = []string{"block_rules"}
+	core := externalCore(t, server)
+	defer core.Close()
+	if err := core.AddNode("plain", vmess(443, panel.Rules{}), &conf.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.rules) != 0 {
+		t.Fatalf("rules sent without any: %v", api.rules)
+	}
+	a := panel.Rules{Regexp: []string{`(^|\.)example\.test$`, "(bad"}, Protocol: []string{"BitTorrent", "quic"}}
+	if err := core.AddNode("a", vmess(444, a), &conf.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	b := panel.Rules{Regexp: []string{`(^|\.)example\.test$`, "ads"}, Protocol: []string{"bt", "tls"}}
+	if err := core.AddNode("b", vmess(445, b), &conf.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	want := rulesConfig{
+		BlockDomains:   []string{`regexp:(^|\.)example\.test$`, "regexp:ads"},
+		BlockProtocols: []string{"bittorrent", "tls"},
+	}
+	if len(api.rules) != 2 || !reflect.DeepEqual(api.rules[1], want) {
+		t.Fatalf("rules = %+v", api.rules)
+	}
+
+	// A restarted anixcore gets them again.
+	api.mu.Lock()
+	api.inbounds = map[string]map[string]any{}
+	api.mu.Unlock()
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.rules) != 3 || !reflect.DeepEqual(api.rules[2], want) {
+		t.Fatalf("replayed rules = %+v", api.rules)
+	}
+
+	// Removing the nodes with rules clears them.
+	if err := core.DelNode("a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.DelNode("b"); err != nil {
+		t.Fatal(err)
+	}
+	if last := api.rules[len(api.rules)-1]; !last.empty() || last.BlockDomains == nil {
+		t.Fatalf("cleared rules = %+v", last)
+	}
+
+	// An anixcore without block rules is not sent any.
+	old, oldServer := newFakeAPI(t)
+	oldCore := externalCore(t, oldServer)
+	defer oldCore.Close()
+	if err := oldCore.AddNode("a", vmess(444, a), &conf.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(old.rules) != 0 {
+		t.Fatalf("rules sent to an old anixcore: %v", old.rules)
 	}
 }

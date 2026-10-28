@@ -11,6 +11,11 @@
   the matching anixcore transports, and VLESS REALITY may run over `xhttp`. Users carry the
   panel's `speed_limit` (Mbit/s) and `device_limit` to an anixcore whose `GET /v1/status`
   lists the `user_limits` feature; an older anixcore gets users without them.
+- **Panel block routes on anixcore.** The `block` routes of every anixcore node are joined and
+  sent to `PUT /v1/rules` (domain regular expressions as `regexp:` matchers; `bittorrent`/`bt`,
+  `http` and `tls` protocols) when the kernel lists the `block_rules` feature, again after an
+  anixcore restart, and cleared when the nodes go. An expression that does not compile or a
+  protocol anixcore cannot sniff is skipped with a warning (networkcore #141).
 - **Port forward policy.** A port forward's `policy` (balance, TCP health checks, circuit
   breaker, PROXY header v1/v2, `bandwidth_bps`, `max_conns`) and its targets' `weight` and
   `priority` go to the anixcore forward inbound as is (networkcore #139); defaults are left

@@ -69,6 +69,8 @@ type client struct {
 	// userLimits is whether the kernel takes user speed and device limits,
 	// from the features of its last status answer.
 	userLimits atomic.Bool
+	// blockRules is whether the kernel takes block rules (PUT /v1/rules).
+	blockRules atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -130,6 +132,7 @@ func (c *client) status(ctx context.Context) error {
 		return err
 	}
 	c.userLimits.Store(slices.Contains(status.Features, "user_limits"))
+	c.blockRules.Store(slices.Contains(status.Features, "block_rules"))
 	return nil
 }
 
@@ -176,6 +179,10 @@ func (c *client) traffic(ctx context.Context, tag string, reset bool) ([]apiTraf
 		return nil, err
 	}
 	return answer.Traffic, nil
+}
+
+func (c *client) putRules(ctx context.Context, rules rulesConfig) error {
+	return c.do(ctx, http.MethodPut, "/v1/rules", rules, nil)
 }
 
 func (c *client) putEgress(ctx context.Context, config *panel.EgressConfig) error {
