@@ -62,6 +62,17 @@ func rstScript(table string, links []Link) (string, error) {
 }
 
 // applyRST installs the RST rules of links (or removes the table).
+// ApplyRST replaces the nftables table (family ip) with the RST rules of
+// links' fake-TCP carriers; with none it removes the table. nft is the nft
+// binary. The network model's anx_line ends use a table of their own, apart
+// from the AnxLine section's.
+func ApplyRST(ctx context.Context, runner Runner, nft, table string, links []Link) error {
+	if !tableName.MatchString(table) {
+		return fmt.Errorf("nftables table %q: letters, digits and _ only", table)
+	}
+	return applyRST(ctx, runner, valueOr(nft, DefaultNFT), table, links)
+}
+
 func applyRST(ctx context.Context, runner Runner, nft, table string, links []Link) error {
 	script, err := rstScript(table, links)
 	if err != nil {

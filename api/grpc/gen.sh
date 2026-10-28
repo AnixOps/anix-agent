@@ -24,4 +24,18 @@ protoc \
   --go-grpc_opt="module=${MODULE_PATH}" \
   "${PROTO_FILES[@]}"
 
-echo "Generated legacy gRPC bindings."
+# The anx management API is a copy of the closed anx repository's boundary
+# (contracts/anx): it has no go_package, so the import path is given here.
+ANX_MGMT="anx/mgmt/v1/mgmt.proto"
+ANX_MGMT_PACKAGE="${MODULE_PATH}/api/anxmgmt/v1;anxmgmtpb"
+protoc \
+  -I contracts/anx/proto \
+  --go_out=. \
+  --go_opt="module=${MODULE_PATH}" \
+  --go_opt="M${ANX_MGMT}=${ANX_MGMT_PACKAGE}" \
+  --go-grpc_out=. \
+  --go-grpc_opt="module=${MODULE_PATH}" \
+  --go-grpc_opt="M${ANX_MGMT}=${ANX_MGMT_PACKAGE}" \
+  "contracts/anx/proto/${ANX_MGMT}"
+
+echo "Generated legacy gRPC bindings and the anx management client."

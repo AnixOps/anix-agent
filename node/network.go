@@ -1,15 +1,20 @@
 package node
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/anxline"
+	"github.com/AnixOps/anix-agent/v5/anxserver"
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/networkroute"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
@@ -45,6 +50,27 @@ var networkRouting = func() *networkroute.Manager {
 	return &networkroute.Manager{IP: path, Run: networkroute.Run}
 }
 
+// networkServers answers the manager of the accepting anx_line ends, nil
+// when the host has no anx-server (or is not Linux): the Agent then accepts
+// no anx_line transport.
+var networkServers = func() *anxserver.Manager {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	path, err := exec.LookPath("anx-server")
+	if err != nil {
+		return nil
+	}
+	return &anxserver.Manager{
+		Binary: path, Dir: filepath.Join(conf.DefaultStateRoot, "anx-server"),
+		RST: func(links []anxline.Link) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			return anxline.ApplyRST(ctx, anxline.ExecRunner{}, "", anxserver.RSTTable, links)
+		},
+	}
+}
+
 // routedEgressKinds are the egress kinds the Agent runs itself when it can
 // route: the core binds the source, the Agent's policy routing sends it out
 // of its line.
@@ -57,6 +83,8 @@ type networkComponent struct {
 	caps    *networkv1.DeviceCapabilities
 	// routes installs the egresses' policy routing, nil without it.
 	routes *networkroute.Manager
+	// servers runs the accepting anx_line ends, nil without anx-server.
+	servers *anxserver.Manager
 
 	mu         sync.Mutex
 	client     *agentapi.Client
@@ -92,8 +120,14 @@ func newNetworkComponent(nodeID int, core vCore.Core) *networkComponent {
 			})
 		}
 	}
+	servers := networkServers()
+	if servers != nil {
+		caps.Kinds = append(caps.Kinds, &networkv1.KindSupport{
+			Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: "agent",
+		})
+	}
 	return &networkComponent{
-		device: device, applier: applier, caps: caps, routes: routes,
+		device: device, applier: applier, caps: caps, routes: routes, servers: servers,
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{}),
 	}
 }
@@ -134,7 +168,7 @@ func (c *networkComponent) attach(client *agentapi.Client) {
 	go c.loop()
 }
 
-// close stops the status loop.
+// close stops the status loop and the anx-server processes.
 func (c *networkComponent) close() {
 	c.once.Do(func() {
 		close(c.stop)
@@ -143,6 +177,9 @@ func (c *networkComponent) close() {
 		c.mu.Unlock()
 		if started {
 			<-c.stopped
+		}
+		if c.servers != nil {
+			c.servers.Close()
 		}
 	})
 }
@@ -185,6 +222,12 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	if unsupported := network.Unsupported(plan, c.caps); len(unsupported) > 0 {
 		return fmt.Errorf("network plan: this Agent does not run %s", strings.Join(unsupported, ", "))
 	}
+	var accepts []anxserver.Accept
+	if c.servers != nil {
+		if accepts, err = anxserver.Accepts(plan); err != nil {
+			return agentapi.InvalidConfig(fmt.Errorf("network plan: %w", err))
+		}
+	}
 	c.mu.Lock()
 	current := c.plan
 	c.mu.Unlock()
@@ -197,6 +240,9 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	status, applyErr := c.applier.ApplyNetwork(plan)
 	if status == nil && applyErr != nil {
 		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), applyErr)
+	}
+	if c.servers != nil {
+		applyErr = errors.Join(applyErr, c.servers.Apply(accepts))
 	}
 	c.mu.Lock()
 	c.plan = plan
@@ -228,16 +274,31 @@ func (c *networkComponent) route(plan *networkv1.NetworkPlan) error {
 }
 
 // report sends status, or the core's status read now, for the plan the
-// core runs. Nothing is sent before a plan or without a negotiated
-// session.
+// core runs, with the accepting anx_line ends and the server key. Before a
+// plan only the server key is sent (the dialing ends' plans wait for it);
+// nothing is sent without a negotiated session.
 func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 	c.mu.Lock()
 	plan, client, negotiated := c.plan, c.client, c.negotiated
 	c.mu.Unlock()
-	if plan == nil || client == nil || !negotiated {
+	if client == nil || !negotiated {
 		return
 	}
-	if status == nil {
+	var keys []*networkv1.PublicKey
+	if c.servers != nil {
+		public, err := c.servers.PublicKey()
+		if err != nil {
+			c.logger().WithError(err).Warn("Could not make the anx-server key")
+		} else {
+			keys = append(keys, &networkv1.PublicKey{Kind: network.TransportAnxLine, Key: public})
+		}
+	}
+	if plan == nil {
+		if len(keys) == 0 {
+			return
+		}
+		status = &networkv1.NetworkStatus{}
+	} else if status == nil {
 		read, err := c.applier.NetworkStatus()
 		if err != nil {
 			c.logger().WithError(err).Warn("Could not read the core's network status")
@@ -246,6 +307,10 @@ func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 		status = read
 	}
 	status = proto.Clone(status).(*networkv1.NetworkStatus)
+	if c.servers != nil && plan != nil {
+		status.Components = append(status.Components, c.servers.Status()...)
+	}
+	status.PublicKeys = append(status.PublicKeys, keys...)
 	status.DeviceRef, status.Generation, status.PlanHash = c.device, plan.GetGeneration(), plan.GetHash()
 	status.ObservedAtUnixMs = time.Now().UnixMilli()
 	report, err := network.StatusReport(status)

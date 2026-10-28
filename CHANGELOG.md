@@ -27,6 +27,18 @@
   egress's `routing` or the lowest free numbers of the Agent's range (20000–20999); every rule
   in that range is the Agent's, and the ones a new plan no longer has are deleted with their
   tables. With routing the Agent also lists the `dedicated_ip` egress kind.
+- **Accepting ends of `anx_line` transports (Linux, with `anx-server` on the PATH).** The Agent
+  lists the `anx_line` transport kind and runs the transports the plan has the device accept:
+  one `anx-server` per set of listen addresses (`--bare-listen`, or `--listen` for l2,
+  `--quic-listen`, `--faketcp-listen`), with `--egress-source` set to the source of the egress
+  the plan forwards the transport to, and each link key admitted through the management API
+  (`AddUsers` on a loopback `--mgmt`; the generated client is `api/anxmgmt/v1`). Processes that
+  exit are started again with their links. The server key is generated once
+  (`/var/lib/anixops-agent/anx-server`) and its public half is reported in the network status
+  (`public_keys`, also before the device has a plan), which is what the dialing ends' plans wait
+  for. Fake-TCP listeners get their RST rules in `table ip anixops_anx_line_net`. Dialing ends
+  and forwarding from a transport into another transport are refused for now. The
+  `--egress-source` flag needs anx-server from anx#93 or later.
 
 ## 5.0.0-rc.8 - 2026-10-27
 
