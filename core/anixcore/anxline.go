@@ -54,6 +54,9 @@ func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, error) 
 			LinkId: transport.GetId(), LinkKey: key, ServerPublic: settings.GetServerPublic(),
 			QuicAddr: settings.GetQuicAddr(), FaketcpAddr: settings.GetFaketcpAddr(), TcpAddr: settings.GetTcpAddr(),
 			Egress: settings.GetEgress(), ServerName: settings.GetServerName(),
+			// UDP on a connection of its own, apart from bulk TCP (anx
+			// ANX-LINE-ONBOARDING §3, TBD-L15).
+			UdpLanes: 1,
 		}
 		if len(settings.GetCarrierOrder()) > 0 || settings.GetMultipath() || settings.GetFec() {
 			link.Policy = &anxmgmtpb.LinePolicy{

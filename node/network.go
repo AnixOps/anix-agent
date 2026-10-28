@@ -68,6 +68,7 @@ var networkServers = func() *anxserver.Manager {
 			defer cancel()
 			return anxline.ApplyRST(ctx, anxline.ExecRunner{}, "", anxserver.RSTTable, links)
 		},
+		Buffers: func() error { return anxserver.RaiseSocketBuffers("/proc/sys") },
 	}
 }
 

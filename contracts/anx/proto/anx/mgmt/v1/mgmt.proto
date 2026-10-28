@@ -107,12 +107,23 @@ message RegionStat {
   uint64 attempts = 2;
   uint64 successes = 3;
 }
+// UDP relay counters: received from clients, forwarded upstream ok / failed,
+// received from upstream, sent back to clients ok / failed.
+message UdpRelayStats {
+  uint64 from_client = 1;
+  uint64 forwarded = 2;
+  uint64 forward_errors = 3;
+  uint64 from_upstream = 4;
+  uint64 to_client = 5;
+  uint64 to_client_errors = 6;
+}
 message StatsResponse {
   uint64 handshake_failures = 1;
   uint64 fallbacks = 2;
   uint64 replay_rejects = 3;
   uint64 probe_signatures = 4;
   repeated RegionStat regions = 5;
+  UdpRelayStats udp = 6;
 }
 
 message Listener {
@@ -205,6 +216,8 @@ message Link {
   bool default_route = 9;
   // Required for l2: SNI, one of the egress node's server_names.
   string server_name = 10;
+  // 0 = UDP shares the link's connection with TCP; 1 = UDP uses a separate connection. >1 rejected.
+  uint32 udp_lanes = 11;
 }
 
 message AddLinksRequest { repeated Link links = 1; }
@@ -259,5 +272,8 @@ message LinkStat {
   uint64 fec_recovered = 14;
   uint64 rebinds = 15;
   uint32 routed_users = 16;
+  // State of the separate UDP connection when udp_lanes = 1; false / empty otherwise.
+  bool udp_lane_connected = 17;
+  string udp_lane_carrier = 18;
 }
 message LinkStatsResponse { repeated LinkStat links = 1; }

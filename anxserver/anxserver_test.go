@@ -62,7 +62,8 @@ func TestAccepts(t *testing.T) {
 	assert.Empty(t, accepts[1].Sources, "an auto source binds nothing")
 
 	assert.Equal(t, []string{"--sni", "anx-line", "--bare-listen", "203.0.113.20:443",
-		"--quic-listen", "203.0.113.20:8443", "--faketcp-listen", "203.0.113.20:8444",
+		"--quic-listen", "203.0.113.20:8443", "--quic-sockbuf", "8388608", "--quic-dgram-buf", "1048576",
+		"--faketcp-listen", "203.0.113.20:8444",
 		"--egress-source", "203.0.113.20"}, accepts[0].listener().args())
 
 	l2 := Accept{TCP: "203.0.113.20:443", L2: true, ServerName: "www.example.com"}
@@ -250,6 +251,8 @@ func applied(t *testing.T, m *Manager, ids ...string) {
 func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 	host := &fakeHost{unready: 2}
 	m, rst := newManager(t, host)
+	raised := 0
+	m.Buffers = func() error { raised++; return nil }
 	accepts, err := Accepts(acceptPlan())
 	require.NoError(t, err)
 	accepts[1].Sources = accepts[0].Sources
@@ -261,9 +264,10 @@ func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 	args := strings.Join(host.last().args, " ")
 	assert.Contains(t, args, "/usr/bin/anx-server run --key "+filepath.Join(m.Dir, "server.key")+" --mgmt 127.0.0.1:")
 	assert.Contains(t, args, " --listen 127.0.0.1:", "the unused jacket listener stays on loopback")
-	assert.Contains(t, args, "--bare-listen 203.0.113.20:443 --quic-listen 203.0.113.20:8443 --faketcp-listen 203.0.113.20:8444 --egress-source 203.0.113.20")
+	assert.Contains(t, args, "--bare-listen 203.0.113.20:443 --quic-listen 203.0.113.20:8443 --quic-sockbuf 8388608 --quic-dgram-buf 1048576 --faketcp-listen 203.0.113.20:8444 --egress-source 203.0.113.20")
 	assert.ElementsMatch(t, []string{"tr-a", "tr-b"}, host.links())
 	assert.Equal(t, []string{"tr-a 203.0.113.20", "tr-b 203.0.113.20"}, *rst)
+	assert.Equal(t, 1, raised, "a QUIC listener gets the larger socket buffers")
 
 	// tr-b leaves: removed on the running process.
 	require.NoError(t, m.Apply(accepts[:1]))
@@ -301,4 +305,17 @@ func TestManagerReportsADownServer(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, networkv1.ComponentState_COMPONENT_STATE_DOWN, m.Status()[0].GetState())
 	assert.Equal(t, networkv1.Component_COMPONENT_TRANSPORT, m.Status()[0].GetComponent())
+}
+
+func TestRaiseSocketBuffers(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "net/core"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "net/core/rmem_max"), []byte("212992\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "net/core/wmem_max"), []byte("16777216\n"), 0o644))
+	require.NoError(t, RaiseSocketBuffers(root))
+	rmem, _ := os.ReadFile(filepath.Join(root, "net/core/rmem_max"))
+	wmem, _ := os.ReadFile(filepath.Join(root, "net/core/wmem_max"))
+	assert.Equal(t, "8388608\n", string(rmem))
+	assert.Equal(t, "16777216\n", string(wmem), "a higher limit is kept")
+	assert.Error(t, RaiseSocketBuffers(t.TempDir()))
 }
