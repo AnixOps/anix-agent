@@ -151,6 +151,7 @@ func (c *Component) runHealth() {
 		c.retryIfDue(now)
 		plans := c.plans()
 		c.scheduleProbes(plans, now)
+		c.scheduleVantage(now)
 		if reconcileAt.IsZero() || !now.Before(reconcileAt) {
 			c.reconcile(c.ctx, plans)
 			reconcileAt = now.Add(c.opts.ReconcileInterval)

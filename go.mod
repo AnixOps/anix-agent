@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.9
 
 require (
-	github.com/AnixOps/anix-control/sdk v0.0.0-20261026041622-5a2349865b12
+	github.com/AnixOps/anix-control/sdk v0.0.0-20261028070243-cf6890f1af27
 	github.com/apernet/hysteria/core/v2 v2.6.4
 	github.com/apernet/hysteria/extras/v2 v2.6.4
 	github.com/beevik/ntp v1.4.4-0.20240716062501-06ef196b89ec
