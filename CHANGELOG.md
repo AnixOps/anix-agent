@@ -4,6 +4,13 @@
 
 ### Added
 
+- **More panel nodes on anixcore.** Shadowsocks nodes with `aes-128-gcm`, `aes-256-gcm` or
+  `chacha20-ietf-poly1305` become anixcore SIP004 inbounds whose users log in with their UUID,
+  as on the other cores (networkcore #140). VLESS, VMess and Trojan nodes on `httpupgrade`
+  (path `?ed=` early data, host) and `xhttp`/`splithttp` (path, host, mode) networks map to
+  the matching anixcore transports, and VLESS REALITY may run over `xhttp`. Users carry the
+  panel's `speed_limit` (Mbit/s) and `device_limit` to an anixcore whose `GET /v1/status`
+  lists the `user_limits` feature; an older anixcore gets users without them.
 - **Port forward policy.** A port forward's `policy` (balance, TCP health checks, circuit
   breaker, PROXY header v1/v2, `bandwidth_bps`, `max_conns`) and its targets' `weight` and
   `priority` go to the anixcore forward inbound as is (networkcore #139); defaults are left

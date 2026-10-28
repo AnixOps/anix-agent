@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -24,6 +26,11 @@ type apiUser struct {
 	Flow     string `json:"flow,omitempty"`
 	// iWAN fixed tunnel address.
 	Address string `json:"address,omitempty"`
+	// SpeedLimit is Mbit/s per direction, DeviceLimit the most client IPs
+	// online at once; 0 for none. Sent only to a kernel with the
+	// `user_limits` feature.
+	SpeedLimit  int `json:"speed_limit,omitempty"`
+	DeviceLimit int `json:"device_limit,omitempty"`
 }
 
 type apiTraffic struct {
@@ -59,6 +66,9 @@ type client struct {
 	base  string
 	token string
 	http  *http.Client
+	// userLimits is whether the kernel takes user speed and device limits,
+	// from the features of its last status answer.
+	userLimits atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -113,7 +123,27 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func (c *client) status(ctx context.Context) error {
-	return c.do(ctx, http.MethodGet, "/v1/status", nil, nil)
+	var status struct {
+		Features []string `json:"features"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/status", nil, &status); err != nil {
+		return err
+	}
+	c.userLimits.Store(slices.Contains(status.Features, "user_limits"))
+	return nil
+}
+
+// forKernel drops what the kernel does not take from users.
+func (c *client) forKernel(users []apiUser) []apiUser {
+	if c.userLimits.Load() {
+		return users
+	}
+	out := make([]apiUser, len(users))
+	for i, user := range users {
+		user.SpeedLimit, user.DeviceLimit = 0, 0
+		out[i] = user
+	}
+	return out
 }
 
 func (c *client) addInbound(ctx context.Context, inbound map[string]any) error {
@@ -125,7 +155,7 @@ func (c *client) removeInbound(ctx context.Context, tag string) error {
 }
 
 func (c *client) addUsers(ctx context.Context, tag string, users []apiUser) error {
-	body := map[string]any{"users": users}
+	body := map[string]any{"users": c.forKernel(users)}
 	return c.do(ctx, http.MethodPost, "/v1/inbounds/"+url.PathEscape(tag)+"/users", body, nil)
 }
 

@@ -342,7 +342,7 @@ func (c *Core) create(tag string, n *node) error {
 	for _, user := range n.users {
 		users = append(users, user)
 	}
-	inbound["users"] = users
+	inbound["users"] = c.client.forKernel(users)
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 	if err := c.client.addInbound(ctx, inbound); err != nil {

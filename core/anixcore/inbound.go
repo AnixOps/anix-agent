@@ -26,6 +26,17 @@ type grpcNetwork struct {
 	ServiceName string `json:"serviceName"`
 }
 
+type httpupgradeNetwork struct {
+	Path string `json:"path"`
+	Host string `json:"host"`
+}
+
+type xhttpNetwork struct {
+	Path string `json:"path"`
+	Host string `json:"host"`
+	Mode string `json:"mode"`
+}
+
 // inboundConfig is the anixcore inbound for a panel node: `tag`, `type`,
 // `listen`, `listen_port` and the protocol's settings, without users.
 func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map[string]any, error) {
@@ -50,11 +61,16 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node == nil {
 			return nil, errors.New("shadowsocks node info is missing")
 		}
+		inbound["type"] = "shadowsocks"
+		inbound["method"] = node.Cipher
+		if shadowsocksLegacy(node.Cipher) {
+			// Users only: each one's password is its UUID, as the other
+			// cores do.
+			break
+		}
 		if _, err := shadowsocksKeyLen(node.Cipher); err != nil {
 			return nil, err
 		}
-		inbound["type"] = "shadowsocks"
-		inbound["method"] = node.Cipher
 		inbound["password"] = node.ServerKey
 	case "trojan":
 		node := info.Trojan
@@ -85,8 +101,8 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 			if info.Type != "vless" {
 				return nil, errors.New("reality needs a vless node")
 			}
-			if _, ok := inbound["transport"]; ok {
-				return nil, errors.New("anixcore runs reality only on tcp")
+			if transport, ok := inbound["transport"].(map[string]any); ok && transport["type"] != "xhttp" {
+				return nil, errors.New("anixcore runs reality only on tcp and xhttp")
 			}
 			reality, err := realityConfig(node)
 			if err != nil {
@@ -175,7 +191,8 @@ func addTLS(inbound map[string]any, info *panel.NodeInfo, options *conf.Options,
 	return nil
 }
 
-// addTransport sets `transport` for ws and grpc networks.
+// addTransport sets `transport` for ws, grpc, httpupgrade and xhttp
+// networks.
 func addTransport(inbound map[string]any, network string, settings json.RawMessage) error {
 	switch network {
 	case "", "tcp":
@@ -212,6 +229,42 @@ func addTransport(inbound map[string]any, network string, settings json.RawMessa
 			if strings.EqualFold(name, "host") {
 				transport["host"] = value
 			}
+		}
+		inbound["transport"] = transport
+		return nil
+	case "httpupgrade":
+		var upgrade httpupgradeNetwork
+		if len(settings) != 0 {
+			if err := json.Unmarshal(settings, &upgrade); err != nil {
+				return fmt.Errorf("decode network settings: %w", err)
+			}
+		}
+		path, err := url.Parse(upgrade.Path)
+		if err != nil {
+			return fmt.Errorf("parse httpupgrade path: %w", err)
+		}
+		transport := map[string]any{"type": "httpupgrade", "path": path.Path}
+		if ed, err := strconv.Atoi(path.Query().Get("ed")); err == nil && ed > 0 {
+			transport["max_early_data"] = ed
+		}
+		if upgrade.Host != "" {
+			transport["host"] = upgrade.Host
+		}
+		inbound["transport"] = transport
+		return nil
+	case "xhttp", "splithttp":
+		var xhttp xhttpNetwork
+		if len(settings) != 0 {
+			if err := json.Unmarshal(settings, &xhttp); err != nil {
+				return fmt.Errorf("decode network settings: %w", err)
+			}
+		}
+		transport := map[string]any{"type": "xhttp", "path": xhttp.Path}
+		if xhttp.Host != "" {
+			transport["host"] = xhttp.Host
+		}
+		if xhttp.Mode != "" {
+			transport["mode"] = xhttp.Mode
 		}
 		inbound["transport"] = transport
 		return nil
@@ -269,6 +322,16 @@ func realityConfig(node *panel.VAllssNode) (map[string]any, error) {
 	return reality, nil
 }
 
+// shadowsocksLegacy reports whether cipher is a Shadowsocks AEAD (SIP004)
+// method, which anixcore serves with plain user passwords.
+func shadowsocksLegacy(cipher string) bool {
+	switch cipher {
+	case "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "chacha20-poly1305":
+		return true
+	}
+	return false
+}
+
 func shadowsocksKeyLen(cipher string) (int, error) {
 	switch cipher {
 	case "2022-blake3-aes-128-gcm":
@@ -278,7 +341,7 @@ func shadowsocksKeyLen(cipher string) (int, error) {
 	case "2022-blake3-chacha20-poly1305":
 		return 0, errors.New("2022-blake3-chacha20-poly1305 has no multi-user mode; use an aes method")
 	default:
-		return 0, fmt.Errorf("anixcore serves shadowsocks 2022 aes methods only, not %q", cipher)
+		return 0, fmt.Errorf("anixcore does not serve shadowsocks method %q", cipher)
 	}
 }
 
@@ -303,9 +366,13 @@ func userName(user panel.UserInfo) string {
 // the way the sing-box core does: the UUID, or for Shadowsocks 2022 the
 // first key-length bytes of it.
 func apiUserFor(info *panel.NodeInfo, user panel.UserInfo) (apiUser, error) {
-	out := apiUser{Name: userName(user)}
+	out := apiUser{Name: userName(user), SpeedLimit: max(user.SpeedLimit, 0), DeviceLimit: max(user.DeviceLimit, 0)}
 	switch info.Type {
 	case "shadowsocks":
+		if shadowsocksLegacy(info.Shadowsocks.Cipher) {
+			out.Password = user.Uuid
+			break
+		}
 		keyLen, err := shadowsocksKeyLen(info.Shadowsocks.Cipher)
 		if err != nil {
 			return apiUser{}, err
