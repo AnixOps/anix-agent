@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- **ANX-Line host support (`AnxLine`, Linux).** For fake-TCP carriers the Agent installs the
+  nftables rules that drop the kernel's RST segments (`table ip anixops_anx_line`; the rules
+  are templates from the configuration, defaults per ANX-Line spec §4.2). For multipath links
+  it probes every MPTCP path every 200 ms (TCP or ICMP, from the path's own address) and takes
+  a dead path out with `ip mptcp endpoint delete` or `change … backup`, so the connection
+  moves to the other paths in about 1.5 s instead of the kernel's 5 s; recovered paths are
+  restored. See `docs/anx-line.md`.
+
 ## 5.0.0-rc.8 - 2026-10-27
 
 The eighth 5.0 candidate, the same version as AnixOps Control 5.0.0-rc.8. The anixcore core
