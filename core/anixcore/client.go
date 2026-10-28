@@ -152,6 +152,14 @@ func (c *client) putEgress(ctx context.Context, config *panel.EgressConfig) erro
 	return c.do(ctx, http.MethodPut, "/v1/egress", config, nil)
 }
 
+func (c *client) putNetwork(ctx context.Context, plan json.RawMessage, out any) error {
+	return c.do(ctx, http.MethodPut, "/v1/network", plan, out)
+}
+
+func (c *client) getNetwork(ctx context.Context, out any) error {
+	return c.do(ctx, http.MethodGet, "/v1/network", nil, out)
+}
+
 func (c *client) online(ctx context.Context, tag string) ([]apiOnline, error) {
 	var answer struct {
 		Online []apiOnline `json:"online"`

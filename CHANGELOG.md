@@ -11,6 +11,15 @@
   a dead path out with `ip mptcp endpoint delete` or `change … backup`, so the connection
   moves to the other paths in about 1.5 s instead of the kernel's 5 s; recovered paths are
   restored. See `docs/anx-line.md`.
+- **The device network model (`network.v1`, anixcore core).** An Agent whose core is anixcore
+  lists `network.v1` in its Hello with the components it runs (ingresses `direct` and `nat`,
+  egresses `nat_direct`). Control's plan for the device arrives in the configuration member
+  `network`; a plan with a new hash goes to anixcore (`PUT /v1/network`), and the node's
+  inbound on a user ingress's listen port joins that ingress (its `ingress` key), so its
+  connections take the ingress's path. The status (each egress's probe state, each ingress's
+  egress in use) is reported after each plan and every minute. A restarted anixcore gets the
+  plan again before its inbounds. One node per Agent drives the plan. Needs an anixcore with
+  `/v1/network` (networkcore 785d750 or later) and AnixOps Control with `network.v1`.
 
 ## 5.0.0-rc.8 - 2026-10-27
 

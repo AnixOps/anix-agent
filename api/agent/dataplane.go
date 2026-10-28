@@ -139,6 +139,10 @@ type DataPlaneConfig struct {
 	// forwarding state rides in config.v1, and the ConfigApplier hands it
 	// to the component.
 	Forward ForwardHandler
+	// Network is the node's network component; set, the client advertises
+	// network.v1 (with package-reports.v1, which carries its status). It
+	// needs Config: the device's plan rides in config.v1.
+	Network NetworkHandler
 	// Diagnostics advertises diag.v1: the Agent's agent.diagnostic handler
 	// runs the forward checks of Control's route diagnosis (PROTOCOL.md,
 	// "Diagnostic operation"). It adds no payload; set it only with that
@@ -261,11 +265,14 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 		return nil, errors.New("agent data plane: a state store is required")
 	}
 	if config.Config == nil && config.Users == nil && config.Reports == nil && config.PackageReports == nil &&
-		config.Maintenance == nil && config.Alive == nil && !config.Artifacts && config.Forward == nil {
+		config.Maintenance == nil && config.Alive == nil && !config.Artifacts && config.Forward == nil && config.Network == nil {
 		return nil, errors.New("agent data plane: no data-plane handler is configured")
 	}
 	if config.Forward != nil && config.Config == nil {
 		return nil, errors.New("agent data plane: forward.v1 needs a ConfigApplier: the forwarding state rides in config.v1")
+	}
+	if config.Network != nil && config.Config == nil {
+		return nil, errors.New("agent data plane: network.v1 needs a ConfigApplier: the device's plan rides in config.v1")
 	}
 	if config.LegacyGrace <= 0 {
 		config.LegacyGrace = DefaultLegacyGrace
@@ -350,11 +357,14 @@ func (d *DataPlane) capabilities() []string {
 			names = append(names, agentcontrol.CapabilityDestinations)
 		}
 	}
-	if d.config.PackageReports != nil || d.config.Forward != nil {
+	if d.config.PackageReports != nil || d.config.Forward != nil || d.config.Network != nil {
 		names = append(names, agentcontrol.CapabilityPackageReports)
 	}
 	if d.config.Forward != nil {
 		names = append(names, agentcontrol.CapabilityForward)
+	}
+	if d.config.Network != nil {
+		names = append(names, agentcontrol.CapabilityNetwork)
 	}
 	if d.config.Maintenance != nil {
 		names = append(names, agentcontrol.CapabilityMaintenance)
@@ -430,6 +440,9 @@ func (d *DataPlane) sessionStarted(sessionID string, negotiated []string, transi
 	d.signalMaintenance()
 	if d.config.Forward != nil {
 		d.config.Forward.ForwardSession(forwardNegotiated(DataPlaneSession{Negotiated: negotiated}))
+	}
+	if d.config.Network != nil {
+		d.config.Network.NetworkSession(networkNegotiated(DataPlaneSession{Negotiated: negotiated}))
 	}
 	if err := d.config.State.SaveSession(state.Session{Control: d.config.Control, Negotiated: negotiated, At: d.now().UTC()}); err != nil {
 		d.logger().WithError(err).Warn("Could not record the negotiated data-plane capabilities")

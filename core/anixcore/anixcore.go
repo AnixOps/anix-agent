@@ -45,6 +45,8 @@ type node struct {
 	// created is false while a Shadowsocks node waits for its first users:
 	// anixcore picks the multi-user mode when the inbound is created.
 	created bool
+	// ingress is the network-model ingress the inbound joins, "" for none.
+	ingress string
 }
 
 type Core struct {
@@ -55,6 +57,10 @@ type Core struct {
 	nodes  map[string]*node
 	// egress is the last configuration ApplyEgress sent, nil for none.
 	egress *panel.EgressConfig
+	// network is the last plan ApplyNetwork sent, nil for none, and
+	// ingresses its user ingresses by listen port.
+	network   json.RawMessage
+	ingresses map[int]string
 
 	process *exec.Cmd
 	stop    chan struct{}
@@ -164,12 +170,17 @@ func (c *Core) supervise(exitErr error) {
 	}
 }
 
-// replay adds every known node with its users, and the egress routes, to
-// a fresh anixcore.
+// replay adds the network plan, every known node with its users, and the
+// egress routes to a fresh anixcore.
 func (c *Core) replay() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var failed error
+	if c.network != nil {
+		if _, err := c.putNetwork(c.network); err != nil {
+			failed = errors.Join(failed, err)
+		}
+	}
 	for tag, n := range c.nodes {
 		n.created = false
 		if err := c.create(tag, n); err != nil {
@@ -240,6 +251,7 @@ func (c *Core) AddNode(tag string, info *panel.NodeInfo, options *conf.Options) 
 		return fmt.Errorf("anixcore node %s already exists", tag)
 	}
 	n := &node{info: info, inbound: inbound, users: make(map[string]apiUser)}
+	n.ingress = c.ingressOf(n)
 	if info.Type != "shadowsocks" {
 		if err := c.create(tag, n); err != nil {
 			return fmt.Errorf("anixcore node %s: %w", tag, err)
@@ -255,9 +267,12 @@ func (c *Core) create(tag string, n *node) error {
 	if n.info.Type == "shadowsocks" && len(n.users) == 0 {
 		return nil
 	}
-	inbound := make(map[string]any, len(n.inbound)+1)
+	inbound := make(map[string]any, len(n.inbound)+2)
 	for key, value := range n.inbound {
 		inbound[key] = value
+	}
+	if n.ingress != "" {
+		inbound["ingress"] = n.ingress
 	}
 	users := make([]apiUser, 0, len(n.users))
 	for _, user := range n.users {

@@ -21,6 +21,7 @@ type fakeAPI struct {
 	users    map[string]map[string]apiUser
 	calls    []string
 	egress   []map[string]any
+	network  []map[string]any
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -53,6 +54,17 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &egress)
 		f.egress = append(f.egress, egress)
 		reply(200, map[string]any{"routes": []int{}, "relays": []any{}})
+	case r.Method == "PUT" && r.URL.Path == "/v1/network":
+		var plan map[string]any
+		_ = json.Unmarshal(body, &plan)
+		f.network = append(f.network, plan)
+		reply(200, fakeNetworkStatus(plan))
+	case r.Method == "GET" && r.URL.Path == "/v1/network":
+		var plan map[string]any
+		if len(f.network) > 0 {
+			plan = f.network[len(f.network)-1]
+		}
+		reply(200, fakeNetworkStatus(plan))
 	case r.Method == "POST" && r.URL.Path == "/v1/inbounds":
 		var inbound map[string]any
 		_ = json.Unmarshal(body, &inbound)
