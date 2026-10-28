@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Port forward policy.** A port forward's `policy` (balance, TCP health checks, circuit
+  breaker, PROXY header v1/v2, `bandwidth_bps`, `max_conns`) and its targets' `weight` and
+  `priority` go to the anixcore forward inbound as is (networkcore #139); defaults are left
+  out, so a forward without a policy still suits an older anixcore.
 - **Relay hops of `anx_line` transports.** When the plan forwards an accepted transport into a
   dialing `anx_line` transport (`forwarding[].transport_id`), the accepting anx-server holds
   that link (`AddLinks`) and routes the accepted link's user there (`SetLinkRoutes`), so a
