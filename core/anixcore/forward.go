@@ -53,20 +53,57 @@ func forwardInbounds(plan *networkv1.NetworkPlan) (map[string]map[string]any, er
 			return nil, fmt.Errorf("port forward %s: no next hop", forward.GetId())
 		}
 		targets := forward.GetTargets()
-		if len(targets) == 1 {
+		if len(targets) == 1 && targets[0].GetWeight() == 0 && targets[0].GetPriority() == 0 {
 			inbound["server"], inbound["server_port"] = targets[0].GetHost(), targets[0].GetPort()
 		} else {
 			// Several targets need an anixcore with balancing
 			// (networkcore #139); the first one is not chosen silently.
 			list := make([]map[string]any, 0, len(targets))
 			for _, target := range targets {
-				list = append(list, map[string]any{"server": target.GetHost(), "server_port": target.GetPort()})
+				entry := map[string]any{"server": target.GetHost(), "server_port": target.GetPort()}
+				if target.GetWeight() > 0 {
+					entry["weight"] = target.GetWeight()
+				}
+				if target.GetPriority() > 0 {
+					entry["priority"] = target.GetPriority()
+				}
+				list = append(list, entry)
 			}
 			inbound["targets"] = list
 		}
+		forwardPolicy(inbound, forward.GetPolicy())
 		inbounds[tag] = inbound
 	}
 	return inbounds, nil
+}
+
+// forwardPolicy adds policy's settings to a forward inbound
+// (networkcore inbound-forward); defaults are left out, so a forward
+// without a policy suits an anixcore without balancing.
+func forwardPolicy(inbound map[string]any, policy *networkv1.ForwardPolicy) {
+	if policy == nil {
+		return
+	}
+	if balance := policy.GetBalance(); balance != "" {
+		inbound["balance"] = balance
+	}
+	if health := policy.GetHealth(); health != nil {
+		inbound["health"] = map[string]any{
+			"interval_ms": health.GetIntervalMs(), "timeout_ms": health.GetTimeoutMs(), "disabled": health.GetDisabled(),
+		}
+	}
+	if breaker := policy.GetCircuitBreaker(); breaker != nil {
+		inbound["circuit_breaker"] = map[string]any{"failure_threshold": breaker.GetFailureThreshold(), "open_ms": breaker.GetOpenMs()}
+	}
+	if proxy := policy.GetProxyProtocol(); proxy != "" && proxy != "off" {
+		inbound["proxy_protocol"] = proxy
+	}
+	if bps := policy.GetBandwidthBps(); bps > 0 {
+		inbound["bandwidth_bps"] = bps
+	}
+	if conns := policy.GetMaxConns(); conns > 0 {
+		inbound["max_conns"] = conns
+	}
 }
 
 // syncForwards makes anixcore run exactly wanted: changed and gone forward

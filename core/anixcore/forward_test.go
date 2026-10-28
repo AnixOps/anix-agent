@@ -15,8 +15,11 @@ func forwardPlan() *networkv1.NetworkPlan {
 			Targets: []*networkv1.ForwardTarget{{Host: "10.0.0.5", Port: 22}},
 			Next:    &networkv1.PortForward_TransportId{TransportId: "tr-jp"}},
 		{Id: "rt-2", Listen: &networkv1.Endpoint{Address: "0.0.0.0", Port: 20002}, Protocols: []string{"tcp"},
-			Targets: []*networkv1.ForwardTarget{{Host: "a.example", Port: 443}, {Host: "203.0.113.8", Port: 443}},
-			Next:    &networkv1.PortForward_EgressId{EgressId: "eg-1"}},
+			Targets: []*networkv1.ForwardTarget{{Host: "a.example", Port: 443, Weight: 2}, {Host: "203.0.113.8", Port: 443, Priority: 1}},
+			Next:    &networkv1.PortForward_EgressId{EgressId: "eg-1"},
+			Policy: &networkv1.ForwardPolicy{Balance: "least_conn", ProxyProtocol: "v1", BandwidthBps: 8_000_000, MaxConns: 100,
+				Health:         &networkv1.ForwardHealth{IntervalMs: 5000, TimeoutMs: 2000},
+				CircuitBreaker: &networkv1.ForwardBreaker{FailureThreshold: 3, OpenMs: 30000}}},
 	}
 	return plan
 }
@@ -43,6 +46,18 @@ func TestPortForwardsAreForwardInbounds(t *testing.T) {
 	}
 	if two["outbound"] != "egress:eg-1" || two["server"] != nil || len(two["targets"].([]any)) != 2 {
 		t.Fatalf("rt-2 = %v", two)
+	}
+	first, second := two["targets"].([]any)[0].(map[string]any), two["targets"].([]any)[1].(map[string]any)
+	if first["weight"] != float64(2) || first["priority"] != nil || second["priority"] != float64(1) ||
+		two["balance"] != "least_conn" || two["proxy_protocol"] != "v1" || two["bandwidth_bps"] != float64(8_000_000) ||
+		two["max_conns"] != float64(100) || two["health"].(map[string]any)["interval_ms"] != float64(5000) ||
+		two["circuit_breaker"].(map[string]any)["open_ms"] != float64(30000) {
+		t.Fatalf("rt-2 policy = %v", two)
+	}
+	for _, key := range []string{"balance", "health", "circuit_breaker", "proxy_protocol", "bandwidth_bps", "max_conns"} {
+		if _, set := one[key]; set {
+			t.Fatalf("rt-1 without a policy has %s: %v", key, one)
+		}
 	}
 	if last := api.calls[len(api.calls)-1]; !strings.HasPrefix(last, "GET /v1/inbounds/forward-") {
 		t.Fatalf("calls = %v", api.calls)
