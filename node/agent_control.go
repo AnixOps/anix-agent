@@ -141,12 +141,11 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 
 // proxyNodeDiagnostics is a proxy node's agent.diagnostic executor: the
 // generic tasks on the Agent's own unit, the Reality target probe, and,
-// when the node forwards with component, Control's forward checks and the
-// tasks on gost's unit.
+// when the node forwards with component, Control's forward checks.
 func proxyNodeDiagnostics(component *forward.Component) *diagnostic.Executor {
 	executor := &diagnostic.Executor{Units: map[string]string{}}
 	if component != nil {
-		executor = forward.NodeDiagnostics(component, "")
+		executor = forward.NodeDiagnostics(component)
 	}
 	for service, unit := range diagnostic.AgentUnits() {
 		executor.Units[service] = unit

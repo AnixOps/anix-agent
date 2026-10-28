@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -33,8 +32,6 @@ type Applier struct {
 	LibDir string
 	// Version is the installed release, which runs Apply.
 	Version string
-	// Arch picks the pinned gost; empty is runtime.GOARCH.
-	Arch string
 	// PublicKey verifies releases; nil is OfficialPublicKey.
 	PublicKey ed25519.PublicKey
 	// Systemctl is the systemctl binary; empty is "systemctl".
@@ -61,13 +58,6 @@ func (a *Applier) libDir() string {
 		return a.LibDir
 	}
 	return DefaultLibDir
-}
-
-func (a *Applier) arch() string {
-	if a.Arch != "" {
-		return a.Arch
-	}
-	return runtime.GOARCH
 }
 
 func (a *Applier) key() ed25519.PublicKey {
@@ -219,16 +209,11 @@ func (a *Applier) upgrade(ctx context.Context, dir string, handOff HandOff, resu
 		return err
 	}
 
-	newBinary, newGost, gostSum, err := unpack(zipPath, lib)
+	newBinary, err := unpack(zipPath, lib)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = os.Remove(newBinary)
-		if newGost != "" {
-			_ = os.Remove(newGost)
-		}
-	}()
+	defer func() { _ = os.Remove(newBinary) }()
 	if err := a.checkVersion(ctx, newBinary, handOff.TargetVersion); err != nil {
 		return err
 	}
@@ -248,7 +233,7 @@ func (a *Applier) upgrade(ctx context.Context, dir string, handOff HandOff, resu
 		return codeError(ErrorStartFailed, "%v; %s was reinstated", err, a.Version)
 	}
 	result.Outcome = OutcomeInstalled
-	result.GostStaged = a.stageGost(newGost, gostSum)
+	result.GostRemoved = a.removeGost()
 	return nil
 }
 
@@ -419,28 +404,18 @@ func (a *Applier) checkVersion(ctx context.Context, binary, version string) erro
 	return nil
 }
 
-// stageGost installs the release's gost as the binary
-// anixops-gost.service starts next, when it is the pinned one and not
-// installed yet. gost keeps running: nothing restarts it.
-func (a *Applier) stageGost(newGost, sum string) bool {
-	if newGost == "" {
-		return false
-	}
-	pinned := PinnedGostSHA256[a.arch()]
-	entry := log.WithFields(log.Fields{"component": "agent-updater", "sha256": sum, "pinned": pinned})
-	if pinned == "" || sum != pinned {
-		entry.Warn("The release's gost is not the pinned one; keeping the installed gost")
-		return false
-	}
+// removeGost deletes the gost binary earlier releases shipped: gost was
+// removed (the network model replaced it), and the new Agent stops
+// anixops-gost.service at start. The installer removes the unit.
+func (a *Applier) removeGost() bool {
 	target := filepath.Join(a.libDir(), GostBinary)
-	if installed, err := fileSHA256(target); err == nil && installed == pinned {
+	if _, err := os.Lstat(target); err != nil {
 		return false
 	}
-	if err := os.Rename(newGost, target); err != nil {
-		entry.WithError(err).Warn("Could not stage the release's gost")
+	if err := os.Remove(target); err != nil {
+		log.WithField("component", "agent-updater").WithError(err).Warn("Could not remove the retired gost binary")
 		return false
 	}
-	entry.Info("Staged the release's gost; anixops-gost.service starts it next time (it was not restarted)")
 	return true
 }
 
@@ -508,52 +483,43 @@ func copyReader(reader io.Reader, dir, pattern string, mode os.FileMode, limit i
 	return name, nil
 }
 
-// unpack extracts the regular files anix-agent and, when present, gost
-// from the release zip into new files of dir; symbolic links (V2bX) and
-// everything else are skipped.
-func unpack(zipPath, dir string) (binary, gost, gostSum string, err error) {
+// unpack extracts the regular file anix-agent from the release zip into a
+// new file of dir; symbolic links (V2bX) and everything else (a gost in an
+// older release) are skipped.
+func unpack(zipPath, dir string) (binary string, err error) {
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return "", "", "", codeError(ErrorInstall, "the release is not a zip: %v", err)
+		return "", codeError(ErrorInstall, "the release is not a zip: %v", err)
 	}
 	defer func() { _ = reader.Close() }()
 	cleanup := func() {
 		if binary != "" {
 			_ = os.Remove(binary)
 		}
-		if gost != "" {
-			_ = os.Remove(gost)
-		}
 	}
 	for _, entry := range reader.File {
 		name := strings.TrimPrefix(entry.Name, "./")
-		if (name != BinaryName && name != GostBinary) || !entry.Mode().IsRegular() {
+		if name != BinaryName || !entry.Mode().IsRegular() {
 			continue
 		}
 		if entry.UncompressedSize64 > maxBinaryBytes {
 			cleanup()
-			return "", "", "", codeError(ErrorInstall, "%s in the release is over %d bytes", name, maxBinaryBytes)
+			return "", codeError(ErrorInstall, "%s in the release is over %d bytes", name, maxBinaryBytes)
 		}
-		if (name == BinaryName && binary != "") || (name == GostBinary && gost != "") {
+		if binary != "" {
 			cleanup()
-			return "", "", "", codeError(ErrorInstall, "the release holds %s twice", name)
+			return "", codeError(ErrorInstall, "the release holds %s twice", name)
 		}
-		path, sum, extractErr := extract(entry, dir, "."+name+".new.*")
+		path, _, extractErr := extract(entry, dir, "."+name+".new.*")
 		if extractErr != nil {
-			cleanup()
-			return "", "", "", codeError(ErrorInstall, "cannot unpack %s: %v", name, extractErr)
+			return "", codeError(ErrorInstall, "cannot unpack %s: %v", name, extractErr)
 		}
-		if name == BinaryName {
-			binary = path
-		} else {
-			gost, gostSum = path, sum
-		}
+		binary = path
 	}
 	if binary == "" {
-		cleanup()
-		return "", "", "", codeError(ErrorInstall, "the release holds no %s binary", BinaryName)
+		return "", codeError(ErrorInstall, "the release holds no %s binary", BinaryName)
 	}
-	return binary, gost, gostSum, nil
+	return binary, nil
 }
 
 func extract(entry *zip.File, dir, pattern string) (string, string, error) {

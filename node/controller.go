@@ -52,8 +52,7 @@ type Controller struct {
 	// agentClient is the node's Agent control client, nil without one.
 	agentClient *agentapi.Client
 	// diagnostics runs agent.diagnostic: the generic tasks on the Agent's
-	// own unit, plus gost's unit and Control's forward checks when the
-	// node forwards; nil before the Agent Control client starts.
+	// own unit, plus Control's forward checks when the node forwards; nil before the Agent Control client starts.
 	diagnostics *diagnostic.Executor
 	// upgrader runs agent.upgrade (upgrade.v1); nil without one.
 	upgrader *upgrade.Agent

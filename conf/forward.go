@@ -65,16 +65,11 @@ type ForwardNftablesConfig struct {
 	TC                 string   `json:"TC"`
 }
 
-// ForwardGostConfig configures the gost driver (H20: the pinned gost the
-// Agent's package ships, run as anixops-gost.service).
+// ForwardGostConfig locates the gost the Agent ran before gost was removed:
+// the Agent stops it and clears Dir at start. Its other keys (Disable,
+// Binary, RuntimeDir, ManualLinkCertificates) are ignored.
 type ForwardGostConfig struct {
-	Disable    bool   `json:"Disable"`
-	Binary     string `json:"Binary"`
-	Dir        string `json:"Dir"`
-	RuntimeDir string `json:"RuntimeDir"`
-	// ManualLinkCertificates leaves the link certificate files to the
-	// operator; by default the Agent gets them from Control's link CA (H28).
-	ManualLinkCertificates bool `json:"ManualLinkCertificates"`
+	Dir string `json:"Dir"`
 }
 
 // ForwardAnixOpsConfig configures the experimental anixops forwarding engine

@@ -163,9 +163,13 @@ anix-agent forward sysctl-dropin | sudo tee /etc/sysctl.d/90-anixops-forward.con
 sudo sysctl --system
 ```
 
-`anix-agent forward gost-unit` prints `anixops-gost.service`. The drop-in also
-raises `net.core.rmem_max` and `net.core.wmem_max` to 7500000, the UDP socket
-buffer QUIC links (gost's and the anixops relay's) ask for.
+The drop-in also raises `net.core.rmem_max` and `net.core.wmem_max` to
+7500000, the UDP socket buffer the anixops relay's QUIC links ask for.
+
+gost was removed: the network model (anx-node) carries what its routes did.
+The Agent stops `anixops-gost.service` and clears `/var/lib/anixops-gost` at
+start, the updater deletes `/usr/lib/anixops-agent/gost` after an upgrade, and
+the installer removes the unit and the `anixops-gost` account.
 
 ### The experimental anixops engine
 
@@ -205,8 +209,6 @@ v2 and the relay's metrics socket are not implemented.
 | `/var/lib/anixops-agent/forward` | Forwarding state (`Forward.StateDir` default) |
 | `/var/lib/anixops-agent/plugins` | Official plugin data (`PluginRoot` default) |
 | `/run/anixops-agent/plugins` | Plugin sockets (`PluginSocketDir` default; the unit's `RuntimeDirectory=anixops-agent`) |
-| `/var/lib/anixops-gost` | gost configuration and link certificates |
-| `/usr/lib/anixops-agent/gost` | The pinned gost of the release |
 | `/var/lib/anixops-relay` | The anixops relay's configuration, state and link certificates (experimental) |
 | `/usr/lib/anixops-agent/anixops-relay` | The anixops relay of the release (experimental) |
 | `/var/lib/anixops-agent/upgrade` | Control-pushed upgrades: the staged release, `request.json`, the updater's `result.json` |
@@ -277,12 +279,10 @@ upgrades"). An Agent never upgrades on its own.
   Agent must stay active with one main process for 30 seconds, or the kept
   binary is reinstated and the Agent restarted again. The outcome goes to
   `result.json`, which the next Agent logs once at start.
-- **gost keeps running.** The updater never restarts
-  `anixops-gost.service`. A `gost` in the release replaces
-  `/usr/lib/anixops-agent/gost` only when its SHA-256 is the pinned one
-  (`upgrade.PinnedGostSHA256`, the release workflow's pin), so gost starts it
-  next time.
-- **The relay is not staged.** The updater unpacks only `anix-agent` and `gost`:
+- **gost is removed.** After a successful upgrade the updater deletes
+  `/usr/lib/anixops-agent/gost`, which earlier releases shipped; the new
+  Agent stops `anixops-gost.service` at start.
+- **The relay is not staged.** The updater unpacks only `anix-agent`:
   a new `anixops-relay` in a release arrives with the installer (or by hand),
   and the updater never restarts `anixops-relay.service` either, so a running
   relay keeps forwarding through an Agent update.
@@ -292,8 +292,6 @@ upgrades"). An Agent never upgrades on its own.
 Every release publishes, next to `anix-agent-linux-64.zip` and
 `anix-agent-linux-arm64-v8a.zip` (each with its `.dgst`):
 
-- the pinned gost v3 release (H20; 3.2.6, archive and binary checked by
-  SHA-256, the pin anix-control's CI uses) as `gost` inside each zip;
 - the experimental anixops relay as `anixops-relay` inside each zip (the
   release's own build, built from `cmd/anixops-relay`);
 - `SHA256SUMS` of both packages;
@@ -352,7 +350,6 @@ and installs these paths:
 | `/usr/local/anixops-agent/anix-agent` | GitHub Actions-built Agent binary |
 | `/etc/anixops/agent/config.json` | Persistent node configuration |
 | `/etc/anixops/agent/credential.json*` | Auto-register credentials when used (new templates: `/var/lib/anixops-agent/credential.json.enc`) |
-| `/usr/lib/anixops-agent/gost` | The pinned gost the release ships |
 | `/var/lib/anixops-agent` | Identity, stream state, forwarding state, plugin data |
 | `/usr/local/anixops-agent/backups/` | Previous binaries retained during update |
 | `/usr/local/anixops-agent/.release-version` | Installed release tag |

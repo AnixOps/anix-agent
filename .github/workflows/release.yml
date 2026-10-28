@@ -12,13 +12,6 @@ permissions:
   contents: read
 
 env:
-  # The gost v3 release every Agent package ships (H20), the one
-  # anix-control's ci.yml pins: archives and binaries checked by SHA-256.
-  GOST_VERSION: '3.2.6'
-  GOST_LINUX_AMD64_ARCHIVE_SHA256: 'b39037b0380ea001fb3c0c28441c2e10bfc694f90682739a65b53e55dce5238b'
-  GOST_LINUX_AMD64_BINARY_SHA256: 'a2aea24efb4597b5f57b35b8e1bbcc59f439b80723854d4371f6828b46682ffb'
-  GOST_LINUX_ARM64_ARCHIVE_SHA256: 'f674c8f4a033dc1dfd4f0d5e9602fbe5b0d0f81307bf3794f44b5b5d6d622eae'
-  GOST_LINUX_ARM64_BINARY_SHA256: '343c3e003996ca0437b9cc47dd1500cd0475ba09f5a5f17e50851854e06a1ca7'
   # The official AnixOps release key (anix-control plugins.official_public_key,
   # OFFICIAL_PUBLIC_KEY of its install.sh): base64 of the raw Ed25519 public
   # key. The signing secret must belong to it.
@@ -60,7 +53,7 @@ jobs:
       - name: Test release version gate
         run: python3 scripts/check_release_version.py --self-test
 
-      - name: Test release asset checks (gost in the package, SHA256SUMS, signatures)
+      - name: Test release asset checks (package contents, SHA256SUMS, signatures)
         run: |
           python3 scripts/check_release_assets.py --self-test
           python3 scripts/check_release_assets.py workflow --file .github/workflows/release.yml
@@ -182,28 +175,6 @@ jobs:
             curl -L "${DOWNLOAD_URL}" -o ./build_assets/${FILE_NAME}
           done
 
-      # The pinned gost (H20) ships in the package as `gost`; the O1
-      # installer installs it as /usr/lib/anixops-agent/gost, which
-      # anixops-gost.service runs.
-      - name: Bundle the pinned gost
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          case "${GOARCH}" in
-            amd64) archive_sha256="${GOST_LINUX_AMD64_ARCHIVE_SHA256}"; binary_sha256="${GOST_LINUX_AMD64_BINARY_SHA256}" ;;
-            arm64) archive_sha256="${GOST_LINUX_ARM64_ARCHIVE_SHA256}"; binary_sha256="${GOST_LINUX_ARM64_BINARY_SHA256}" ;;
-            *) echo "no pinned gost for ${GOARCH}" >&2; exit 1 ;;
-          esac
-          archive="${RUNNER_TEMP}/gost_${GOST_VERSION}_linux_${GOARCH}.tar.gz"
-          curl --fail --location --retry 3 --output "${archive}" \
-            "https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_${GOARCH}.tar.gz"
-          echo "${archive_sha256}  ${archive}" | sha256sum --check --strict
-          stage="$(mktemp -d "${RUNNER_TEMP}/gost.XXXXXX")"
-          tar -xzf "${archive}" -C "${stage}" gost
-          install -m 0755 "${stage}/gost" build_assets/gost
-          echo "${binary_sha256}  build_assets/gost" | sha256sum --check --strict
-          echo "GOST_BINARY_SHA256=${binary_sha256}" >> "$GITHUB_ENV"
-
       - name: Create ZIP archive
         shell: bash
         run: |
@@ -219,8 +190,8 @@ jobs:
             openssl dgst -$METHOD $FILE | sed 's/([^)]*)//g' >>$DGST
           done
 
-      - name: Check the package holds the Agent, the anixops relay and the pinned gost
-        run: python3 scripts/check_release_assets.py zip --zip "./anix-agent-${{ matrix.asset_name }}.zip" --gost-sha256 "${GOST_BINARY_SHA256}"
+      - name: Check the package holds the Agent and the anixops relay, and no gost
+        run: python3 scripts/check_release_assets.py zip --zip "./anix-agent-${{ matrix.asset_name }}.zip"
 
       - name: Upload files to Artifacts
         uses: actions/upload-artifact@v4

@@ -37,9 +37,9 @@ SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
 SYSCTL_DIR="${SYSCTL_DIR:-/etc/sysctl.d}"
 
 # Forwarding (forward-sdk.md sections 6, 9 and 14): ANIXOPS_FORWARD=1
-# prepares the node for the Agent's forward component: gost's account and
-# directory, the anixops-gost unit, the sysctl drop-in, and the Agent in
-# gost's group. ANIXOPS_RELAY=1 (with ANIXOPS_FORWARD=1) adds the same for the
+# prepares the node for the Agent's forward component: its state directory
+# and the sysctl drop-in. gost was removed (the network model replaced it):
+# every install retires the gost an earlier one set up. ANIXOPS_RELAY=1 (with ANIXOPS_FORWARD=1) adds the same for the
 # experimental anixops engine (anix-control anixops-protocol.md, H22): the
 # anixops-relay account and directory and the anixops-relay unit. The engine
 # stays off until Forward.AnixOps.Enable is set in the Agent's configuration.
@@ -560,13 +560,6 @@ install_files() {
         install -m 0600 "${extract_dir}/config.production.json" "${CONFIG_DIR}/config.json"
     fi
 
-    # The pinned gost (H20) the release ships, run by anixops-gost.service.
-    if [[ -f "${extract_dir}/gost" && ! -L "${extract_dir}/gost" ]]; then
-        mkdir -p "$(dirname "${GOST_BINARY}")"
-        install -m 0755 "${extract_dir}/gost" "${GOST_BINARY}.new"
-        mv -f "${GOST_BINARY}.new" "${GOST_BINARY}"
-    fi
-
     # The anixops relay (H22, experimental), run by anixops-relay.service.
     if [[ -f "${extract_dir}/anixops-relay" && ! -L "${extract_dir}/anixops-relay" ]]; then
         mkdir -p "$(dirname "${RELAY_BINARY}")"
@@ -603,40 +596,41 @@ migrate_layout() {
     "${BIN_PATH}" migrate-paths || warn "Could not copy every earlier directory to ${STATE_ROOT}; the Agent keeps using the earlier ones"
 }
 
+# retire_gost removes the gost an earlier install set up for the removed
+# gost driver: anixops-gost.service, the pinned binary, ${GOST_DIR} and the
+# anixops-gost account. Nothing happens on a host that never had it.
+retire_gost() {
+    if [[ -f "${SYSTEMD_UNIT_DIR}/anixops-gost.service" ]]; then
+        info "Removing gost (replaced by the network model) ..."
+        systemctl disable --now anixops-gost >/dev/null 2>&1 || true
+        rm -f "${SYSTEMD_UNIT_DIR}/anixops-gost.service"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    rm -f "${GOST_BINARY}"
+    rm -rf "${GOST_DIR}"
+    if id "${GOST_USER}" >/dev/null 2>&1; then
+        userdel "${GOST_USER}" >/dev/null 2>&1 || true
+    fi
+    if getent group "${GOST_USER}" >/dev/null 2>&1; then
+        groupdel "${GOST_USER}" >/dev/null 2>&1 || true
+    fi
+}
+
 # setup_forward prepares a forward-capable node (ANIXOPS_FORWARD=1):
-#   - gost's own system account and group anixops-gost (no shell, no home);
-#   - ${GOST_DIR} and its tls/ (link certificates) owned by root (the
-#     Agent's user) with group anixops-gost, mode 0750: only the Agent
-#     writes, only gost reads;
 #   - the Agent's forwarding state ${FORWARD_STATE_DIR}, mode 0700;
-#   - anixops-gost.service from the Agent itself (gost.UnitFile), enabled;
-#     it starts once the driver wrote its configuration;
 #   - /etc/sysctl.d/90-anixops-forward.conf: the kernel forwards IPv4 and
 #     IPv6 (nftables DNAT needs it).
-# The Agent's unit then gets SupplementaryGroups=anixops-gost (install_service)
-# so it reaches gost's web API socket.
 setup_forward() {
     [[ "${FORWARD}" == "1" ]] || return 0
     if [[ "${release}" == "alpine" ]]; then
-        warn "Forwarding needs systemd (the anixops-gost unit); skipped on OpenRC"
+        warn "Forwarding needs systemd; skipped on OpenRC"
         return 0
     fi
-    info "Preparing forwarding (gost account, directories, unit, sysctl) ..."
-    getent group "${GOST_USER}" >/dev/null 2>&1 || groupadd --system "${GOST_USER}"
-    if ! id "${GOST_USER}" >/dev/null 2>&1; then
-        useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin -g "${GOST_USER}" "${GOST_USER}"
-    fi
-    install -d -m 0750 -o root -g "${GOST_USER}" "${GOST_DIR}" "${GOST_DIR}/tls"
+    info "Preparing forwarding (directories, sysctl) ..."
     install -d -m 0700 -o root -g root "${FORWARD_STATE_DIR}"
     mkdir -p "${SYSTEMD_UNIT_DIR}" "${SYSCTL_DIR}"
-    "${BIN_PATH}" forward gost-unit >"${SYSTEMD_UNIT_DIR}/anixops-gost.service"
     "${BIN_PATH}" forward sysctl >"${SYSCTL_DIR}/90-anixops-forward.conf"
     sysctl -p "${SYSCTL_DIR}/90-anixops-forward.conf" >/dev/null 2>&1 || warn "Could not apply ${SYSCTL_DIR}/90-anixops-forward.conf now; it applies at the next boot"
-    systemctl daemon-reload
-    systemctl enable anixops-gost >/dev/null 2>&1 || true
-    if [[ ! -x "${GOST_BINARY}" ]]; then
-        warn "The pinned gost is not installed at ${GOST_BINARY}: the gost driver stays unavailable (nftables forwarding works)"
-    fi
     setup_relay
 }
 
@@ -655,6 +649,7 @@ setup_relay() {
         useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin -g "${RELAY_USER}" "${RELAY_USER}"
     fi
     install -d -m 0750 -o root -g "${RELAY_USER}" "${RELAY_DIR}" "${RELAY_DIR}/tls"
+    mkdir -p "${SYSTEMD_UNIT_DIR}"
     "${BIN_PATH}" forward relay-unit >"${SYSTEMD_UNIT_DIR}/anixops-relay.service"
     systemctl daemon-reload
     systemctl enable anixops-relay >/dev/null 2>&1 || true
@@ -665,11 +660,8 @@ setup_relay() {
 
 install_service() {
     local supplementary_groups=""
-    if [[ "${FORWARD}" == "1" ]] && getent group "${GOST_USER}" >/dev/null 2>&1; then
-        supplementary_groups="SupplementaryGroups=${GOST_USER}"
-        if [[ "${RELAY}" == "1" ]] && getent group "${RELAY_USER}" >/dev/null 2>&1; then
-            supplementary_groups="SupplementaryGroups=${GOST_USER} ${RELAY_USER}"
-        fi
+    if [[ "${FORWARD}" == "1" && "${RELAY}" == "1" ]] && getent group "${RELAY_USER}" >/dev/null 2>&1; then
+        supplementary_groups="SupplementaryGroups=${RELAY_USER}"
     fi
     if [[ "${release}" == "alpine" ]]; then
         mkdir -p "${OPENRC_INIT_DIR}"
@@ -793,7 +785,7 @@ ${INSTALL_DIR}/backups/ 以便服务启动失败时自动恢复。
 ${LEGACY_MANAGE_CMD_NAME} 命令继续作为兼容别名。
 
 环境变量（可选）:
-  ANIXOPS_FORWARD=1  准备转发节点：gost 账户与目录、anixops-gost 单元、
+  ANIXOPS_FORWARD=1  准备转发节点：转发状态目录、
                sysctl 转发配置（/etc/sysctl.d/90-anixops-forward.conf）
   ANIXOPS_RELAY=1  与 ANIXOPS_FORWARD=1 一起使用：再准备实验性 anixops 引擎的
                anixops-relay 账户与目录、anixops-relay 单元（引擎默认关闭，
@@ -864,6 +856,7 @@ main() {
     migrate_layout
     ensure_plugin_layout
     install_manage_script "${manager_path}"
+    [[ "${release}" == "alpine" ]] || retire_gost
     setup_forward
     install_service
 

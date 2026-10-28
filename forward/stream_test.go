@@ -327,8 +327,9 @@ func TestForwardNodeRunsDiagnosticChecks(t *testing.T) {
 	if answer.Success || answer.Result.Code != "hop_not_applied" {
 		t.Fatalf("missing hop %+v", answer)
 	}
+	// gost is gone: a forward node restarts no unit for Control.
 	if refused := send("service_restart", map[string]any{"service": "gost"}); refused.GetPhase() != agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED ||
-		!strings.Contains(refused.GetMessage(), "managed by the forward component") {
+		!strings.Contains(refused.GetMessage(), "not allowed") {
 		t.Fatalf("restart: %v", refused)
 	}
 }

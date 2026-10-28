@@ -36,30 +36,15 @@ type NodeConfig struct {
 	StateRoot string
 	// Component is the forward component, already started.
 	Component *Component
-	// GostUnit is gost's systemd unit for the diagnostic tasks; empty is
-	// anixops-gost.service.
-	GostUnit string
 	// Upgrader runs Control-pushed upgrades (agent.upgrade, upgrade.v1,
 	// listed when its updater is installed); nil turns them off.
 	Upgrader *upgrade.Agent
 }
 
-// DefaultGostUnit is the unit the gost driver runs gost as.
-const DefaultGostUnit = "anixops-gost.service"
-
 // NodeDiagnostics answers the agent.diagnostic executor of a node that
-// forwards with component: the forward checks, and the generic tasks on
-// gost's unit, which the component manages, so it is not restarted from
-// a task.
-func NodeDiagnostics(component *Component, gostUnit string) *diagnostic.Executor {
-	if gostUnit == "" {
-		gostUnit = DefaultGostUnit
-	}
-	return &diagnostic.Executor{
-		Forward:   component,
-		Units:     map[string]string{"gost": gostUnit},
-		NoRestart: map[string]string{"gost": "managed by the forward component"},
-	}
+// forwards with component: the forward checks.
+func NodeDiagnostics(component *Component) *diagnostic.Executor {
+	return &diagnostic.Executor{Forward: component, Units: map[string]string{}}
 }
 
 // DiagnosticCapabilities answers the operation capability of
@@ -101,7 +86,7 @@ func StartNode(ctx context.Context, config NodeConfig) (*Node, error) {
 	clientConfig := config.Client
 	clientConfig.NodeKind = agentcontrol.NodeKindForward
 	clientConfig.DataPlane = &agentapi.DataPlaneConfig{State: store, Config: applier, Forward: config.Component, Diagnostics: true}
-	diagnostics := NodeDiagnostics(config.Component, config.GostUnit)
+	diagnostics := NodeDiagnostics(config.Component)
 	upgrader := config.Upgrader
 	if upgrader != nil {
 		clientConfig.DataPlane.Upgrade = upgrader.Available(ctx)
