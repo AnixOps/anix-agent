@@ -140,6 +140,18 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node.CongestionControl != "" {
 			inbound["congestion_control"] = node.CongestionControl
 		}
+	case "anytls":
+		node := info.AnyTls
+		if node == nil {
+			return nil, errors.New("anytls node info is missing")
+		}
+		inbound["type"] = "anytls"
+		if err := addTLS(inbound, info, options, true); err != nil {
+			return nil, err
+		}
+		if len(node.PaddingScheme) > 0 {
+			inbound["padding_scheme"] = node.PaddingScheme
+		}
 	case "iwan":
 		node := info.Iwan
 		if node == nil {
@@ -381,7 +393,7 @@ func apiUserFor(info *panel.NodeInfo, user panel.UserInfo) (apiUser, error) {
 			return apiUser{}, fmt.Errorf("user %d uuid is too short for a shadowsocks key", user.Id)
 		}
 		out.Password = base64.StdEncoding.EncodeToString([]byte(user.Uuid[:keyLen]))
-	case "trojan", "hysteria2":
+	case "trojan", "hysteria2", "anytls":
 		out.Password = user.Uuid
 	case "tuic":
 		out.UUID = user.Uuid

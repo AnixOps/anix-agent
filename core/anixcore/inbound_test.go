@@ -149,6 +149,24 @@ func TestQuicProtocolsNeedCertificates(t *testing.T) {
 	if user.UUID == "" || user.Password != user.UUID {
 		t.Fatalf("tuic user = %+v", user)
 	}
+
+	anytls := &panel.NodeInfo{
+		Type:   "anytls",
+		Common: &panel.CommonNode{ServerPort: 8444},
+		AnyTls: &panel.AnyTlsNode{PaddingScheme: []string{"stop=2", "0=10-20"}},
+	}
+	inbound, err = inboundConfig("anytls", anytls, certOptions())
+	if err != nil || inbound["type"] != "anytls" || inbound["tls"] == nil ||
+		!reflect.DeepEqual(inbound["padding_scheme"], []string{"stop=2", "0=10-20"}) {
+		t.Fatalf("anytls inbound = %v, %v", inbound, err)
+	}
+	if _, err := inboundConfig("anytls", anytls, &conf.Options{}); err == nil {
+		t.Fatal("an anytls node without a certificate should be refused")
+	}
+	user, _ = apiUserFor(anytls, panel.UserInfo{Id: 2, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"})
+	if user.Password != "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11" {
+		t.Fatalf("anytls user = %+v", user)
+	}
 }
 
 func TestIwanInbound(t *testing.T) {

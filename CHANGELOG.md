@@ -11,6 +11,9 @@
   the matching anixcore transports, and VLESS REALITY may run over `xhttp`. Users carry the
   panel's `speed_limit` (Mbit/s) and `device_limit` to an anixcore whose `GET /v1/status`
   lists the `user_limits` feature; an older anixcore gets users without them.
+- **AnyTLS nodes on anixcore.** `anytls` nodes become anixcore AnyTLS inbounds (TLS from the
+  node's certificate, the panel's `padding_scheme`), users log in with their UUID as on the
+  sing-box core (networkcore AnyTLS inbound).
 - **Panel block routes on anixcore.** The `block` routes of every anixcore node are joined and
   sent to `PUT /v1/rules` (domain regular expressions as `regexp:` matchers; `bittorrent`/`bt`,
   `http` and `tls` protocols) when the kernel lists the `block_rules` feature, again after an
