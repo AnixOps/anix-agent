@@ -4,6 +4,11 @@
 
 ### Added
 
+- **anixcore first when installed.** Release builds now compile in the anixcore core. A node whose
+  configuration lists no cores runs anixcore ahead of Xray and sing-box once the `anixcore` binary
+  is on the PATH; without the binary anixcore is left out, so nodes behave as before. A core that
+  refuses a node (anixcore for a setting it lacks) hands it to the next core serving the protocol,
+  and production configurations may name `anixcore`.
 - **More panel nodes on anixcore.** Shadowsocks nodes with `aes-128-gcm`, `aes-256-gcm` or
   `chacha20-ietf-poly1305` become anixcore SIP004 inbounds whose users log in with their UUID,
   as on the other cores (networkcore #140). VLESS, VMess and Trojan nodes on `httpupgrade`

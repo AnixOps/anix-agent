@@ -6,7 +6,7 @@ COPY . .
 ENV CGO_ENABLED=0
 RUN GOEXPERIMENT=jsonv2 go mod download
 RUN GOEXPERIMENT=jsonv2 go build -v -o anix-agent \
-    -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" \
+    -tags "anixcore sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" \
     -ldflags "-X 'github.com/AnixOps/anix-agent/v5/cmd.version=${VERSION}' -s -w"
 
 # Release
