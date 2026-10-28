@@ -59,6 +59,9 @@ type nodeDataPlane struct {
 	// forward runs the forwarding state of the node's snapshots (F3b),
 	// nil when the node does not forward.
 	forward *forward.Component
+	// network runs the device's network plan (network.v1), nil when the
+	// node does not drive the core's network model.
+	network *networkComponent
 	// streamOnly marks a node without an API key (the O1 installer's
 	// credential-only configuration): it has no legacy transport, so it
 	// waits for the stream (enrollment, then Control's snapshot) instead
@@ -152,6 +155,13 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 	}
 	if err := n.reconcileExtras(ctx, snapshot); err != nil {
 		errs = append(errs, err)
+	}
+	if n.network != nil {
+		// After the inbounds: the core joins them to the plan's
+		// ingresses.
+		if err := n.network.apply(snapshot); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if err := n.applyEgress(snapshot); err != nil {
 		errs = append(errs, err)

@@ -247,6 +247,9 @@ func (n *nodeDataPlane) close() {
 			<-n.stopped
 		}
 		n.background.Wait()
+		if n.network != nil {
+			n.network.close()
+		}
 	})
 }
 

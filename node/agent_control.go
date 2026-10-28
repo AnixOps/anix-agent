@@ -131,6 +131,9 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		if dataPlane.forward != nil {
 			attachForward(dataPlane.forward, client)
 		}
+		if dataPlane.network != nil {
+			dataPlane.network.attach(client)
+		}
 	}
 	controller.agentClient = client
 	return client, nil
@@ -189,6 +192,10 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 		// controller runs Control's forward checks (diag.v1).
 		config.Forward = dataPlane.forward
 		config.Diagnostics = true
+	}
+	if dataPlane.network != nil {
+		// The stream carries the device's network plan (network.v1).
+		config.Network = dataPlane.network
 	}
 	if supervisor := dataPlane.supervisor(); supervisor != nil {
 		// The plugin supervisor's maintenance outbox (maintenance.v1) and

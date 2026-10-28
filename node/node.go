@@ -162,6 +162,7 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 		client *agentapi.Client
 	}
 	var operationsOnly []pendingClient
+	networkClaimed := false
 	for _, nodeID := range agentNodeOrder {
 		candidate := agentNodes[nodeID]
 		if candidate.supervisor == nil {
@@ -179,6 +180,12 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 			dataPlane = newNodeDataPlane(nodeID, nodeControllers(n.controllers, controllerIdentities, nodeID, candidate.identity))
 			if n.forward != nil && nodeID == n.forwardNodeID {
 				dataPlane.forward = n.forward
+			}
+			if !networkClaimed {
+				// The core runs one plan: the first node with a data
+				// plane drives it.
+				dataPlane.network = newNetworkComponent(nodeID, core)
+				networkClaimed = dataPlane.network != nil
 			}
 			dataPlane.streamOnly = strings.TrimSpace(candidate.apiConfig.Key) == ""
 		}

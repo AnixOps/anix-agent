@@ -261,6 +261,16 @@ func NewClient(config Config) (*Client, error) {
 					}
 					capability = forward
 				}
+				if name == agentcontrol.CapabilityNetwork {
+					// The device's capabilities ride in the attribute,
+					// so Control checks them before planning.
+					network, err := plane.config.Network.HelloCapability()
+					if err != nil {
+						cancel()
+						return nil, fmt.Errorf("agent capability network.v1: %w", err)
+					}
+					capability = network
+				}
 				client.config.Capabilities = append(client.config.Capabilities, capability)
 			}
 		}
@@ -1359,6 +1369,14 @@ func (c *Client) sessionCapabilities(presented bool) []*agentv1pb.Capability {
 			} else {
 				log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID, "error": err}).
 					Warn("Could not refresh the node's forwarding capabilities; listing the previous ones")
+			}
+		}
+		if capability.Name == agentcontrol.CapabilityNetwork && c.dataPlane != nil && c.dataPlane.config.Network != nil {
+			if current, err := c.dataPlane.config.Network.HelloCapability(); err == nil {
+				capability = current
+			} else {
+				log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID, "error": err}).
+					Warn("Could not refresh the device's network capabilities; listing the previous ones")
 			}
 		}
 		capabilities = append(capabilities, capability)

@@ -4,6 +4,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
+	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 )
 
 type AddUsersParams struct {
@@ -62,4 +63,15 @@ type DestinationProvider interface {
 // ran from the previous call; an empty configuration removes it all.
 type EgressApplier interface {
 	ApplyEgress(config *panel.EgressConfig) error
+}
+
+// NetworkApplier is implemented by cores that run the device network model
+// (anixops.network.v1, anix-control docs/design/network-model): the anixcore
+// core. NetworkKinds lists the components the core runs, empty when it runs
+// none. ApplyNetwork replaces the device's plan (nil removes it) and
+// answers the core's status of it; NetworkStatus reads that status again.
+type NetworkApplier interface {
+	NetworkKinds() []*networkv1.KindSupport
+	ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStatus, error)
+	NetworkStatus() (*networkv1.NetworkStatus, error)
 }

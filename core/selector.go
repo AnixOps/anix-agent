@@ -9,6 +9,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
+	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 )
 
 // ErrNodeNotFound is answered for a tag the core does not run. A caller
@@ -248,4 +249,44 @@ func (s *Selector) ApplyEgress(config *panel.EgressConfig) error {
 		return nil
 	}
 	return ErrEgressUnsupported
+}
+
+// networkApplier is the first core in configuration order that runs the
+// device network model, nil for none.
+func (s *Selector) networkApplier() NetworkApplier {
+	for _, key := range s.order {
+		if applier, ok := s.cores[key].(NetworkApplier); ok && len(applier.NetworkKinds()) > 0 {
+			return applier
+		}
+	}
+	return nil
+}
+
+// NetworkKinds implements NetworkApplier: the kinds of the first core that
+// runs the network model, which runs it all.
+func (s *Selector) NetworkKinds() []*networkv1.KindSupport {
+	if applier := s.networkApplier(); applier != nil {
+		return applier.NetworkKinds()
+	}
+	return nil
+}
+
+// ErrNetworkUnsupported is answered for a network plan when no core of the
+// configuration runs it.
+var ErrNetworkUnsupported = errors.New("no core of this Agent runs the network model (it needs the anixcore core)")
+
+// ApplyNetwork implements NetworkApplier.
+func (s *Selector) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStatus, error) {
+	if applier := s.networkApplier(); applier != nil {
+		return applier.ApplyNetwork(plan)
+	}
+	return nil, ErrNetworkUnsupported
+}
+
+// NetworkStatus implements NetworkApplier.
+func (s *Selector) NetworkStatus() (*networkv1.NetworkStatus, error) {
+	if applier := s.networkApplier(); applier != nil {
+		return applier.NetworkStatus()
+	}
+	return nil, ErrNetworkUnsupported
 }
