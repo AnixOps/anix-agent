@@ -1,0 +1,263 @@
+// ANX node management API (public boundary copy).
+//
+// anix-agent drives a separate anx-server / anx-node process over this gRPC
+// service. Only the message shapes are public; the protocol itself is not.
+// Generated from the private source of truth; do not edit by hand — CI in the
+// private repo checks that this file matches it field for field.
+syntax = "proto3";
+
+package anx.mgmt.v1;
+
+service Management {
+  // Users
+  rpc AddUsers(AddUsersRequest) returns (AddUsersResponse);
+  rpc RemoveUsers(RemoveUsersRequest) returns (RemoveUsersResponse);
+  // Traffic and online
+  rpc GetTraffic(GetTrafficRequest) returns (GetTrafficResponse);
+  rpc GetOnline(GetOnlineRequest) returns (GetOnlineResponse);
+  // Jacket and shape profile
+  rpc SetJacket(SetJacketRequest) returns (SetJacketResponse);
+  rpc PushShapeProfile(PushShapeProfileRequest) returns (PushShapeProfileResponse);
+  // Observability
+  rpc Stats(StatsRequest) returns (StatsResponse);
+  // Operations
+  rpc RotateListeners(RotateListenersRequest) returns (RotateListenersResponse);
+  rpc SetIngressPool(SetIngressPoolRequest) returns (SetIngressPoolResponse);
+  // Device identity
+  rpc IssueDevice(IssueDeviceRequest) returns (IssueDeviceResponse);
+  rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc SetDeviceLimit(SetDeviceLimitRequest) returns (SetDeviceLimitResponse);
+  rpc RotateIntermediateCa(RotateIntermediateCaRequest) returns (RotateIntermediateCaResponse);
+  // ANX-Line links (ingress node)
+  rpc AddLinks(AddLinksRequest) returns (AddLinksResponse);
+  rpc RemoveLinks(RemoveLinksRequest) returns (RemoveLinksResponse);
+  rpc RotateLinkKey(RotateLinkKeyRequest) returns (RotateLinkKeyResponse);
+  rpc LinkStats(LinkStatsRequest) returns (LinkStatsResponse);
+  // Per-user next-hop routes (relay node)
+  rpc SetLinkRoutes(SetLinkRoutesRequest) returns (SetLinkRoutesResponse);
+}
+
+message User {
+  // 32-byte user key; the server derives user_id from it.
+  bytes user_key = 1;
+  // Panel-side identifier, for reconciliation.
+  string external_id = 2;
+  // 0 = unlimited.
+  uint64 speed_limit_bps = 3;
+  uint32 device_limit = 4;
+}
+
+message AddUsersRequest { repeated User users = 1; }
+message AddUsersResponse { repeated bytes user_ids = 1; }
+
+message RemoveUsersRequest { repeated bytes user_ids = 1; }
+message RemoveUsersResponse { uint32 removed = 1; }
+
+message GetTrafficRequest { bool reset = 1; }
+message UserTraffic {
+  bytes user_id = 1;
+  uint64 upload_bytes = 2;
+  uint64 download_bytes = 3;
+}
+message GetTrafficResponse { repeated UserTraffic traffic = 1; }
+
+message GetOnlineRequest {}
+message UserOnline {
+  bytes user_id = 1;
+  uint32 connections = 2;
+  // Source addresses as seen by the server.
+  repeated string source_ips = 3;
+}
+message GetOnlineResponse { repeated UserOnline online = 1; }
+
+message RealityJacket {
+  // Camouflage target host:port.
+  string dest = 1;
+  repeated string server_names = 2;
+}
+message H2Jacket {
+  string cert_path = 1;
+  string key_path = 2;
+  string path = 3;
+  string auth_header = 4;
+  // Off by default.
+  bool mtls_required = 5;
+  string client_ca_path = 6;
+}
+message SetJacketRequest {
+  oneof jacket {
+    RealityJacket reality = 1;
+    H2Jacket h2 = 2;
+  }
+}
+message SetJacketResponse {}
+
+message PushShapeProfileRequest {
+  // Opaque blob produced by private tooling; pass through unchanged.
+  bytes profile = 1;
+  // Empty = all users; otherwise only these user_ids (staged rollout).
+  repeated bytes user_ids = 2;
+}
+message PushShapeProfileResponse { uint32 profile_id = 1; }
+
+message StatsRequest { bool reset = 1; }
+message RegionStat {
+  string region = 1;
+  uint64 attempts = 2;
+  uint64 successes = 3;
+}
+message StatsResponse {
+  uint64 handshake_failures = 1;
+  uint64 fallbacks = 2;
+  uint64 replay_rejects = 3;
+  uint64 probe_signatures = 4;
+  repeated RegionStat regions = 5;
+}
+
+message Listener {
+  string address = 1;
+  // "reality" | "h2"
+  string jacket = 2;
+}
+message RotateListenersRequest { repeated Listener listeners = 1; }
+message RotateListenersResponse { repeated Listener active = 1; }
+
+message SetIngressPoolRequest {
+  // Ingress addresses (host:port) handed to clients.
+  repeated string addresses = 1;
+}
+message SetIngressPoolResponse {}
+
+message IssueDeviceRequest {
+  bytes user_id = 1;
+  // Device public key (P-256 SPKI or 32-byte Ed25519).
+  bytes device_public_key = 2;
+  uint32 validity_secs = 3;
+}
+message IssueDeviceResponse {
+  bytes device_id = 1;
+  bytes certificate = 2;
+}
+message RevokeDeviceRequest { bytes device_id = 1; }
+message RevokeDeviceResponse {}
+message ListDevicesRequest { bytes user_id = 1; }
+message Device {
+  bytes device_id = 1;
+  bytes user_id = 2;
+  uint64 not_after_unix = 3;
+  bool revoked = 4;
+}
+message ListDevicesResponse { repeated Device devices = 1; }
+message SetDeviceLimitRequest {
+  bytes user_id = 1;
+  uint32 device_limit = 2;
+}
+message SetDeviceLimitResponse {}
+message RotateIntermediateCaRequest {}
+message RotateIntermediateCaResponse { bytes ca_public_key = 1; }
+
+// ---------------------------------------------------------------- ANX-Line links
+
+// Probing and carrier switching. Zero / empty fields use built-in defaults.
+message LinePolicy {
+  // Carrier preference: "c1"|"tcp", "c2"|"quic", "c3"|"faketcp". Empty = default order.
+  repeated string order = 1;
+  uint32 probe_timeout_ms = 2;
+  double switch_after_loss_pct = 3;
+  uint32 loss_window_ms = 4;
+  uint32 drain_ms = 5;
+  uint32 blackhole_ms = 6;
+  // Experimental switch: multipath.
+  bool multipath = 7;
+  // Experimental switch: fec.
+  bool fec = 8;
+  // 0 = default.
+  uint32 fec_max_delay_ms = 9;
+  // true = disable connection migration.
+  bool no_rebind = 10;
+  // 0 = default.
+  uint32 rebind_min_interval_ms = 11;
+  // 0 = off (default).
+  uint32 port_hop_ms = 12;
+  // Experimental switch: quic_ack_frequency.
+  bool quic_ack_frequency = 13;
+  // 0 = default.
+  uint32 quic_mtu_upper_bound = 14;
+  // 0 = default.
+  uint32 quic_initial_mtu = 15;
+}
+
+message Link {
+  string link_id = 1;
+  // 32 bytes, same shape as User.user_key; the egress node gets it via AddUsers.
+  bytes link_key = 2;
+  // Egress node public key text (as printed by `anx-server keygen`).
+  string server_public = 3;
+  // Per-carrier peer address host:port; empty = carrier unavailable. faketcp_addr is IPv4 only.
+  string quic_addr = 4;
+  string faketcp_addr = 5;
+  string tcp_addr = 6;
+  // "l1" | "l2". Empty = l1. l2 accepts tcp_addr only.
+  string egress = 7;
+  LinePolicy policy = 8;
+  // This node's default egress link.
+  bool default_route = 9;
+  // Required for l2: SNI, one of the egress node's server_names.
+  string server_name = 10;
+}
+
+message AddLinksRequest { repeated Link links = 1; }
+message AddLinksResponse { uint32 added = 1; }
+
+message RemoveLinksRequest { repeated string link_ids = 1; }
+message RemoveLinksResponse { uint32 removed = 1; }
+
+message RotateLinkKeyRequest {
+  string link_id = 1;
+  bytes new_key = 2;
+  // How long the old link keeps draining; 0 = 600.
+  uint32 overlap_secs = 3;
+}
+message RotateLinkKeyResponse {}
+
+// Traffic from user_id leaves through link_id.
+message LinkRoute {
+  bytes user_id = 1;
+  string link_id = 2;
+}
+// Replaces the whole route table (not persisted; re-send after reconnect). Empty = clear.
+// Every link_id must already exist, otherwise the whole batch is rejected.
+message SetLinkRoutesRequest { repeated LinkRoute routes = 1; }
+message SetLinkRoutesResponse {}
+
+message LinkStatsRequest {}
+message CarrierProbe {
+  string carrier = 1;
+  bool ok = 2;
+  uint32 handshake_ms = 3;
+}
+message LinkStat {
+  string link_id = 1;
+  bool default_route = 2;
+  // Link established (links are created lazily on first flow).
+  bool connected = 3;
+  string carrier = 4;
+  uint64 switches = 5;
+  repeated CarrierProbe probes = 6;
+  // QUIC carriers only; zero on c1.
+  uint32 rtt_ms = 7;
+  uint64 sent_packets = 8;
+  uint64 lost_packets = 9;
+  // Old links still draining after a key rotation.
+  uint32 draining = 10;
+  // "l1" | "l2"
+  string egress = 11;
+  bool mptcp = 12;
+  // fec counters; zero on c1.
+  uint64 fec_repairs_sent = 13;
+  uint64 fec_recovered = 14;
+  uint64 rebinds = 15;
+  uint32 routed_users = 16;
+}
+message LinkStatsResponse { repeated LinkStat links = 1; }
