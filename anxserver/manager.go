@@ -3,8 +3,10 @@ package anxserver
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
 	"os"
@@ -21,6 +23,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 // Files in the Manager's directory.
@@ -322,11 +325,20 @@ func (s *server) status() []*networkv1.ComponentStatus {
 		state = networkv1.ComponentState_COMPONENT_STATE_APPLIED
 	}
 	var components []*networkv1.ComponentStatus
+	relayed := map[string]bool{}
 	for _, accept := range s.wanted {
 		components = append(components, &networkv1.ComponentStatus{
 			Component: networkv1.Component_COMPONENT_TRANSPORT, Id: accept.Transport, State: state,
 			Detail: s.detail, ChangedAtUnixMs: s.since.UnixMilli(),
 		})
+		// The dialing transport a relay hop relays into is this process's.
+		if next := accept.Next.GetLinkId(); next != "" && !relayed[next] {
+			relayed[next] = true
+			components = append(components, &networkv1.ComponentStatus{
+				Component: networkv1.Component_COMPONENT_TRANSPORT, Id: next, State: state,
+				Detail: s.detail, ChangedAtUnixMs: s.since.UnixMilli(),
+			})
+		}
 	}
 	return components
 }
@@ -381,9 +393,14 @@ func (s *server) serve() error {
 	}
 	defer func() { _ = closeClient() }()
 	admitted := map[string]admitted{}
+	relay := &relaying{links: map[string]*anxmgmtpb.Link{}}
 	first := true
 	for {
-		if err := s.admit(client, admitted, process, first); err != nil {
+		err := s.admit(client, admitted, process, first)
+		if err == nil {
+			err = s.relay(client, admitted, relay)
+		}
+		if err != nil {
 			select {
 			case <-process.Done():
 				return exited(process)
@@ -481,6 +498,101 @@ func (s *server) admit(client anxmgmtpb.ManagementClient, current map[string]adm
 		case <-time.After(readyPoll):
 		}
 	}
+}
+
+// relaying is what a process relays: the links it holds and its route
+// table, user id (hex) to link id.
+type relaying struct {
+	links  map[string]*anxmgmtpb.Link
+	routes map[string]string
+	set    bool
+}
+
+// relay makes the process hold exactly the links the wanted accepts relay
+// into and route each such accept's link there (SetLinkRoutes, ANX-Line
+// §4.5). The admitted links are current.
+func (s *server) relay(client anxmgmtpb.ManagementClient, current map[string]admitted, state *relaying) error {
+	s.mu.Lock()
+	wanted := s.wanted
+	s.mu.Unlock()
+	links := map[string]*anxmgmtpb.Link{}
+	routes := map[string]string{}
+	var table []*anxmgmtpb.LinkRoute
+	for _, accept := range wanted {
+		if accept.Next == nil {
+			continue
+		}
+		if _, ok := links[accept.Next.GetLinkId()]; !ok {
+			links[accept.Next.GetLinkId()] = accept.Next
+		}
+		have, ok := current[accept.LinkID]
+		if !ok {
+			return fmt.Errorf("relay %s: the link is not admitted", accept.Transport)
+		}
+		routes[hex.EncodeToString(have.userID)] = accept.Next.GetLinkId()
+		table = append(table, &anxmgmtpb.LinkRoute{UserId: have.userID, LinkId: accept.Next.GetLinkId()})
+	}
+	var remove []string
+	for id, link := range state.links {
+		if want, ok := links[id]; !ok || !proto.Equal(want, link) {
+			remove = append(remove, id)
+		}
+	}
+	var add []*anxmgmtpb.Link
+	for id, link := range links {
+		if have, ok := state.links[id]; !ok || !proto.Equal(have, link) {
+			add = append(add, link)
+		}
+	}
+	if len(remove)+len(add) == 0 && maps.Equal(routes, state.routes) && (state.set || len(routes) == 0) {
+		return nil
+	}
+	sort.Strings(remove)
+	sort.Slice(add, func(i, j int) bool { return add[i].GetLinkId() < add[j].GetLinkId() })
+	sort.Slice(table, func(i, j int) bool { return bytes.Compare(table[i].GetUserId(), table[j].GetUserId()) < 0 })
+	call := func(do func(ctx context.Context) error) error {
+		ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+		defer cancel()
+		return do(ctx)
+	}
+	if len(remove) > 0 {
+		// No route may name a link that goes: clear them first.
+		if err := call(func(ctx context.Context) error {
+			_, err := client.SetLinkRoutes(ctx, &anxmgmtpb.SetLinkRoutesRequest{})
+			return err
+		}); err != nil {
+			return fmt.Errorf("clear link routes: %w", err)
+		}
+		state.set = false
+		if err := call(func(ctx context.Context) error {
+			_, err := client.RemoveLinks(ctx, &anxmgmtpb.RemoveLinksRequest{LinkIds: remove})
+			return err
+		}); err != nil {
+			return fmt.Errorf("remove relay links: %w", err)
+		}
+		for _, id := range remove {
+			delete(state.links, id)
+		}
+	}
+	if len(add) > 0 {
+		if err := call(func(ctx context.Context) error {
+			_, err := client.AddLinks(ctx, &anxmgmtpb.AddLinksRequest{Links: add})
+			return err
+		}); err != nil {
+			return fmt.Errorf("add relay links: %w", err)
+		}
+		for _, link := range add {
+			state.links[link.GetLinkId()] = link
+		}
+	}
+	if err := call(func(ctx context.Context) error {
+		_, err := client.SetLinkRoutes(ctx, &anxmgmtpb.SetLinkRoutesRequest{Routes: table})
+		return err
+	}); err != nil {
+		return fmt.Errorf("set link routes: %w", err)
+	}
+	state.routes, state.set = routes, true
+	return nil
 }
 
 // freePort answers a free loopback TCP address.

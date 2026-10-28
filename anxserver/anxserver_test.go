@@ -3,9 +3,11 @@ package anxserver
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -78,12 +80,40 @@ func TestAccepts(t *testing.T) {
 	onward := acceptPlan()
 	onward.Forwarding[0].Next = &networkv1.Forwarding_TransportId{TransportId: "tr-w"}
 	_, err = Accepts(onward)
-	assert.ErrorContains(t, err, "forwarding into transport tr-w")
+	assert.ErrorContains(t, err, `forwarded into transport "tr-w"`)
 
 	bad := acceptPlan()
 	bad.Transports[0].GetAnxLine().LinkKey = "00"
 	_, err = Accepts(bad)
 	assert.ErrorContains(t, err, "32 bytes")
+}
+
+// relayPlan forwards tr-a into the dialing transport tr-n: this device is
+// a relay hop.
+func relayPlan() *networkv1.NetworkPlan {
+	plan := acceptPlan()
+	plan.Transports = append(plan.Transports, &networkv1.Transport{Id: "tr-n", Kind: network.TransportAnxLine,
+		Role: networkv1.TransportRole_TRANSPORT_ROLE_DIAL, Settings: &networkv1.Transport_AnxLine{AnxLine: &networkv1.AnxLineSettings{
+			LinkId: "tr-n", LinkKey: strings.Repeat("6a", 32), ServerPublic: "PUB-N", TcpAddr: "198.51.100.30:443",
+			Egress: "l2", ServerName: "www.example.org"}}})
+	plan.Forwarding[0].Next = &networkv1.Forwarding_TransportId{TransportId: "tr-n"}
+	return plan
+}
+
+func TestAcceptsRelay(t *testing.T) {
+	plan := relayPlan()
+	accepts, err := Accepts(plan)
+	require.NoError(t, err)
+	require.NotNil(t, accepts[0].Next)
+	assert.Equal(t, "tr-n", accepts[0].Next.GetLinkId())
+	assert.Equal(t, "l2", accepts[0].Next.GetEgress())
+	assert.Equal(t, uint32(1), accepts[0].Next.GetUdpLanes())
+	assert.Empty(t, accepts[0].Sources, "relayed traffic leaves by the link")
+	assert.Nil(t, accepts[1].Next)
+	assert.Equal(t, map[string]bool{"tr-n": true}, Relayed(plan))
+
+	plan.Paths = []*networkv1.Path{{Id: "pa", Next: &networkv1.Path_TransportId{TransportId: "tr-n"}}}
+	assert.Empty(t, Relayed(plan), "a path into it is the core's too")
 }
 
 func TestGroup(t *testing.T) {
@@ -126,6 +156,8 @@ type fakeHost struct {
 	mu        sync.Mutex
 	processes []*fakeProcess
 	users     map[string]string // user id -> link id
+	relays    map[string]bool   // relay links held
+	routes    map[string]string // admitted link -> relay link
 	next      int
 	// unready fails the next AddUsers calls, as a process still starting.
 	unready int
@@ -136,7 +168,7 @@ func (h *fakeHost) launch(binary string, args []string) (Process, error) {
 	defer h.mu.Unlock()
 	process := &fakeProcess{args: append([]string{binary}, args...), done: make(chan struct{})}
 	h.processes = append(h.processes, process)
-	h.users = map[string]string{}
+	h.users, h.relays, h.routes = map[string]string{}, map[string]bool{}, map[string]string{}
 	return process, nil
 }
 
@@ -168,6 +200,56 @@ func (h *fakeHost) RemoveUsers(_ context.Context, in *anxmgmtpb.RemoveUsersReque
 		delete(h.users, string(id))
 	}
 	return &anxmgmtpb.RemoveUsersResponse{Removed: uint32(len(in.GetUserIds()))}, nil
+}
+
+func (h *fakeHost) AddLinks(_ context.Context, in *anxmgmtpb.AddLinksRequest, _ ...grpc.CallOption) (*anxmgmtpb.AddLinksResponse, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, link := range in.GetLinks() {
+		h.relays[link.GetLinkId()] = true
+	}
+	return &anxmgmtpb.AddLinksResponse{Added: uint32(len(in.GetLinks()))}, nil
+}
+
+func (h *fakeHost) RemoveLinks(_ context.Context, in *anxmgmtpb.RemoveLinksRequest, _ ...grpc.CallOption) (*anxmgmtpb.RemoveLinksResponse, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, id := range in.GetLinkIds() {
+		for _, link := range h.routes {
+			if link == id {
+				return nil, errors.New("the link has routes")
+			}
+		}
+		delete(h.relays, id)
+	}
+	return &anxmgmtpb.RemoveLinksResponse{Removed: uint32(len(in.GetLinkIds()))}, nil
+}
+
+func (h *fakeHost) SetLinkRoutes(_ context.Context, in *anxmgmtpb.SetLinkRoutesRequest, _ ...grpc.CallOption) (*anxmgmtpb.SetLinkRoutesResponse, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	routes := map[string]string{}
+	for _, route := range in.GetRoutes() {
+		if !h.relays[route.GetLinkId()] {
+			return nil, errors.New("no such link")
+		}
+		routes[h.users[string(route.GetUserId())]] = route.GetLinkId()
+	}
+	h.routes = routes
+	return &anxmgmtpb.SetLinkRoutesResponse{}, nil
+}
+
+// relayed answers the routes as admitted link -> relay link, and the relay
+// links held.
+func (h *fakeHost) relayed() (map[string]string, []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var links []string
+	for id := range h.relays {
+		links = append(links, id)
+	}
+	sort.Strings(links)
+	return maps.Clone(h.routes), links
 }
 
 func (h *fakeHost) links() []string {
@@ -289,6 +371,38 @@ func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 	default:
 		t.Fatal("the process was not stopped")
 	}
+}
+
+// A relay hop's process holds the link it relays into and routes the
+// accepted link there; a restarted process gets both again, and a plan
+// without the relay clears the route and removes the link.
+func TestManagerRelays(t *testing.T) {
+	host := &fakeHost{}
+	m, _ := newManager(t, host)
+	accepts, err := Accepts(relayPlan())
+	require.NoError(t, err)
+	accepts = accepts[:1]
+
+	require.NoError(t, m.Apply(accepts))
+	applied(t, m, "tr-a", "tr-n")
+	want := func(routes map[string]string, links []string) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			gotRoutes, gotLinks := host.relayed()
+			return assert.ObjectsAreEqual(routes, gotRoutes) && assert.ObjectsAreEqual(links, gotLinks)
+		}, 2*time.Second, 5*time.Millisecond)
+	}
+	want(map[string]string{"tr-a": "tr-n"}, []string{"tr-n"})
+
+	host.last().Stop()
+	require.Eventually(t, func() bool { return host.started() == 2 }, 2*time.Second, 5*time.Millisecond)
+	want(map[string]string{"tr-a": "tr-n"}, []string{"tr-n"})
+
+	plain, err := Accepts(acceptPlan())
+	require.NoError(t, err)
+	require.NoError(t, m.Apply(plain[:1]))
+	applied(t, m, "tr-a")
+	want(map[string]string{}, nil)
 }
 
 func TestManagerReportsADownServer(t *testing.T) {

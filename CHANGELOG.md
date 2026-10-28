@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Relay hops of `anx_line` transports.** When the plan forwards an accepted transport into a
+  dialing `anx_line` transport (`forwarding[].transport_id`), the accepting anx-server holds
+  that link (`AddLinks`) and routes the accepted link's user there (`SetLinkRoutes`), so a
+  multi-hop route passes the device without leaving it; the relayed transport is reported
+  with the process. A dialing transport only relay hops use is anx-server's, not anx-node's,
+  so a relay-only device needs no anx-node.
 - **Port forwards of the network model (anixcore core).** Each of the plan's `port_forwards`
   (forward rules moved off gost) runs as an anixcore `forward` inbound tagged
   `forward-<id>`, added after the plan: its traffic leaves by `egress:<id>` or, into a
