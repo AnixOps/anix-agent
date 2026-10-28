@@ -100,8 +100,8 @@ jobs:
         shell: bash
         run: |
           bash api/grpc/gen.sh
-          git diff --exit-code -- api/grpc/v2boardpb
-          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb)"
+          git diff --exit-code -- api/grpc/v2boardpb api/anxmgmt
+          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb api/anxmgmt)"
 
   nftables-forward-integration:
     name: nftables-forward IPv4/IPv6 namespace acceptance

@@ -3,9 +3,12 @@ package node
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/AnixOps/anix-agent/v5/anxserver"
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/networkroute"
@@ -14,6 +17,7 @@ import (
 	"github.com/AnixOps/anix-control/sdk/network"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeNetworkCore is a core that runs the network model.
@@ -74,11 +78,20 @@ func devicePlan(generation uint64, egressKind string) *networkv1.NetworkPlan {
 	return plan
 }
 
-// withoutRouting makes the components of the test have no policy routing.
+// withoutRouting makes the components of the test have no policy routing
+// (and no anx-server).
 func withoutRouting(t *testing.T) {
 	previous := networkRouting
 	networkRouting = func() *networkroute.Manager { return nil }
 	t.Cleanup(func() { networkRouting = previous })
+	withoutServers(t)
+}
+
+// withoutServers makes the components of the test have no anx-server.
+func withoutServers(t *testing.T) {
+	previous := networkServers
+	networkServers = func() *anxserver.Manager { return nil }
+	t.Cleanup(func() { networkServers = previous })
 }
 
 func TestNetworkComponentNeedsACoreThatRunsTheModel(t *testing.T) {
@@ -154,6 +167,7 @@ func TestNetworkComponentRoutesAddressSources(t *testing.T) {
 		}}
 	}
 	t.Cleanup(func() { networkRouting = previous })
+	withoutServers(t)
 
 	core := &fakeNetworkCore{kinds: networkKinds()}
 	component := newNetworkComponent(1, core)
@@ -177,4 +191,80 @@ func TestNetworkComponentRoutesAddressSources(t *testing.T) {
 	require.NoError(t, component.apply(networkSnapshot(t, empty)))
 	assert.Empty(t, calls, "no rule of the range was there to remove")
 	require.Len(t, core.applied, 2)
+}
+
+// With anx-server the Agent accepts anx_line transports: their server
+// runs beside the core's plan, and a dialing end is refused.
+func TestNetworkComponentAcceptsAnxLine(t *testing.T) {
+	withoutRouting(t)
+	launched := make(chan []string, 1)
+	previous := networkServers
+	networkServers = func() *anxserver.Manager {
+		return &anxserver.Manager{
+			Binary: "anx-server", Dir: t.TempDir(),
+			Run: func(_ string, args ...string) ([]byte, error) {
+				require.NoError(t, os.WriteFile(args[1], []byte("secret"), 0o600))
+				return []byte("public: SERVER-PUBLIC\n"), nil
+			},
+			Launch: func(_ string, args []string) (anxserver.Process, error) {
+				select {
+				case launched <- args:
+				default:
+				}
+				return nil, errors.New("not here")
+			},
+		}
+	}
+	t.Cleanup(func() { networkServers = previous })
+
+	core := &fakeNetworkCore{kinds: append(networkKinds(), &networkv1.KindSupport{
+		Component: networkv1.Component_COMPONENT_EGRESS, Kind: network.EgressHop, Versions: []uint32{1}})}
+	component := newNetworkComponent(1, core)
+	require.NotNil(t, component)
+	t.Cleanup(component.close)
+	assert.Contains(t, component.caps.GetKinds(), &networkv1.KindSupport{
+		Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: "agent",
+	})
+
+	plan := &networkv1.NetworkPlan{
+		DeviceRef: "proxy-1",
+		Lines:     []*networkv1.Line{{Id: "ln-1", Interface: "eth0", Families: []networkv1.Family{networkv1.Family_FAMILY_V4}}},
+		Ingresses: []*networkv1.Ingress{{Id: "in-hop", LineId: "ln-1", Kind: network.IngressDirect, KindVersion: 1,
+			Audience: networkv1.Audience_AUDIENCE_HOP, Family: networkv1.Family_FAMILY_V4,
+			Listen: &networkv1.Endpoint{Address: "198.51.100.10", Port: 443}}},
+		Egresses: []*networkv1.Egress{{Id: "eg-1", LineId: "ln-1", Kind: network.EgressNATDirect, KindVersion: 1,
+			Audience: networkv1.Audience_AUDIENCE_INTERNET, Family: networkv1.Family_FAMILY_V4, Source: network.SourceAuto}},
+		Transports: []*networkv1.Transport{{Id: "tr-1", Kind: network.TransportAnxLine, KindVersion: 1,
+			Role: networkv1.TransportRole_TRANSPORT_ROLE_ACCEPT, ToIngressId: "in-hop", PeerDeviceRef: "proxy-2",
+			Settings: &networkv1.Transport_AnxLine{AnxLine: &networkv1.AnxLineSettings{
+				LinkId: "tr-1", LinkKey: strings.Repeat("5f", 32), TcpAddr: "198.51.100.10:443"}}}},
+		Forwarding: []*networkv1.Forwarding{{FromTransportId: "tr-1", Next: &networkv1.Forwarding_EgressId{EgressId: "eg-1"}}},
+	}
+	network.Stamp(plan, network.Generation{})
+	require.NoError(t, component.apply(networkSnapshot(t, plan)))
+	require.Len(t, core.applied, 1)
+	select {
+	case args := <-launched:
+		assert.Contains(t, strings.Join(args, " "), "--bare-listen 198.51.100.10:443")
+	case <-time.After(2 * time.Second):
+		t.Fatal("anx-server was not started")
+	}
+	require.Eventually(t, func() bool {
+		status := component.servers.Status()
+		return len(status) == 1 && status[0].GetId() == "tr-1" && strings.Contains(status[0].GetDetail(), "not here")
+	}, 2*time.Second, 10*time.Millisecond)
+	public, err := component.servers.PublicKey()
+	require.NoError(t, err)
+	assert.Equal(t, "SERVER-PUBLIC", public)
+
+	dial := proto.Clone(plan).(*networkv1.NetworkPlan)
+	dial.Transports[0].Role = networkv1.TransportRole_TRANSPORT_ROLE_DIAL
+	dial.Egresses = append(dial.Egresses, &networkv1.Egress{Id: "eg-hop", LineId: "ln-1", Kind: network.EgressHop, KindVersion: 1,
+		Audience: networkv1.Audience_AUDIENCE_HOP, Family: networkv1.Family_FAMILY_V4, Source: network.SourceAuto})
+	dial.Transports[0].ToIngressId, dial.Transports[0].FromEgressId, dial.Forwarding = "", "eg-hop", nil
+	dial.Transports[0].GetAnxLine().ServerPublic = "SERVER-PUBLIC"
+	network.Stamp(dial, network.Generation{Generation: 1, Hash: plan.GetHash()})
+	err = component.apply(networkSnapshot(t, dial))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "accepting end")
 }
