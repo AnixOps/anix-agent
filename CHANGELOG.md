@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A VMess/VLESS node with an empty network runs on Xray again.** Control leaves `network`
+  empty for plain TCP; the Xray inbound now treats that as `tcp` (as Trojan already did) instead
+  of failing with `unknown transport protocol`, which rolled back the rc.12 upgrade campaign.
+
 ## 5.0.0-rc.12 - 2026-10-29
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.12. Control upgrade campaigns now
