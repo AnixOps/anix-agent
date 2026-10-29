@@ -146,22 +146,33 @@ func TestDefaultCoresPutAnInstalledAnixcoreFirst(t *testing.T) {
 	xray := &fakeCore{kind: "xray", protocols: []string{"vless"}}
 	sing := &fakeCore{kind: "sing", protocols: []string{"vless", "hysteria"}}
 	withCores(t, map[string]*fakeCore{"anixcore": anixcore, "xray": xray, "sing": sing})
-	installed := anixcoreInstalled
-	t.Cleanup(func() { anixcoreInstalled = installed })
+	binary := anixcoreBinary
+	t.Cleanup(func() { anixcoreBinary = binary })
 
-	order := func() []string {
+	defaults := func() []conf.CoreConfig {
 		defaults, err := DefaultCoreConfigs()
 		require.NoError(t, err)
+		return defaults
+	}
+	order := func() []string {
 		var types []string
-		for _, config := range defaults {
+		for _, config := range defaults() {
 			types = append(types, config.Type)
 		}
 		return types
 	}
-	anixcoreInstalled = func() bool { return true }
+	anixcoreBinary = func() (string, bool, bool) { return "anixcore", false, true }
 	require.Equal(t, []string{"anixcore", "xray", "sing"}, order())
-	anixcoreInstalled = func() bool { return false }
+	require.Equal(t, "anixcore", defaults()[0].AnixcoreConfig.BinaryPath)
+	require.False(t, defaults()[0].AnixcoreConfig.AnxLine)
+	anixcoreBinary = func() (string, bool, bool) { return "", false, false }
 	require.Equal(t, []string{"xray", "sing"}, order(), "an anixcore without its binary is left out")
+	// The anx-node an Agent upgrade installed runs with ANX-Line.
+	anixcoreBinary = func() (string, bool, bool) { return conf.InstalledAnxNodePath, true, true }
+	config := defaults()[0].AnixcoreConfig
+	require.Equal(t, conf.InstalledAnxNodePath, config.BinaryPath)
+	require.True(t, config.AnxLine)
+	require.Equal(t, conf.NewAnixcoreConfig().RuntimeDir, config.RuntimeDir, "the other defaults stay")
 }
 
 func TestSelectorHandsARefusedNodeToTheNextCore(t *testing.T) {

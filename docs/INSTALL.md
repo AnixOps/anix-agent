@@ -282,6 +282,22 @@ upgrades"). An Agent never upgrades on its own.
 - **gost is removed.** After a successful upgrade the updater deletes
   `/usr/lib/anixops-agent/gost`, which earlier releases shipped; the new
   Agent stops `anixops-gost.service` at start.
+- **The kernel (anx-node).** When Control hosts an anx-node release, the
+  upgrade carries it (`kernels`, one per architecture; anix-control
+  `PROTOCOL.md`). The Agent stages the package of its architecture next to
+  the release, or alone when it is on the target release already but the
+  installed kernel (`/usr/lib/anixops-agent/anx-node.json`) differs. The
+  package must match its size and SHA-256, be listed in the release's
+  `SHA256SUMS`, and `SHA256SUMS.sig` must be a valid `ssh-keygen -Y sign`
+  signature (namespace `anx-release`) by the anx release key compiled into
+  the Agent. The updater checks it all again, unpacks only
+  `<dist>/anx-node` (whose SHA-256 must be listed too), checks that
+  `anx-node version` runs, keeps the old one as `anx-node.prev`, installs
+  `/usr/lib/anixops-agent/anx-node` before swapping the Agent and restarts.
+  When the Agent fails to stay up the kernel is taken out again. A node
+  whose configuration lists no cores runs the installed anx-node as the
+  anixcore core with ANX-Line, ahead of Xray and sing-box. arm64 has no
+  anx-node release yet and keeps the old cores.
 - **The relay is not staged.** The updater unpacks only `anix-agent`:
   a new `anixops-relay` in a release arrives with the installer (or by hand),
   and the updater never restarts `anixops-relay.service` either, so a running

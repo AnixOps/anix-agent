@@ -138,7 +138,10 @@ type HandOff struct {
 	Size            int64  `json:"size,omitempty"`
 	SHA256          string `json:"sha256,omitempty"`
 	Signature       string `json:"signature,omitempty"`
-	RequestedAtMS   int64  `json:"requested_at_unix_ms"`
+	// Kernel is the kernel package staged with the release, or alone when
+	// the Agent runs TargetVersion already (a kernel it lacked).
+	Kernel        *KernelHandOff `json:"kernel,omitempty"`
+	RequestedAtMS int64          `json:"requested_at_unix_ms"`
 }
 
 // PrevRecordFile is anix-agent.prev.json: the kept binary's version and
@@ -172,8 +175,10 @@ type Result struct {
 	ErrorCode string `json:"error_code,omitempty"`
 	Error     string `json:"error,omitempty"`
 	// GostRemoved is whether the updater deleted the retired gost binary.
-	GostRemoved bool  `json:"gost_removed,omitempty"`
-	FinishedMS  int64 `json:"finished_at_unix_ms"`
+	GostRemoved bool `json:"gost_removed,omitempty"`
+	// Kernel is the kernel version the updater installed, if any.
+	Kernel     string `json:"kernel,omitempty"`
+	FinishedMS int64  `json:"finished_at_unix_ms"`
 }
 
 var (

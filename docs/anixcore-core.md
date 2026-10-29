@@ -47,6 +47,11 @@ anixcore 是外部程序，节点上没有安装时不应影响其他内核。
   `anx_line.mgmt_listen`。接收（accept）端由 Agent 自己拉起 anx-server，见
   CHANGELOG。
 
+- `"Cores": []` 的节点：Agent 升级装好的 `/usr/lib/anixops-agent/anx-node` 存在时，
+  默认 anixcore 内核就用它（`BinaryPath` 指向它，`AnxLine` 打开）；否则用 PATH 上的
+  `anixcore`；两者都没有时不启动 anixcore。anx-node 如何随升级下发见
+  `docs/INSTALL.md`「Control-Pushed Upgrades」。
+
 ## 节点映射
 
 | 面板节点 | anixcore 入站 |
