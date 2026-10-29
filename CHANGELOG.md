@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 5.0.0-rc.15 - 2026-10-29
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.15. From this release the Agent
+and Control always release with the same version number, so there is no Agent rc.14. The
+Agent is unchanged from 5.0.0-rc.13.
+
 ## 5.0.0-rc.13 - 2026-10-29
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.13.
