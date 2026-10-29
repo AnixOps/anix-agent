@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.13 - 2026-10-29
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.13.
+
 ### Fixed
 
 - **A VMess/VLESS node with an empty network runs on Xray again.** Control leaves `network`
