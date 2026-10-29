@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.0-rc.12 - 2026-10-29
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.12. Control upgrade campaigns now
+install anx-node, AnixOps' own kernel with ANX, next to the Agent.
+
 ### Added
 
 - **anx-node arrives with Agent upgrades.** A Control upgrade that carries an anx-node release
