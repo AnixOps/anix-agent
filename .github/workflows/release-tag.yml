@@ -1,0 +1,76 @@
+name: Release Tag
+
+# Creates a release tag on a commit of main and starts the release pipeline
+# on it, for releases cut without a machine that may push tags. A tag pushed
+# with the workflow token starts no workflow, so this run dispatches
+# release.yml on the new tag; its tag gate accepts a dispatch on a tag as a
+# release tag. Only a commit already on main is tagged, and the tree must
+# declare the tag's version.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z or vX.Y.Z-rc.N)
+        required: true
+        type: string
+      commit:
+        description: The full commit sha on main to tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag and start the release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag and the commit
+        env:
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]] || { echo "not a release tag: ${TAG}"; exit 1; }
+          [[ "${COMMIT}" =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit sha: ${COMMIT}"; exit 1; }
+          git merge-base --is-ancestor "${COMMIT}" origin/main || { echo "${COMMIT} is not on main"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
+            echo "${TAG} already exists"; exit 1
+          fi
+          git checkout --detach "${COMMIT}"
+          python3 scripts/check_release_version.py --tag "${TAG}"
+
+      - name: Push the tag
+        env:
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -Eeuo pipefail
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            tag -a "${TAG}" "${COMMIT}" -m "${TAG}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Start the release pipeline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          curl -fsS -X POST -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/dispatches" \
+            -d "{\"ref\":\"${TAG}\"}"
+          echo "Started release.yml on ${TAG}."
