@@ -253,7 +253,9 @@ func (a *Agent) Handle(ctx context.Context, operation *agentv1pb.DesiredOperatio
 	if err != nil {
 		return state("", "", &Error{Code: agentcontrol.UpgradeErrorInvalidRequest, Err: err})
 	}
-	if agentcontrol.SameAgentVersion(a.Version, request.TargetVersion) {
+	kernel, wantKernel := a.wantedKernel(request)
+	current := agentcontrol.SameAgentVersion(a.Version, request.TargetVersion)
+	if current && !wantKernel {
 		return state(agentcontrol.UpgradePhaseCurrent, a.Version, nil)
 	}
 	// The same upgrade through the host's other node identity waits for
@@ -293,24 +295,47 @@ func (a *Agent) Handle(ctx context.Context, operation *agentv1pb.DesiredOperatio
 		Action: request.Action, TargetVersion: request.TargetVersion, PreviousVersion: request.PreviousVersion,
 		RequestedAtMS: a.now().UnixMilli(),
 	}
-	staged := ""
+	staged, kernelStaged := "", ""
+	defer func() {
+		if !handedOff {
+			a.discard(kernelStaged)
+		}
+	}()
 	switch request.Action {
 	case agentcontrol.UpgradeActionUpgrade:
-		artifact, ok := request.Artifact(a.arch())
-		if !ok {
-			return state("", a.Version, codeError(agentcontrol.UpgradeErrorNoArtifact, "the release has no artifact for %s", a.arch()))
-		}
 		if !a.updaterActive(ctx) {
 			return state("", a.Version, codeError(agentcontrol.UpgradeErrorUpdater, "%s is not active", UpdaterPathUnit))
 		}
-		logger.WithField("asset", artifact.Asset).Info("Downloading the Agent release Control pushed")
-		staged, err = a.stage(ctx, artifact)
-		if err != nil {
-			logger.WithError(err).Warn("The Agent release could not be staged")
-			return state("", a.Version, err)
+		a.cleanStaging()
+		// An Agent that runs the target stages only the kernel it lacks.
+		if !current {
+			artifact, ok := request.Artifact(a.arch())
+			if !ok {
+				return state("", a.Version, codeError(agentcontrol.UpgradeErrorNoArtifact, "the release has no artifact for %s", a.arch()))
+			}
+			logger.WithField("asset", artifact.Asset).Info("Downloading the Agent release Control pushed")
+			staged, err = a.stage(ctx, artifact)
+			if err != nil {
+				logger.WithError(err).Warn("The Agent release could not be staged")
+				return state("", a.Version, err)
+			}
+			handOff.Arch, handOff.File, handOff.Size = artifact.Arch, filepath.Base(staged), artifact.Size
+			handOff.SHA256, handOff.Signature = artifact.SHA256, strings.TrimSpace(artifact.Signature)
 		}
-		handOff.Arch, handOff.File, handOff.Size = artifact.Arch, filepath.Base(staged), artifact.Size
-		handOff.SHA256, handOff.Signature = artifact.SHA256, strings.TrimSpace(artifact.Signature)
+		if wantKernel {
+			logger.WithFields(log.Fields{"kernel": kernel.Name, "kernel_version": kernel.Version}).Info("Downloading the kernel Control pushed")
+			stagedKernel, err := a.stageKernel(ctx, kernel)
+			if err != nil {
+				logger.WithError(err).Warn("The kernel could not be staged")
+				a.discard(staged)
+				return state("", a.Version, err)
+			}
+			kernelStaged = stagedKernel
+			handOff.Kernel = &KernelHandOff{
+				Name: kernel.Name, Version: kernel.Version, Arch: kernel.Arch, Asset: kernel.Asset, File: filepath.Base(stagedKernel),
+				Size: kernel.Size, SHA256: kernel.SHA256, Sums: kernel.Sums, SumsSignature: kernel.SumsSignature,
+			}
+		}
 	case agentcontrol.UpgradeActionRollback:
 		record, err := ReadPrevRecord(a.libDir())
 		if err != nil {
@@ -342,12 +367,14 @@ func (a *Agent) Handle(ctx context.Context, operation *agentv1pb.DesiredOperatio
 			logger.WithField("phase", phase.String()).Warn("The upgrade did not end handed off; dropping the request")
 			_ = os.Remove(temp)
 			a.discard(staged)
+			a.discard(kernelStaged)
 			return
 		}
 		if err := os.Rename(temp, final); err != nil {
 			logger.WithError(err).Error("Could not hand the upgrade to the updater")
 			_ = os.Remove(temp)
 			a.discard(staged)
+			a.discard(kernelStaged)
 			return
 		}
 		logger.Info("Handed the upgrade to the updater, which restarts the Agent")
@@ -361,6 +388,54 @@ func (a *Agent) Handle(ctx context.Context, operation *agentv1pb.DesiredOperatio
 	return state(agentcontrol.UpgradePhaseHandedOff, request.TargetVersion, nil)
 }
 
+// wantedKernel answers the kernel of the request for this architecture
+// when an upgrade carries one that is not installed yet.
+func (a *Agent) wantedKernel(request agentcontrol.UpgradeRequest) (agentcontrol.UpgradeKernel, bool) {
+	if request.Action != agentcontrol.UpgradeActionUpgrade {
+		return agentcontrol.UpgradeKernel{}, false
+	}
+	kernel, ok := request.Kernel(a.arch())
+	if !ok || InstalledKernel(a.libDir()) == kernel.Version {
+		return agentcontrol.UpgradeKernel{}, false
+	}
+	return kernel, true
+}
+
+// stageKernel downloads the kernel package into the staging directory
+// and verifies it as the updater will; a package that does not verify is
+// removed.
+func (a *Agent) stageKernel(ctx context.Context, kernel agentcontrol.UpgradeKernel) (string, error) {
+	dir := a.dir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", codeError(agentcontrol.UpgradeErrorDownload, "cannot create %s: %v", dir, err)
+	}
+	progress(ctx, agentcontrol.UpgradePhaseDownloading, a.Version)
+	temp, err := a.download(ctx, kernel.URL, kernel.Asset, kernel.Size)
+	if err != nil {
+		return "", err
+	}
+	progress(ctx, agentcontrol.UpgradePhaseVerifying, a.Version)
+	data, err := readSmall(temp, kernel.Size)
+	if err == nil {
+		err = VerifyKernel(data, KernelHandOff{
+			Name: kernel.Name, Version: kernel.Version, Arch: kernel.Arch, Asset: kernel.Asset, File: kernel.Asset,
+			Size: kernel.Size, SHA256: kernel.SHA256, Sums: kernel.Sums, SumsSignature: kernel.SumsSignature,
+		})
+	} else {
+		err = codeError(agentcontrol.UpgradeErrorDigest, "%v", err)
+	}
+	if err != nil {
+		_ = os.Remove(temp)
+		return "", err
+	}
+	path := filepath.Join(dir, kernel.Asset)
+	if err := os.Rename(temp, path); err != nil {
+		_ = os.Remove(temp)
+		return "", codeError(agentcontrol.UpgradeErrorDownload, "cannot stage the kernel: %v", err)
+	}
+	return path, nil
+}
+
 // stage downloads artifact into the staging directory and verifies it; a
 // release that does not verify is removed.
 func (a *Agent) stage(ctx context.Context, artifact agentcontrol.UpgradeArtifact) (string, error) {
@@ -368,9 +443,8 @@ func (a *Agent) stage(ctx context.Context, artifact agentcontrol.UpgradeArtifact
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "cannot create %s: %v", dir, err)
 	}
-	a.cleanStaging()
 	progress(ctx, agentcontrol.UpgradePhaseDownloading, a.Version)
-	temp, err := a.download(ctx, artifact)
+	temp, err := a.download(ctx, artifact.URL, artifact.Asset, artifact.Size)
 	if err != nil {
 		return "", err
 	}
@@ -393,15 +467,14 @@ func (a *Agent) stage(ctx context.Context, artifact agentcontrol.UpgradeArtifact
 	return path, nil
 }
 
-// download fetches artifact.URL into a temporary file of the staging
-// directory, at most artifact.Size bytes: more is a size mismatch
-// (upgrade_digest_mismatch).
-func (a *Agent) download(ctx context.Context, artifact agentcontrol.UpgradeArtifact) (string, error) {
+// download fetches url into a temporary file of the staging directory, at
+// most size bytes: more is a size mismatch (upgrade_digest_mismatch).
+func (a *Agent) download(ctx context.Context, url, asset string, size int64) (string, error) {
 	client := a.HTTPClient
 	if client == nil {
 		client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second}}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, artifact.URL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "%v", err)
 	}
@@ -411,17 +484,17 @@ func (a *Agent) download(ctx context.Context, artifact agentcontrol.UpgradeArtif
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return "", codeError(agentcontrol.UpgradeErrorDownload, "%s answered %s", artifact.URL, response.Status)
+		return "", codeError(agentcontrol.UpgradeErrorDownload, "%s answered %s", url, response.Status)
 	}
-	if response.ContentLength > artifact.Size {
-		return "", codeError(agentcontrol.UpgradeErrorDigest, "the release is %d bytes, not %d", response.ContentLength, artifact.Size)
+	if response.ContentLength > size {
+		return "", codeError(agentcontrol.UpgradeErrorDigest, "%s is %d bytes, not %d", asset, response.ContentLength, size)
 	}
-	file, err := os.CreateTemp(a.dir(), "."+artifact.Asset+".*.tmp")
+	file, err := os.CreateTemp(a.dir(), "."+asset+".*.tmp")
 	if err != nil {
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "%v", err)
 	}
 	name := file.Name()
-	written, err := io.Copy(file, io.LimitReader(response.Body, artifact.Size+1))
+	written, err := io.Copy(file, io.LimitReader(response.Body, size+1))
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
 	}
@@ -429,9 +502,9 @@ func (a *Agent) download(ctx context.Context, artifact agentcontrol.UpgradeArtif
 	case err != nil:
 		_ = os.Remove(name)
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "%v", err)
-	case written > artifact.Size:
+	case written > size:
 		_ = os.Remove(name)
-		return "", codeError(agentcontrol.UpgradeErrorDigest, "the release is over %d bytes", artifact.Size)
+		return "", codeError(agentcontrol.UpgradeErrorDigest, "%s is over %d bytes", asset, size)
 	}
 	return name, nil
 }
@@ -445,7 +518,7 @@ func (a *Agent) cleanStaging() {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if assetPattern.MatchString(name) || (strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".tmp")) {
+		if assetPattern.MatchString(name) || kernelAssetPattern.MatchString(name) || (strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".tmp")) {
 			_ = os.Remove(filepath.Join(a.dir(), name))
 		}
 	}
@@ -499,7 +572,7 @@ func (a *Agent) LogLastResult() {
 		entry := log.WithFields(log.Fields{
 			"component": "agent-upgrade", "operation_id": result.OperationID, "campaign_id": result.CampaignID,
 			"action": result.Action, "target_version": result.TargetVersion, "outcome": result.Outcome,
-			"error_code": result.ErrorCode, "error": result.Error, "gost_removed": result.GostRemoved,
+			"error_code": result.ErrorCode, "error": result.Error, "gost_removed": result.GostRemoved, "kernel": result.Kernel,
 			"finished_at": time.UnixMilli(result.FinishedMS).UTC().Format(time.RFC3339), "version": a.Version,
 		})
 		switch result.Outcome {

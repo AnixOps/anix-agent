@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **anx-node arrives with Agent upgrades.** A Control upgrade that carries an anx-node release
+  (`kernels`, anix-control) installs `/usr/lib/anixops-agent/anx-node` with the Agent, or on its
+  own for an Agent already on the target release. The Agent and the updater check the package
+  against the release's `SHA256SUMS` and its SSH signature by the anx release key compiled in;
+  the updater keeps the previous kernel as `anx-node.prev` and takes the new one out when the
+  Agent fails to stay up. Nodes whose configuration lists no cores then run anx-node as the
+  anixcore core with ANX-Line, ahead of Xray and sing-box (the `anixcore` binary on the PATH is
+  the fallback).
+
 ## 5.0.0-rc.11 - 2026-10-28
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.11 (Control rc.9 and rc.10 kept

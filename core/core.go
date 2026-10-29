@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"sort"
@@ -46,14 +47,21 @@ func RegisteredCore() []string {
 // defaultCorePreference orders the compiled-in cores of a configuration
 // that lists none: a protocol more than one core serves runs on the first.
 // anixcore, our own kernel, comes first once its binary is installed
-// (anixcoreInstalled); until then it is left out.
+// (anixcoreBinary); until then it is left out.
 var defaultCorePreference = []string{"anixcore", "xray", "sing", "hysteria2", "wireguard"}
 
-// anixcoreInstalled reports whether the anixcore binary of the default
-// configuration can be found.
-var anixcoreInstalled = func() bool {
-	_, err := exec.LookPath(conf.NewAnixcoreConfig().BinaryPath)
-	return err == nil
+// anixcoreBinary finds the binary the default anixcore core runs: the
+// anx-node that Agent upgrades install (conf.InstalledAnxNodePath), which
+// also carries ANX-Line, or else the anixcore binary of the default
+// configuration on PATH. ok is false when neither is there.
+var anixcoreBinary = func() (path string, anxLine bool, ok bool) {
+	if info, err := os.Stat(conf.InstalledAnxNodePath); err == nil && info.Mode().IsRegular() {
+		return conf.InstalledAnxNodePath, true, true
+	}
+	if _, err := exec.LookPath(conf.NewAnixcoreConfig().BinaryPath); err == nil {
+		return conf.NewAnixcoreConfig().BinaryPath, false, true
+	}
+	return "", false, false
 }
 
 // DefaultCoreConfigs are the cores of a node whose configuration comes from
@@ -63,7 +71,8 @@ var anixcoreInstalled = func() bool {
 func DefaultCoreConfigs() ([]conf.CoreConfig, error) {
 	names := RegisteredCore()
 	preference := defaultCorePreference
-	if !anixcoreInstalled() {
+	anixcorePath, anxLine, installed := anixcoreBinary()
+	if !installed {
 		// A compiled-in anixcore without its binary would fail to start.
 		preference = preference[1:]
 		names = slices.DeleteFunc(names, func(name string) bool { return name == "anixcore" })
@@ -85,7 +94,12 @@ func DefaultCoreConfigs() ([]conf.CoreConfig, error) {
 	configs := make([]conf.CoreConfig, 0, len(names))
 	for _, name := range names {
 		var config conf.CoreConfig
-		document, err := json.Marshal(map[string]string{"Type": name})
+		fields := map[string]any{"Type": name}
+		if name == "anixcore" {
+			fields["BinaryPath"] = anixcorePath
+			fields["AnxLine"] = anxLine
+		}
+		document, err := json.Marshal(fields)
 		if err != nil {
 			return nil, err
 		}

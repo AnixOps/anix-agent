@@ -117,6 +117,9 @@ func (a *Applier) Apply(ctx context.Context) (Result, error) {
 	if assetPattern.MatchString(handOff.File) && filepath.Base(handOff.File) == handOff.File {
 		_ = os.Remove(filepath.Join(dir, handOff.File))
 	}
+	if handOff.Kernel != nil && kernelAssetPattern.MatchString(handOff.Kernel.File) && filepath.Base(handOff.Kernel.File) == handOff.Kernel.File {
+		_ = os.Remove(filepath.Join(dir, handOff.Kernel.File))
+	}
 	if err != nil {
 		result.ErrorCode, result.Error = ErrorCode(err, ErrorInstall), err.Error()
 		if result.Outcome == "" {
@@ -160,12 +163,24 @@ func (a *Applier) readHandOff(path string) (HandOff, error) {
 	if handOff.PreviousVersion != "" && !validVersion(handOff.PreviousVersion) {
 		return invalid("previous_version %q is not a release tag", handOff.PreviousVersion)
 	}
+	if handOff.Kernel != nil {
+		if handOff.Action != agentcontrol.UpgradeActionUpgrade {
+			return invalid("only an upgrade stages a kernel")
+		}
+		if err := validKernelHandOff(*handOff.Kernel); err != nil {
+			return invalid("%v", err)
+		}
+	}
 	switch handOff.Action {
 	case agentcontrol.UpgradeActionRollback:
 		if handOff.File != "" {
 			return invalid("a rollback stages no file")
 		}
 	case agentcontrol.UpgradeActionUpgrade:
+		// A kernel alone: the Agent runs the target already.
+		if handOff.File == "" && handOff.Kernel != nil {
+			break
+		}
 		if filepath.Base(handOff.File) != handOff.File || !assetPattern.MatchString(handOff.File) {
 			return invalid("file %q is not a release zip in the staging directory", handOff.File)
 		}
@@ -180,11 +195,17 @@ func (a *Applier) readHandOff(path string) (HandOff, error) {
 
 func (a *Applier) apply(ctx context.Context, dir string, handOff HandOff, result *Result) error {
 	if agentcontrol.SameAgentVersion(a.Version, handOff.TargetVersion) {
+		if handOff.Kernel != nil && handOff.Action == agentcontrol.UpgradeActionUpgrade {
+			return a.kernelOnly(ctx, dir, *handOff.Kernel, result)
+		}
 		result.Outcome = OutcomeCurrent
 		return nil
 	}
 	if handOff.Action == agentcontrol.UpgradeActionRollback {
 		return a.rollback(ctx, handOff, result)
+	}
+	if handOff.File == "" {
+		return codeError(agentcontrol.UpgradeErrorInvalidRequest, "an upgrade to %s stages no release", handOff.TargetVersion)
 	}
 	order, ok := CompareVersions(handOff.TargetVersion, a.Version)
 	if !ok {
@@ -218,6 +239,14 @@ func (a *Applier) upgrade(ctx context.Context, dir string, handOff HandOff, resu
 		return err
 	}
 
+	// The kernel goes in first: the new Agent starts with it. A kernel
+	// that does not verify fails the upgrade before anything changes.
+	if handOff.Kernel != nil {
+		if err := a.installKernel(ctx, dir, *handOff.Kernel); err != nil {
+			return err
+		}
+		result.Kernel = handOff.Kernel.Version
+	}
 	current := filepath.Join(lib, BinaryName)
 	if _, err := a.keep(current, handOff.TargetVersion); err != nil {
 		return err
@@ -227,6 +256,11 @@ func (a *Applier) upgrade(ctx context.Context, dir string, handOff HandOff, resu
 	}
 	if err := a.restartAndWatch(ctx); err != nil {
 		result.Outcome = OutcomeRestored
+		if handOff.Kernel != nil {
+			// The previous Agent ran without this kernel.
+			a.removeKernel()
+			result.Kernel = ""
+		}
 		if restoreErr := a.restore(ctx); restoreErr != nil {
 			return codeError(ErrorStartFailed, "%v; reinstating %s failed too: %v", err, PrevBinary, restoreErr)
 		}
@@ -234,6 +268,28 @@ func (a *Applier) upgrade(ctx context.Context, dir string, handOff HandOff, resu
 	}
 	result.Outcome = OutcomeInstalled
 	result.GostRemoved = a.removeGost()
+	return nil
+}
+
+// kernelOnly installs a kernel for the running Agent and restarts it; when
+// the Agent does not stay up with it, the kernel comes out again.
+func (a *Applier) kernelOnly(ctx context.Context, dir string, kernel KernelHandOff, result *Result) error {
+	if InstalledKernel(a.libDir()) == kernel.Version {
+		result.Outcome = OutcomeCurrent
+		return nil
+	}
+	if err := a.installKernel(ctx, dir, kernel); err != nil {
+		return err
+	}
+	if err := a.restartAndWatch(ctx); err != nil {
+		result.Outcome = OutcomeRestored
+		a.removeKernel()
+		if _, restartErr := a.run(ctx, "restart", a.unit()); restartErr != nil {
+			return codeError(ErrorStartFailed, "%v; restarting without the kernel failed too: %v", err, restartErr)
+		}
+		return codeError(ErrorStartFailed, "%v; the kernel was taken out again", err)
+	}
+	result.Outcome, result.Kernel = OutcomeInstalled, kernel.Version
 	return nil
 }
 

@@ -28,6 +28,12 @@ type AnixcoreConfig struct {
 	AnxLineApiAddress string `json:"AnxLineApiAddress"`
 }
 
+// InstalledAnxNodePath is where Agent upgrades install anx-node, the
+// release of our kernel with ANX (upgrade.DefaultLibDir +
+// upgrade.KernelBinary). A configuration without cores runs it as the
+// anixcore core with AnxLine when it is there.
+const InstalledAnxNodePath = "/usr/lib/anixops-agent/anx-node"
+
 func NewAnixcoreConfig() *AnixcoreConfig {
 	return &AnixcoreConfig{
 		BinaryPath:          "anixcore",
