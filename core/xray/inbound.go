@@ -27,7 +27,7 @@ func buildInbound(option *conf.Options, nodeInfo *panel.NodeInfo, tag string) (*
 	switch nodeInfo.Type {
 	case "vmess", "vless":
 		err = buildV2ray(option, nodeInfo, in)
-		network = nodeInfo.VAllss.Network
+		network = v2rayNetwork(nodeInfo.VAllss)
 	case "trojan":
 		err = buildTrojan(option, nodeInfo, in)
 		if nodeInfo.Trojan.Network != "" {
@@ -228,9 +228,10 @@ func buildV2ray(config *conf.Options, nodeInfo *panel.NodeInfo, inbound *coreCon
 		return nil
 	}
 
-	t := coreConf.TransportProtocol(v.Network)
+	network := v2rayNetwork(v)
+	t := coreConf.TransportProtocol(network)
 	inbound.StreamSetting = &coreConf.StreamConfig{Network: &t}
-	switch v.Network {
+	switch network {
 	case "tcp":
 		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.TCPSettings)
 		if err != nil {
@@ -260,6 +261,15 @@ func buildV2ray(config *conf.Options, nodeInfo *panel.NodeInfo, inbound *coreCon
 		return errors.New("the network type is not vail")
 	}
 	return nil
+}
+
+// v2rayNetwork is the transport of a VMess/VLESS node: Control leaves
+// network empty for plain TCP (as it does for Trojan).
+func v2rayNetwork(v *panel.VAllssNode) string {
+	if v.Network == "" {
+		return "tcp"
+	}
+	return v.Network
 }
 
 func buildTrojan(config *conf.Options, nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig) error {
