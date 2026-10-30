@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- The anixcore core takes panel nodes again: a node's tag
+  (`[<api host>]-vless:62`) has characters anixcore refuses (`400 inbound
+  tag must be 1-64 letters, digits, '.', '_' or '-'`), so every proxy node
+  fell back to xray or sing-box. Such a tag now goes to anixcore as
+  `node-<sha256 prefix>`; port forward tags are unchanged.
+
 ## 5.0.0-rc.17 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.17.
