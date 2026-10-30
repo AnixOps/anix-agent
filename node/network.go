@@ -346,8 +346,9 @@ func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 			keys = append(keys, &networkv1.PublicKey{Kind: network.TransportAnxLine, Key: public})
 		}
 	}
+	interfaces := interfaceFacts()
 	if plan == nil {
-		if len(keys) == 0 {
+		if len(keys) == 0 && len(interfaces) == 0 {
 			return
 		}
 		status = &networkv1.NetworkStatus{}
@@ -364,6 +365,9 @@ func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 		status.Components = append(status.Components, c.servers.Status()...)
 	}
 	status.PublicKeys = append(status.PublicKeys, keys...)
+	if len(status.GetInterfaces()) == 0 {
+		status.Interfaces = interfaces
+	}
 	status.DeviceRef, status.Generation, status.PlanHash = c.device, plan.GetGeneration(), plan.GetHash()
 	status.ObservedAtUnixMs = time.Now().UnixMilli()
 	report, err := network.StatusReport(status)
