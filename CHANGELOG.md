@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 5.0.0-rc.16 - 2026-10-30
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.16.
+
+### Added
+
+- The updater, the install command and the installer accept dev build versions
+  (`vX.Y.Z-rc.N.dev.M`, anix-control `docs/RELEASING.md` "Dev Builds") and order them
+  right after the release they follow, so a node on a dev build can go on to the next
+  release. The installer fetches a dev Agent from the anix-control pre-release.
+
 ### Fixed
 
 - Kernel upgrades install anx-server next to anx-node from the same signed
