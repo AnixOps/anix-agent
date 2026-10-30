@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.18 - 2026-10-30
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.18.
+
 ### Fixed
 
 - The anixcore core takes panel nodes again: a node's tag
