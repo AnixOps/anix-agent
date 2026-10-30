@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -50,16 +51,18 @@ var networkRouting = func() *networkroute.Manager {
 	return &networkroute.Manager{IP: path, Run: networkroute.Run}
 }
 
-// networkServers answers the manager of the accepting anx_line ends, nil
-// when the host has no anx-server (or is not Linux): the Agent then accepts
-// no anx_line transport.
+// networkServers answers the manager of the accepting anx_line ends: the
+// anx-server Agent upgrades install, else one on PATH; nil when the host
+// has none (or is not Linux): the Agent then accepts no anx_line transport.
 var networkServers = func() *anxserver.Manager {
 	if runtime.GOOS != "linux" {
 		return nil
 	}
-	path, err := exec.LookPath("anx-server")
-	if err != nil {
-		return nil
+	path := conf.InstalledAnxServerPath
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		if path, err = exec.LookPath("anx-server"); err != nil {
+			return nil
+		}
 	}
 	return &anxserver.Manager{
 		Binary: path, Dir: filepath.Join(conf.DefaultStateRoot, "anx-server"),

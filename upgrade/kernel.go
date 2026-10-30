@@ -28,13 +28,19 @@ import (
 // anx-node, AnixOps' own node kernel with ANX, from the private anx
 // release, which Control hosts. The Agent stages its package next to the
 // release zip; the updater verifies it with the kernel release key below,
-// installs LibDir/anx-node and restarts the Agent, which then runs it as
-// its anixcore core (core.DefaultCoreConfigs).
+// installs LibDir/anx-node (and LibDir/anx-server, the accepting end of
+// anx_line transports, when the package holds it) and restarts the Agent,
+// which then runs anx-node as its anixcore core (core.DefaultCoreConfigs).
 const (
 	// KernelBinary is the installed kernel in LibDir.
 	KernelBinary = "anx-node"
 	// KernelPrevBinary is the kernel kept when a new one is installed.
 	KernelPrevBinary = "anx-node.prev"
+	// ServerBinary is anx-server, installed next to anx-node from the same
+	// package: the Agent runs it for the accepting anx_line ends.
+	ServerBinary = "anx-server"
+	// ServerPrevBinary is the anx-server kept when a new one is installed.
+	ServerPrevBinary = "anx-server.prev"
 	// KernelRecord is the installed kernel's version and SHA-256.
 	KernelRecord = "anx-node.json"
 	// KernelReleaseKey is the anx release's signing key (the anx repository's
@@ -214,9 +220,10 @@ func validKernelHandOff(kernel KernelHandOff) error {
 }
 
 // installKernel copies the staged kernel package out of the Agent's
-// directory, verifies it, unpacks anx-node (whose SHA-256 SHA256SUMS lists
-// too), checks that it runs, keeps the installed one as anx-node.prev and
-// swaps the new one in.
+// directory, verifies it, unpacks anx-node and anx-server (whose SHA-256s
+// SHA256SUMS lists too), checks that anx-node runs, keeps the installed
+// ones as *.prev and swaps the new ones in. A package without anx-server
+// installs anx-node only.
 func (a *Applier) installKernel(ctx context.Context, dir string, kernel KernelHandOff) error {
 	lib := a.libDir()
 	packagePath, err := copyIn(filepath.Join(dir, kernel.File), lib, kernel.Size)
@@ -231,31 +238,42 @@ func (a *Applier) installKernel(ctx context.Context, dir string, kernel KernelHa
 	if err := VerifyKernel(data, kernel); err != nil {
 		return err
 	}
-	member := strings.TrimSuffix(kernel.Asset, ".tar.gz") + "/" + KernelBinary
-	binary, digest, err := untarFile(data, member, lib)
+	dist := strings.TrimSuffix(kernel.Asset, ".tar.gz") + "/"
+	binary, digest, err := unpackListed(data, dist+KernelBinary, lib, kernel.Sums)
+	if errors.Is(err, errNoMember) {
+		return codeError(ErrorInstall, "the kernel package holds no %s", dist+KernelBinary)
+	}
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(binary) }()
-	if listed, ok := agentcontrol.KernelSum(kernel.Sums, member); !ok || listed != digest {
-		return codeError(agentcontrol.UpgradeErrorDigest, "the kernel's SHA256SUMS does not list %s with %s", member, digest)
-	}
 	if err := checkKernelRuns(ctx, binary); err != nil {
 		return err
 	}
-	current := filepath.Join(lib, KernelBinary)
-	if _, err := os.Lstat(current); err == nil {
-		kept, err := copyFile(current, lib, ".anx-node.prev.*", 0o755)
-		if err != nil {
-			return codeError(ErrorInstall, "cannot keep the installed kernel: %v", err)
-		}
-		if err := os.Rename(kept, filepath.Join(lib, KernelPrevBinary)); err != nil {
-			_ = os.Remove(kept)
-			return codeError(ErrorInstall, "cannot keep the installed kernel: %v", err)
+	server, _, err := unpackListed(data, dist+ServerBinary, lib, kernel.Sums)
+	if errors.Is(err, errNoMember) {
+		server = ""
+	} else if err != nil {
+		return err
+	}
+	if server != "" {
+		defer func() { _ = os.Remove(server) }()
+	}
+	if err := keepPrevious(lib, KernelBinary, KernelPrevBinary); err != nil {
+		return codeError(ErrorInstall, "cannot keep the installed kernel: %v", err)
+	}
+	if server != "" {
+		if err := keepPrevious(lib, ServerBinary, ServerPrevBinary); err != nil {
+			return codeError(ErrorInstall, "cannot keep the installed anx-server: %v", err)
 		}
 	}
-	if err := os.Rename(binary, current); err != nil {
+	if err := os.Rename(binary, filepath.Join(lib, KernelBinary)); err != nil {
 		return codeError(ErrorInstall, "cannot install the kernel: %v", err)
+	}
+	if server != "" {
+		if err := os.Rename(server, filepath.Join(lib, ServerBinary)); err != nil {
+			return codeError(ErrorInstall, "cannot install anx-server: %v", err)
+		}
 	}
 	record, _ := json.MarshalIndent(KernelRecordFile{Version: kernel.Version, SHA256: digest, InstalledAtMS: a.now().UnixMilli()}, "", "  ")
 	if err := writeFileAtomic(filepath.Join(lib, KernelRecord), append(record, '\n'), 0o644); err != nil {
@@ -264,18 +282,57 @@ func (a *Applier) installKernel(ctx context.Context, dir string, kernel KernelHa
 	return nil
 }
 
+// errNoMember is untarFile's answer for a package without the member.
+var errNoMember = errors.New("the kernel package does not hold the member")
+
+// unpackListed extracts member into a new file of dir and requires
+// SHA256SUMS to list it with its SHA-256; errNoMember when the package
+// does not hold it.
+func unpackListed(data []byte, member, dir, sums string) (string, string, error) {
+	path, digest, err := untarFile(data, member, dir)
+	if err != nil {
+		return "", "", err
+	}
+	if listed, ok := agentcontrol.KernelSum(sums, member); !ok || listed != digest {
+		_ = os.Remove(path)
+		return "", "", codeError(agentcontrol.UpgradeErrorDigest, "the kernel's SHA256SUMS does not list %s with %s", member, digest)
+	}
+	return path, digest, nil
+}
+
+// keepPrevious copies LibDir's name, when installed, to prev.
+func keepPrevious(lib, name, prev string) error {
+	current := filepath.Join(lib, name)
+	if _, err := os.Lstat(current); err != nil {
+		return nil
+	}
+	kept, err := copyFile(current, lib, "."+name+".prev.*", 0o755)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(kept, filepath.Join(lib, prev)); err != nil {
+		_ = os.Remove(kept)
+		return err
+	}
+	return nil
+}
+
 // removeKernel takes out a kernel that was just installed when the Agent
-// did not stay up with it: the kept one comes back, or none.
+// did not stay up with it: the kept ones come back, or none.
 func (a *Applier) removeKernel() {
 	lib := a.libDir()
 	_ = os.Remove(filepath.Join(lib, KernelRecord))
 	if err := os.Rename(filepath.Join(lib, KernelPrevBinary), filepath.Join(lib, KernelBinary)); err != nil {
 		_ = os.Remove(filepath.Join(lib, KernelBinary))
 	}
+	if err := os.Rename(filepath.Join(lib, ServerPrevBinary), filepath.Join(lib, ServerBinary)); err != nil {
+		_ = os.Remove(filepath.Join(lib, ServerBinary))
+	}
 }
 
 // untarFile extracts the regular file member of a .tar.gz into a new file
-// of dir and answers its path and SHA-256.
+// of dir and answers its path and SHA-256, errNoMember when the package
+// does not hold it.
 func untarFile(data []byte, member, dir string) (string, string, error) {
 	compressed, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
@@ -285,7 +342,7 @@ func untarFile(data []byte, member, dir string) (string, string, error) {
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
-			return "", "", codeError(ErrorInstall, "the kernel package holds no %s", member)
+			return "", "", errNoMember
 		}
 		if err != nil {
 			return "", "", codeError(ErrorInstall, "the kernel package is not a tar: %v", err)
@@ -297,7 +354,7 @@ func untarFile(data []byte, member, dir string) (string, string, error) {
 			return "", "", codeError(ErrorInstall, "%s is over %d bytes", member, maxBinaryBytes)
 		}
 		sum := sha256.New()
-		path, err := copyReader(io.TeeReader(reader, sum), dir, ".anx-node.new.*", 0o755, maxBinaryBytes)
+		path, err := copyReader(io.TeeReader(reader, sum), dir, "."+filepath.Base(member)+".new.*", 0o755, maxBinaryBytes)
 		if err != nil {
 			return "", "", codeError(ErrorInstall, "cannot unpack %s: %v", member, err)
 		}

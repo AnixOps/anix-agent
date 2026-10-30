@@ -69,7 +69,7 @@ func TestAccepts(t *testing.T) {
 		"--egress-source", "203.0.113.20"}, accepts[0].listener().args())
 
 	l2 := Accept{TCP: "203.0.113.20:443", L2: true, ServerName: "www.example.com"}
-	assert.Equal(t, []string{"--sni", "www.example.com", "--listen", "203.0.113.20:443"}, l2.listener().args())
+	assert.Equal(t, []string{"--sni", "www.example.com", "--listen", "203.0.113.20:443", "--dest", "www.example.com:443"}, l2.listener().args())
 
 	dial := acceptPlan()
 	dial.Transports[0].Role = networkv1.TransportRole_TRANSPORT_ROLE_DIAL

@@ -17,6 +17,7 @@ package anxserver
 import (
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -194,7 +195,13 @@ func (l listener) args() []string {
 	args := []string{"--sni", name}
 	if l.TCP != "" {
 		if l.L2 {
-			args = append(args, "--listen", l.TCP)
+			// The jacket answers what does not authenticate with the site it
+			// wears (spec §2.1, §4 step 1) and copies that site's
+			// ServerHello: without a dest a probe is closed instead, which
+			// sets the listener apart on a cross-border segment. The site is
+			// the first server name on 443, REALITY's usual dest.
+			site, _, _ := strings.Cut(name, ",")
+			args = append(args, "--listen", l.TCP, "--dest", net.JoinHostPort(site, "443"))
 		} else {
 			args = append(args, "--bare-listen", l.TCP)
 		}
