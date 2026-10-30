@@ -158,6 +158,7 @@ type fakeHost struct {
 	users     map[string]string // user id -> link id
 	relays    map[string]bool   // relay links held
 	routes    map[string]string // admitted link -> relay link
+	dials     []string          // reverse dials as id=addr
 	next      int
 	// unready fails the next AddUsers calls, as a process still starting.
 	unready int
@@ -168,7 +169,7 @@ func (h *fakeHost) launch(binary string, args []string) (Process, error) {
 	defer h.mu.Unlock()
 	process := &fakeProcess{args: append([]string{binary}, args...), done: make(chan struct{})}
 	h.processes = append(h.processes, process)
-	h.users, h.relays, h.routes = map[string]string{}, map[string]bool{}, map[string]string{}
+	h.users, h.relays, h.routes, h.dials = map[string]string{}, map[string]bool{}, map[string]string{}, nil
 	return process, nil
 }
 
@@ -237,6 +238,22 @@ func (h *fakeHost) SetLinkRoutes(_ context.Context, in *anxmgmtpb.SetLinkRoutesR
 	}
 	h.routes = routes
 	return &anxmgmtpb.SetLinkRoutesResponse{}, nil
+}
+
+func (h *fakeHost) SetReverseDials(_ context.Context, in *anxmgmtpb.SetReverseDialsRequest, _ ...grpc.CallOption) (*anxmgmtpb.SetReverseDialsResponse, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.dials = nil
+	for _, dial := range in.GetDials() {
+		h.dials = append(h.dials, dial.GetDialId()+"="+dial.GetAddr())
+	}
+	return &anxmgmtpb.SetReverseDialsResponse{Dials: uint32(len(in.GetDials()))}, nil
+}
+
+func (h *fakeHost) reverseDials() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.dials...)
 }
 
 // relayed answers the routes as admitted link -> relay link, and the relay
@@ -432,4 +449,69 @@ func TestRaiseSocketBuffers(t *testing.T) {
 	assert.Equal(t, "8388608\n", string(rmem))
 	assert.Equal(t, "16777216\n", string(wmem), "a higher limit is kept")
 	assert.Error(t, RaiseSocketBuffers(t.TempDir()))
+}
+
+// reversePlan has the egress tr-r dial back to the rendezvous instead of
+// listening (anx ANX-Line §4.6).
+func reversePlan() *networkv1.NetworkPlan {
+	plan := acceptPlan()
+	plan.Transports[0].GetAnxLine().TcpAddr = ""
+	plan.Transports[0].GetAnxLine().Reverse = true
+	plan.Transports[0].GetAnxLine().ReverseDial = "198.51.100.30:24444"
+	return plan
+}
+
+func TestAcceptsReverse(t *testing.T) {
+	accepts, err := Accepts(reversePlan())
+	require.NoError(t, err)
+	reverse := accepts[1]
+	assert.Equal(t, "tr-b", reverse.Transport)
+	assert.Equal(t, "198.51.100.30:24444", reverse.ReverseDial)
+	assert.Equal(t, []string{"--sni", "anx-line"}, reverse.listener().args(), "the egress listens on nothing")
+	_, err = group(accepts)
+	require.NoError(t, err)
+
+	_, err = group([]Accept{{Transport: "t", ReverseDial: "198.51.100.30:24444", TCP: "1.2.3.4:443"}})
+	assert.ErrorContains(t, err, "no listen address and is l1")
+	_, err = group([]Accept{{Transport: "t", ReverseDial: "nowhere"}})
+	assert.ErrorContains(t, err, "not host:port")
+
+	// A relay hop into a reverse link is the rendezvous.
+	relay := relayPlan()
+	next := relay.Transports[3].GetAnxLine()
+	next.TcpAddr, next.Egress, next.ServerName = "", "", ""
+	next.Reverse, next.ReverseListen = true, "0.0.0.0:24444"
+	accepts, err = Accepts(relay)
+	require.NoError(t, err)
+	assert.True(t, accepts[0].Next.GetReverse())
+	assert.Empty(t, accepts[0].Next.GetTcpAddr())
+	assert.Equal(t, "0.0.0.0:24444", accepts[0].ReverseListen)
+	assert.Contains(t, strings.Join(accepts[0].listener().args(), " "), "--reverse-listen 0.0.0.0:24444")
+}
+
+// The egress process keeps the reverse dials of its accepts, again after a
+// restart, and drops them with the transport.
+func TestManagerDialsBack(t *testing.T) {
+	host := &fakeHost{}
+	m, _ := newManager(t, host)
+	accepts, err := Accepts(reversePlan())
+	require.NoError(t, err)
+	reverse := accepts[1:]
+
+	require.NoError(t, m.Apply(reverse))
+	applied(t, m, "tr-b")
+	assert.Equal(t, []string{"tr-b=198.51.100.30:24444"}, host.reverseDials())
+	assert.NotContains(t, strings.Join(host.last().args, " "), "--bare-listen")
+
+	host.last().Stop()
+	require.Eventually(t, func() bool {
+		return host.started() == 2 && assert.ObjectsAreEqual([]string{"tr-b=198.51.100.30:24444"}, host.reverseDials())
+	}, 2*time.Second, 5*time.Millisecond)
+
+	reverse[0].ReverseDial = "198.51.100.31:24444"
+	require.NoError(t, m.Apply(reverse))
+	require.Eventually(t, func() bool {
+		return assert.ObjectsAreEqual([]string{"tr-b=198.51.100.31:24444"}, host.reverseDials())
+	}, 2*time.Second, 5*time.Millisecond)
+	assert.Equal(t, 2, host.started(), "changed on the running process")
 }

@@ -47,6 +47,11 @@ type Accept struct {
 	// plan forwards the transport into a dialing anx_line transport (a
 	// relay hop), nil when it leaves by an egress.
 	Next *anxmgmtpb.Link
+	// ReverseDial is the rendezvous a reverse transport's egress dials
+	// back to (anx ANX-Line §4.6, SetReverseDials): such a transport
+	// listens on nothing. ReverseListen is the rendezvous listener a relay
+	// hop opens when Next is a reverse link.
+	ReverseDial, ReverseListen string
 }
 
 // Accepts answers the anx_line transports plan has this device accept, in
@@ -83,6 +88,9 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 			TCP: settings.GetTcpAddr(), QUIC: settings.GetQuicAddr(), FakeTCP: settings.GetFaketcpAddr(),
 			L2: settings.GetEgress() == "l2", ServerName: settings.GetServerName(),
 		}
+		if settings.GetReverse() {
+			accept.ReverseDial = settings.GetReverseDial()
+		}
 		if accept.LinkID == "" {
 			accept.LinkID = accept.Transport
 		}
@@ -97,6 +105,9 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 					return nil, err
 				}
 				accept.Next = link
+				if link.GetReverse() {
+					accept.ReverseListen = into.GetAnxLine().GetReverseListen()
+				}
 				accepts = append(accepts, accept)
 				continue
 			}
@@ -132,6 +143,9 @@ func DialLink(transport *networkv1.Transport) (*anxmgmtpb.Link, error) {
 		LinkId: transport.GetId(), LinkKey: key, ServerPublic: settings.GetServerPublic(),
 		QuicAddr: settings.GetQuicAddr(), FaketcpAddr: settings.GetFaketcpAddr(), TcpAddr: settings.GetTcpAddr(),
 		Egress: settings.GetEgress(), ServerName: settings.GetServerName(),
+		// A reverse link takes the connections its egress dials back to
+		// the rendezvous (anx ANX-Line §4.6) and has no carrier address.
+		Reverse: settings.GetReverse(),
 		// UDP on a connection of its own, apart from bulk TCP (anx
 		// ANX-LINE-ONBOARDING §3, TBD-L15).
 		UdpLanes: 1,
@@ -169,6 +183,7 @@ type listener struct {
 	L2                 bool
 	ServerName         string
 	Sources            string
+	ReverseListen      string
 }
 
 func (a Accept) listener() listener {
@@ -178,7 +193,7 @@ func (a Accept) listener() listener {
 	}
 	sort.Strings(sources)
 	return listener{TCP: a.TCP, QUIC: a.QUIC, FakeTCP: a.FakeTCP, L2: a.L2, ServerName: a.ServerName,
-		Sources: strings.Join(sources, ",")}
+		Sources: strings.Join(sources, ","), ReverseListen: a.ReverseListen}
 }
 
 // defaultServerName is the --sni of a bare (l1) server, which serves no
@@ -217,6 +232,9 @@ func (l listener) args() []string {
 	if l.FakeTCP != "" {
 		args = append(args, "--faketcp-listen", l.FakeTCP)
 	}
+	if l.ReverseListen != "" {
+		args = append(args, "--reverse-listen", l.ReverseListen)
+	}
 	if l.Sources != "" {
 		for _, source := range strings.Split(l.Sources, ",") {
 			args = append(args, "--egress-source", source)
@@ -231,7 +249,17 @@ func group(accepts []Accept) (map[listener][]Accept, error) {
 	groups := map[listener][]Accept{}
 	links := map[string]string{}
 	for _, accept := range accepts {
-		if accept.TCP == "" && accept.QUIC == "" && accept.FakeTCP == "" {
+		listens := accept.TCP != "" || accept.QUIC != "" || accept.FakeTCP != ""
+		switch {
+		case accept.ReverseDial != "" && (listens || accept.L2):
+			// The egress opens no port; the rendezvous runs the bare
+			// handshake over the connections it dials back.
+			return nil, fmt.Errorf("transport %s: a reverse transport has no listen address and is l1", accept.Transport)
+		case accept.ReverseDial != "":
+			if _, _, err := net.SplitHostPort(accept.ReverseDial); err != nil {
+				return nil, fmt.Errorf("transport %s: reverse dial %q is not host:port", accept.Transport, accept.ReverseDial)
+			}
+		case !listens:
 			return nil, fmt.Errorf("transport %s: no listen address", accept.Transport)
 		}
 		if accept.L2 && accept.ServerName == "" {
@@ -257,7 +285,7 @@ func group(accepts []Accept) (map[listener][]Accept, error) {
 	}
 	owners := map[string]listener{}
 	for l := range groups {
-		for _, address := range []string{"tcp " + l.TCP, "udp " + l.QUIC, "fake-tcp " + l.FakeTCP} {
+		for _, address := range []string{"tcp " + l.TCP, "udp " + l.QUIC, "fake-tcp " + l.FakeTCP, "tcp " + l.ReverseListen} {
 			if strings.HasSuffix(address, " ") {
 				continue
 			}

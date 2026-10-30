@@ -2117,7 +2117,10 @@ type Link struct {
 	// Required for l2: SNI, one of the egress node's server_names.
 	ServerName string `protobuf:"bytes,10,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
 	// 0 = UDP shares the link's connection with TCP; 1 = UDP uses a separate connection. >1 rejected.
-	UdpLanes      uint32 `protobuf:"varint,11,opt,name=udp_lanes,json=udpLanes,proto3" json:"udp_lanes,omitempty"`
+	UdpLanes uint32 `protobuf:"varint,11,opt,name=udp_lanes,json=udpLanes,proto3" json:"udp_lanes,omitempty"`
+	// Take connections dialed in by the egress instead of dialing out. quic_addr / faketcp_addr / tcp_addr
+	// must be empty, egress must be l1, and the node must run a reverse listener.
+	Reverse       bool `protobuf:"varint,12,opt,name=reverse,proto3" json:"reverse,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2227,6 +2230,13 @@ func (x *Link) GetUdpLanes() uint32 {
 		return x.UdpLanes
 	}
 	return 0
+}
+
+func (x *Link) GetReverse() bool {
+	if x != nil {
+		return x.Reverse
+	}
+	return false
 }
 
 type AddLinksRequest struct {
@@ -2759,8 +2769,11 @@ type LinkStat struct {
 	// State of the separate UDP connection when udp_lanes = 1; false / empty otherwise.
 	UdpLaneConnected bool   `protobuf:"varint,17,opt,name=udp_lane_connected,json=udpLaneConnected,proto3" json:"udp_lane_connected,omitempty"`
 	UdpLaneCarrier   string `protobuf:"bytes,18,opt,name=udp_lane_carrier,json=udpLaneCarrier,proto3" json:"udp_lane_carrier,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Reverse links: idle dialed-in connections waiting in the pool, and total accepted; zero otherwise.
+	ReverseIdle     uint32 `protobuf:"varint,19,opt,name=reverse_idle,json=reverseIdle,proto3" json:"reverse_idle,omitempty"`
+	ReverseAccepted uint64 `protobuf:"varint,20,opt,name=reverse_accepted,json=reverseAccepted,proto3" json:"reverse_accepted,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *LinkStat) Reset() {
@@ -2919,6 +2932,20 @@ func (x *LinkStat) GetUdpLaneCarrier() string {
 	return ""
 }
 
+func (x *LinkStat) GetReverseIdle() uint32 {
+	if x != nil {
+		return x.ReverseIdle
+	}
+	return 0
+}
+
+func (x *LinkStat) GetReverseAccepted() uint64 {
+	if x != nil {
+		return x.ReverseAccepted
+	}
+	return 0
+}
+
 type LinkStatsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Links         []*LinkStat            `protobuf:"bytes,1,rep,name=links,proto3" json:"links,omitempty"`
@@ -2961,6 +2988,168 @@ func (x *LinkStatsResponse) GetLinks() []*LinkStat {
 		return x.Links
 	}
 	return nil
+}
+
+// One rendezvous node this egress node keeps dialing.
+type ReverseDial struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	DialId string                 `protobuf:"bytes,1,opt,name=dial_id,json=dialId,proto3" json:"dial_id,omitempty"`
+	// Rendezvous reverse listener host:port.
+	Addr string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
+	// 32 bytes, the link_key of the reverse link on the rendezvous node (also add it here via AddUsers).
+	LinkKey []byte `protobuf:"bytes,3,opt,name=link_key,json=linkKey,proto3" json:"link_key,omitempty"`
+	// Idle connections to keep; 0 = 2, at most 16.
+	Idle          uint32 `protobuf:"varint,4,opt,name=idle,proto3" json:"idle,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReverseDial) Reset() {
+	*x = ReverseDial{}
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReverseDial) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReverseDial) ProtoMessage() {}
+
+func (x *ReverseDial) ProtoReflect() protoreflect.Message {
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReverseDial.ProtoReflect.Descriptor instead.
+func (*ReverseDial) Descriptor() ([]byte, []int) {
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *ReverseDial) GetDialId() string {
+	if x != nil {
+		return x.DialId
+	}
+	return ""
+}
+
+func (x *ReverseDial) GetAddr() string {
+	if x != nil {
+		return x.Addr
+	}
+	return ""
+}
+
+func (x *ReverseDial) GetLinkKey() []byte {
+	if x != nil {
+		return x.LinkKey
+	}
+	return nil
+}
+
+func (x *ReverseDial) GetIdle() uint32 {
+	if x != nil {
+		return x.Idle
+	}
+	return 0
+}
+
+// Replaces the whole dial table (not persisted; re-send after reconnect). Empty = stop all.
+// Sessions already being served are not affected. dial_id must be unique.
+type SetReverseDialsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Dials         []*ReverseDial         `protobuf:"bytes,1,rep,name=dials,proto3" json:"dials,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetReverseDialsRequest) Reset() {
+	*x = SetReverseDialsRequest{}
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetReverseDialsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetReverseDialsRequest) ProtoMessage() {}
+
+func (x *SetReverseDialsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetReverseDialsRequest.ProtoReflect.Descriptor instead.
+func (*SetReverseDialsRequest) Descriptor() ([]byte, []int) {
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *SetReverseDialsRequest) GetDials() []*ReverseDial {
+	if x != nil {
+		return x.Dials
+	}
+	return nil
+}
+
+type SetReverseDialsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Dials         uint32                 `protobuf:"varint,1,opt,name=dials,proto3" json:"dials,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetReverseDialsResponse) Reset() {
+	*x = SetReverseDialsResponse{}
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetReverseDialsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetReverseDialsResponse) ProtoMessage() {}
+
+func (x *SetReverseDialsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_anx_mgmt_v1_mgmt_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetReverseDialsResponse.ProtoReflect.Descriptor instead.
+func (*SetReverseDialsResponse) Descriptor() ([]byte, []int) {
+	return file_anx_mgmt_v1_mgmt_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *SetReverseDialsResponse) GetDials() uint32 {
+	if x != nil {
+		return x.Dials
+	}
+	return 0
 }
 
 var File_anx_mgmt_v1_mgmt_proto protoreflect.FileDescriptor
@@ -3096,7 +3285,7 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\vport_hop_ms\x18\f \x01(\rR\tportHopMs\x12,\n" +
 	"\x12quic_ack_frequency\x18\r \x01(\bR\x10quicAckFrequency\x12/\n" +
 	"\x14quic_mtu_upper_bound\x18\x0e \x01(\rR\x11quicMtuUpperBound\x12(\n" +
-	"\x10quic_initial_mtu\x18\x0f \x01(\rR\x0equicInitialMtu\"\xe6\x02\n" +
+	"\x10quic_initial_mtu\x18\x0f \x01(\rR\x0equicInitialMtu\"\x80\x03\n" +
 	"\x04Link\x12\x17\n" +
 	"\alink_id\x18\x01 \x01(\tR\x06linkId\x12\x19\n" +
 	"\blink_key\x18\x02 \x01(\fR\alinkKey\x12#\n" +
@@ -3110,7 +3299,8 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\vserver_name\x18\n" +
 	" \x01(\tR\n" +
 	"serverName\x12\x1b\n" +
-	"\tudp_lanes\x18\v \x01(\rR\budpLanes\":\n" +
+	"\tudp_lanes\x18\v \x01(\rR\budpLanes\x12\x18\n" +
+	"\areverse\x18\f \x01(\bR\areverse\":\n" +
 	"\x0fAddLinksRequest\x12'\n" +
 	"\x05links\x18\x01 \x03(\v2\x11.anx.mgmt.v1.LinkR\x05links\"(\n" +
 	"\x10AddLinksResponse\x12\x14\n" +
@@ -3134,7 +3324,7 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\fCarrierProbe\x12\x18\n" +
 	"\acarrier\x18\x01 \x01(\tR\acarrier\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12!\n" +
-	"\fhandshake_ms\x18\x03 \x01(\rR\vhandshakeMs\"\xda\x04\n" +
+	"\fhandshake_ms\x18\x03 \x01(\rR\vhandshakeMs\"\xa8\x05\n" +
 	"\bLinkStat\x12\x17\n" +
 	"\alink_id\x18\x01 \x01(\tR\x06linkId\x12#\n" +
 	"\rdefault_route\x18\x02 \x01(\bR\fdefaultRoute\x12\x1c\n" +
@@ -3154,9 +3344,20 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\arebinds\x18\x0f \x01(\x04R\arebinds\x12!\n" +
 	"\frouted_users\x18\x10 \x01(\rR\vroutedUsers\x12,\n" +
 	"\x12udp_lane_connected\x18\x11 \x01(\bR\x10udpLaneConnected\x12(\n" +
-	"\x10udp_lane_carrier\x18\x12 \x01(\tR\x0eudpLaneCarrier\"@\n" +
+	"\x10udp_lane_carrier\x18\x12 \x01(\tR\x0eudpLaneCarrier\x12!\n" +
+	"\freverse_idle\x18\x13 \x01(\rR\vreverseIdle\x12)\n" +
+	"\x10reverse_accepted\x18\x14 \x01(\x04R\x0freverseAccepted\"@\n" +
 	"\x11LinkStatsResponse\x12+\n" +
-	"\x05links\x18\x01 \x03(\v2\x15.anx.mgmt.v1.LinkStatR\x05links2\xc0\f\n" +
+	"\x05links\x18\x01 \x03(\v2\x15.anx.mgmt.v1.LinkStatR\x05links\"i\n" +
+	"\vReverseDial\x12\x17\n" +
+	"\adial_id\x18\x01 \x01(\tR\x06dialId\x12\x12\n" +
+	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x19\n" +
+	"\blink_key\x18\x03 \x01(\fR\alinkKey\x12\x12\n" +
+	"\x04idle\x18\x04 \x01(\rR\x04idle\"H\n" +
+	"\x16SetReverseDialsRequest\x12.\n" +
+	"\x05dials\x18\x01 \x03(\v2\x18.anx.mgmt.v1.ReverseDialR\x05dials\"/\n" +
+	"\x17SetReverseDialsResponse\x12\x14\n" +
+	"\x05dials\x18\x01 \x01(\rR\x05dials2\x9e\r\n" +
 	"\n" +
 	"Management\x12G\n" +
 	"\bAddUsers\x12\x1c.anx.mgmt.v1.AddUsersRequest\x1a\x1d.anx.mgmt.v1.AddUsersResponse\x12P\n" +
@@ -3178,7 +3379,8 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\vRemoveLinks\x12\x1f.anx.mgmt.v1.RemoveLinksRequest\x1a .anx.mgmt.v1.RemoveLinksResponse\x12V\n" +
 	"\rRotateLinkKey\x12!.anx.mgmt.v1.RotateLinkKeyRequest\x1a\".anx.mgmt.v1.RotateLinkKeyResponse\x12J\n" +
 	"\tLinkStats\x12\x1d.anx.mgmt.v1.LinkStatsRequest\x1a\x1e.anx.mgmt.v1.LinkStatsResponse\x12V\n" +
-	"\rSetLinkRoutes\x12!.anx.mgmt.v1.SetLinkRoutesRequest\x1a\".anx.mgmt.v1.SetLinkRoutesResponseb\x06proto3"
+	"\rSetLinkRoutes\x12!.anx.mgmt.v1.SetLinkRoutesRequest\x1a\".anx.mgmt.v1.SetLinkRoutesResponse\x12\\\n" +
+	"\x0fSetReverseDials\x12#.anx.mgmt.v1.SetReverseDialsRequest\x1a$.anx.mgmt.v1.SetReverseDialsResponseb\x06proto3"
 
 var (
 	file_anx_mgmt_v1_mgmt_proto_rawDescOnce sync.Once
@@ -3192,7 +3394,7 @@ func file_anx_mgmt_v1_mgmt_proto_rawDescGZIP() []byte {
 	return file_anx_mgmt_v1_mgmt_proto_rawDescData
 }
 
-var file_anx_mgmt_v1_mgmt_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
+var file_anx_mgmt_v1_mgmt_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
 var file_anx_mgmt_v1_mgmt_proto_goTypes = []any{
 	(*User)(nil),                         // 0: anx.mgmt.v1.User
 	(*AddUsersRequest)(nil),              // 1: anx.mgmt.v1.AddUsersRequest
@@ -3246,6 +3448,9 @@ var file_anx_mgmt_v1_mgmt_proto_goTypes = []any{
 	(*CarrierProbe)(nil),                 // 49: anx.mgmt.v1.CarrierProbe
 	(*LinkStat)(nil),                     // 50: anx.mgmt.v1.LinkStat
 	(*LinkStatsResponse)(nil),            // 51: anx.mgmt.v1.LinkStatsResponse
+	(*ReverseDial)(nil),                  // 52: anx.mgmt.v1.ReverseDial
+	(*SetReverseDialsRequest)(nil),       // 53: anx.mgmt.v1.SetReverseDialsRequest
+	(*SetReverseDialsResponse)(nil),      // 54: anx.mgmt.v1.SetReverseDialsResponse
 }
 var file_anx_mgmt_v1_mgmt_proto_depIdxs = []int32{
 	0,  // 0: anx.mgmt.v1.AddUsersRequest.users:type_name -> anx.mgmt.v1.User
@@ -3263,49 +3468,52 @@ var file_anx_mgmt_v1_mgmt_proto_depIdxs = []int32{
 	45, // 12: anx.mgmt.v1.SetLinkRoutesRequest.routes:type_name -> anx.mgmt.v1.LinkRoute
 	49, // 13: anx.mgmt.v1.LinkStat.probes:type_name -> anx.mgmt.v1.CarrierProbe
 	50, // 14: anx.mgmt.v1.LinkStatsResponse.links:type_name -> anx.mgmt.v1.LinkStat
-	1,  // 15: anx.mgmt.v1.Management.AddUsers:input_type -> anx.mgmt.v1.AddUsersRequest
-	3,  // 16: anx.mgmt.v1.Management.RemoveUsers:input_type -> anx.mgmt.v1.RemoveUsersRequest
-	5,  // 17: anx.mgmt.v1.Management.GetTraffic:input_type -> anx.mgmt.v1.GetTrafficRequest
-	8,  // 18: anx.mgmt.v1.Management.GetOnline:input_type -> anx.mgmt.v1.GetOnlineRequest
-	13, // 19: anx.mgmt.v1.Management.SetJacket:input_type -> anx.mgmt.v1.SetJacketRequest
-	15, // 20: anx.mgmt.v1.Management.PushShapeProfile:input_type -> anx.mgmt.v1.PushShapeProfileRequest
-	17, // 21: anx.mgmt.v1.Management.Stats:input_type -> anx.mgmt.v1.StatsRequest
-	22, // 22: anx.mgmt.v1.Management.RotateListeners:input_type -> anx.mgmt.v1.RotateListenersRequest
-	24, // 23: anx.mgmt.v1.Management.SetIngressPool:input_type -> anx.mgmt.v1.SetIngressPoolRequest
-	26, // 24: anx.mgmt.v1.Management.IssueDevice:input_type -> anx.mgmt.v1.IssueDeviceRequest
-	28, // 25: anx.mgmt.v1.Management.RevokeDevice:input_type -> anx.mgmt.v1.RevokeDeviceRequest
-	30, // 26: anx.mgmt.v1.Management.ListDevices:input_type -> anx.mgmt.v1.ListDevicesRequest
-	33, // 27: anx.mgmt.v1.Management.SetDeviceLimit:input_type -> anx.mgmt.v1.SetDeviceLimitRequest
-	35, // 28: anx.mgmt.v1.Management.RotateIntermediateCa:input_type -> anx.mgmt.v1.RotateIntermediateCaRequest
-	39, // 29: anx.mgmt.v1.Management.AddLinks:input_type -> anx.mgmt.v1.AddLinksRequest
-	41, // 30: anx.mgmt.v1.Management.RemoveLinks:input_type -> anx.mgmt.v1.RemoveLinksRequest
-	43, // 31: anx.mgmt.v1.Management.RotateLinkKey:input_type -> anx.mgmt.v1.RotateLinkKeyRequest
-	48, // 32: anx.mgmt.v1.Management.LinkStats:input_type -> anx.mgmt.v1.LinkStatsRequest
-	46, // 33: anx.mgmt.v1.Management.SetLinkRoutes:input_type -> anx.mgmt.v1.SetLinkRoutesRequest
-	2,  // 34: anx.mgmt.v1.Management.AddUsers:output_type -> anx.mgmt.v1.AddUsersResponse
-	4,  // 35: anx.mgmt.v1.Management.RemoveUsers:output_type -> anx.mgmt.v1.RemoveUsersResponse
-	7,  // 36: anx.mgmt.v1.Management.GetTraffic:output_type -> anx.mgmt.v1.GetTrafficResponse
-	10, // 37: anx.mgmt.v1.Management.GetOnline:output_type -> anx.mgmt.v1.GetOnlineResponse
-	14, // 38: anx.mgmt.v1.Management.SetJacket:output_type -> anx.mgmt.v1.SetJacketResponse
-	16, // 39: anx.mgmt.v1.Management.PushShapeProfile:output_type -> anx.mgmt.v1.PushShapeProfileResponse
-	20, // 40: anx.mgmt.v1.Management.Stats:output_type -> anx.mgmt.v1.StatsResponse
-	23, // 41: anx.mgmt.v1.Management.RotateListeners:output_type -> anx.mgmt.v1.RotateListenersResponse
-	25, // 42: anx.mgmt.v1.Management.SetIngressPool:output_type -> anx.mgmt.v1.SetIngressPoolResponse
-	27, // 43: anx.mgmt.v1.Management.IssueDevice:output_type -> anx.mgmt.v1.IssueDeviceResponse
-	29, // 44: anx.mgmt.v1.Management.RevokeDevice:output_type -> anx.mgmt.v1.RevokeDeviceResponse
-	32, // 45: anx.mgmt.v1.Management.ListDevices:output_type -> anx.mgmt.v1.ListDevicesResponse
-	34, // 46: anx.mgmt.v1.Management.SetDeviceLimit:output_type -> anx.mgmt.v1.SetDeviceLimitResponse
-	36, // 47: anx.mgmt.v1.Management.RotateIntermediateCa:output_type -> anx.mgmt.v1.RotateIntermediateCaResponse
-	40, // 48: anx.mgmt.v1.Management.AddLinks:output_type -> anx.mgmt.v1.AddLinksResponse
-	42, // 49: anx.mgmt.v1.Management.RemoveLinks:output_type -> anx.mgmt.v1.RemoveLinksResponse
-	44, // 50: anx.mgmt.v1.Management.RotateLinkKey:output_type -> anx.mgmt.v1.RotateLinkKeyResponse
-	51, // 51: anx.mgmt.v1.Management.LinkStats:output_type -> anx.mgmt.v1.LinkStatsResponse
-	47, // 52: anx.mgmt.v1.Management.SetLinkRoutes:output_type -> anx.mgmt.v1.SetLinkRoutesResponse
-	34, // [34:53] is the sub-list for method output_type
-	15, // [15:34] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	52, // 15: anx.mgmt.v1.SetReverseDialsRequest.dials:type_name -> anx.mgmt.v1.ReverseDial
+	1,  // 16: anx.mgmt.v1.Management.AddUsers:input_type -> anx.mgmt.v1.AddUsersRequest
+	3,  // 17: anx.mgmt.v1.Management.RemoveUsers:input_type -> anx.mgmt.v1.RemoveUsersRequest
+	5,  // 18: anx.mgmt.v1.Management.GetTraffic:input_type -> anx.mgmt.v1.GetTrafficRequest
+	8,  // 19: anx.mgmt.v1.Management.GetOnline:input_type -> anx.mgmt.v1.GetOnlineRequest
+	13, // 20: anx.mgmt.v1.Management.SetJacket:input_type -> anx.mgmt.v1.SetJacketRequest
+	15, // 21: anx.mgmt.v1.Management.PushShapeProfile:input_type -> anx.mgmt.v1.PushShapeProfileRequest
+	17, // 22: anx.mgmt.v1.Management.Stats:input_type -> anx.mgmt.v1.StatsRequest
+	22, // 23: anx.mgmt.v1.Management.RotateListeners:input_type -> anx.mgmt.v1.RotateListenersRequest
+	24, // 24: anx.mgmt.v1.Management.SetIngressPool:input_type -> anx.mgmt.v1.SetIngressPoolRequest
+	26, // 25: anx.mgmt.v1.Management.IssueDevice:input_type -> anx.mgmt.v1.IssueDeviceRequest
+	28, // 26: anx.mgmt.v1.Management.RevokeDevice:input_type -> anx.mgmt.v1.RevokeDeviceRequest
+	30, // 27: anx.mgmt.v1.Management.ListDevices:input_type -> anx.mgmt.v1.ListDevicesRequest
+	33, // 28: anx.mgmt.v1.Management.SetDeviceLimit:input_type -> anx.mgmt.v1.SetDeviceLimitRequest
+	35, // 29: anx.mgmt.v1.Management.RotateIntermediateCa:input_type -> anx.mgmt.v1.RotateIntermediateCaRequest
+	39, // 30: anx.mgmt.v1.Management.AddLinks:input_type -> anx.mgmt.v1.AddLinksRequest
+	41, // 31: anx.mgmt.v1.Management.RemoveLinks:input_type -> anx.mgmt.v1.RemoveLinksRequest
+	43, // 32: anx.mgmt.v1.Management.RotateLinkKey:input_type -> anx.mgmt.v1.RotateLinkKeyRequest
+	48, // 33: anx.mgmt.v1.Management.LinkStats:input_type -> anx.mgmt.v1.LinkStatsRequest
+	46, // 34: anx.mgmt.v1.Management.SetLinkRoutes:input_type -> anx.mgmt.v1.SetLinkRoutesRequest
+	53, // 35: anx.mgmt.v1.Management.SetReverseDials:input_type -> anx.mgmt.v1.SetReverseDialsRequest
+	2,  // 36: anx.mgmt.v1.Management.AddUsers:output_type -> anx.mgmt.v1.AddUsersResponse
+	4,  // 37: anx.mgmt.v1.Management.RemoveUsers:output_type -> anx.mgmt.v1.RemoveUsersResponse
+	7,  // 38: anx.mgmt.v1.Management.GetTraffic:output_type -> anx.mgmt.v1.GetTrafficResponse
+	10, // 39: anx.mgmt.v1.Management.GetOnline:output_type -> anx.mgmt.v1.GetOnlineResponse
+	14, // 40: anx.mgmt.v1.Management.SetJacket:output_type -> anx.mgmt.v1.SetJacketResponse
+	16, // 41: anx.mgmt.v1.Management.PushShapeProfile:output_type -> anx.mgmt.v1.PushShapeProfileResponse
+	20, // 42: anx.mgmt.v1.Management.Stats:output_type -> anx.mgmt.v1.StatsResponse
+	23, // 43: anx.mgmt.v1.Management.RotateListeners:output_type -> anx.mgmt.v1.RotateListenersResponse
+	25, // 44: anx.mgmt.v1.Management.SetIngressPool:output_type -> anx.mgmt.v1.SetIngressPoolResponse
+	27, // 45: anx.mgmt.v1.Management.IssueDevice:output_type -> anx.mgmt.v1.IssueDeviceResponse
+	29, // 46: anx.mgmt.v1.Management.RevokeDevice:output_type -> anx.mgmt.v1.RevokeDeviceResponse
+	32, // 47: anx.mgmt.v1.Management.ListDevices:output_type -> anx.mgmt.v1.ListDevicesResponse
+	34, // 48: anx.mgmt.v1.Management.SetDeviceLimit:output_type -> anx.mgmt.v1.SetDeviceLimitResponse
+	36, // 49: anx.mgmt.v1.Management.RotateIntermediateCa:output_type -> anx.mgmt.v1.RotateIntermediateCaResponse
+	40, // 50: anx.mgmt.v1.Management.AddLinks:output_type -> anx.mgmt.v1.AddLinksResponse
+	42, // 51: anx.mgmt.v1.Management.RemoveLinks:output_type -> anx.mgmt.v1.RemoveLinksResponse
+	44, // 52: anx.mgmt.v1.Management.RotateLinkKey:output_type -> anx.mgmt.v1.RotateLinkKeyResponse
+	51, // 53: anx.mgmt.v1.Management.LinkStats:output_type -> anx.mgmt.v1.LinkStatsResponse
+	47, // 54: anx.mgmt.v1.Management.SetLinkRoutes:output_type -> anx.mgmt.v1.SetLinkRoutesResponse
+	54, // 55: anx.mgmt.v1.Management.SetReverseDials:output_type -> anx.mgmt.v1.SetReverseDialsResponse
+	36, // [36:56] is the sub-list for method output_type
+	16, // [16:36] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_anx_mgmt_v1_mgmt_proto_init() }
@@ -3323,7 +3531,7 @@ func file_anx_mgmt_v1_mgmt_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_anx_mgmt_v1_mgmt_proto_rawDesc), len(file_anx_mgmt_v1_mgmt_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   52,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

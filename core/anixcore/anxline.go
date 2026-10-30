@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
+	"time"
 
 	"github.com/AnixOps/anix-agent/v5/anxserver"
 	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
@@ -37,11 +40,14 @@ var connectLine = func(addr string) (anxmgmtpb.ManagementClient, func() error, e
 	return anxmgmtpb.NewManagementClient(conn), conn.Close, nil
 }
 
-// dialLinks answers the links of plan's dialing anx_line ends, by id;
-// transports only relay hops use are anx-server's (anxserver.Relayed).
-func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, error) {
+// dialLinks answers the links of plan's dialing anx_line ends, by id, and
+// the rendezvous listener their reverse links need (anx ANX-Line §4.6, ""
+// for none); transports only relay hops use are anx-server's
+// (anxserver.Relayed).
+func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, string, error) {
 	relayed := anxserver.Relayed(plan)
 	links := map[string]*anxmgmtpb.Link{}
+	reverse := ""
 	for _, transport := range plan.GetTransports() {
 		if transport.GetKind() != network.TransportAnxLine || transport.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_DIAL ||
 			relayed[transport.GetId()] {
@@ -49,11 +55,59 @@ func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, error) 
 		}
 		link, err := anxserver.DialLink(transport)
 		if err != nil {
-			return nil, err
+			return nil, "", err
+		}
+		if link.GetReverse() {
+			// anx-node opens one rendezvous listener for all its reverse
+			// links (`anx_line.reverse_listen`).
+			listen := transport.GetAnxLine().GetReverseListen()
+			if listen == "" || (reverse != "" && listen != reverse) {
+				return nil, "", fmt.Errorf("transport %s: reverse links need one reverse listener, have %q and %q", transport.GetId(), reverse, listen)
+			}
+			reverse = listen
 		}
 		links[link.GetLinkId()] = link
 	}
-	return links, nil
+	return links, reverse, nil
+}
+
+// reopen relaunches an anx-node this core started whose rendezvous
+// listener is not listen, and gives it everything again; an anx-node the
+// core did not start (ApiAddress) keeps its own `anx_line.reverse_listen`.
+func (c *Core) reopen(listen string) error {
+	c.mu.Lock()
+	process, exited := c.process, c.exited
+	if process == nil || !c.config.AnxLine || c.reverseListen == listen {
+		c.mu.Unlock()
+		return nil
+	}
+	c.reverseListen = listen
+	// Not c.process any more: supervise leaves it be.
+	c.process = nil
+	c.mu.Unlock()
+	_ = process.Process.Signal(os.Interrupt)
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		_ = process.Process.Kill()
+		<-exited
+	}
+	if err := c.launch(); err != nil {
+		c.mu.Lock()
+		started := c.process != nil
+		c.mu.Unlock()
+		if !started {
+			// A process that started and failed is supervised already.
+			go c.supervise(nil, err)
+		}
+		return fmt.Errorf("anixcore: relaunch anx-node for reverse listener %q: %w", listen, err)
+	}
+	// The last plan's links may need the listener that just went; the
+	// plan being applied replaces them.
+	if err := c.replay(); err != nil {
+		log.WithField("core", coreType).WithError(err).Warn("restore anixcore after reopening the reverse listener")
+	}
+	return nil
 }
 
 // syncLinks makes anx-node hold exactly wanted: changed and gone links are

@@ -36,6 +36,8 @@ service Management {
   rpc LinkStats(LinkStatsRequest) returns (LinkStatsResponse);
   // Per-user next-hop routes (relay node)
   rpc SetLinkRoutes(SetLinkRoutesRequest) returns (SetLinkRoutesResponse);
+  // Egress side: keep idle outbound connections to a rendezvous node so the egress needs no listening port.
+  rpc SetReverseDials(SetReverseDialsRequest) returns (SetReverseDialsResponse);
 }
 
 message User {
@@ -218,6 +220,9 @@ message Link {
   string server_name = 10;
   // 0 = UDP shares the link's connection with TCP; 1 = UDP uses a separate connection. >1 rejected.
   uint32 udp_lanes = 11;
+  // Take connections dialed in by the egress instead of dialing out. quic_addr / faketcp_addr / tcp_addr
+  // must be empty, egress must be l1, and the node must run a reverse listener.
+  bool reverse = 12;
 }
 
 message AddLinksRequest { repeated Link links = 1; }
@@ -275,5 +280,23 @@ message LinkStat {
   // State of the separate UDP connection when udp_lanes = 1; false / empty otherwise.
   bool udp_lane_connected = 17;
   string udp_lane_carrier = 18;
+  // Reverse links: idle dialed-in connections waiting in the pool, and total accepted; zero otherwise.
+  uint32 reverse_idle = 19;
+  uint64 reverse_accepted = 20;
 }
 message LinkStatsResponse { repeated LinkStat links = 1; }
+
+// One rendezvous node this egress node keeps dialing.
+message ReverseDial {
+  string dial_id = 1;
+  // Rendezvous reverse listener host:port.
+  string addr = 2;
+  // 32 bytes, the link_key of the reverse link on the rendezvous node (also add it here via AddUsers).
+  bytes link_key = 3;
+  // Idle connections to keep; 0 = 2, at most 16.
+  uint32 idle = 4;
+}
+// Replaces the whole dial table (not persisted; re-send after reconnect). Empty = stop all.
+// Sessions already being served are not affected. dial_id must be unique.
+message SetReverseDialsRequest { repeated ReverseDial dials = 1; }
+message SetReverseDialsResponse { uint32 dials = 1; }

@@ -11,6 +11,7 @@ import (
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeLine is anx-node's ANX-Line management API.
@@ -190,5 +191,40 @@ func TestDialingAnxLineNeedsAnxNode(t *testing.T) {
 	}
 	if err := broken.Start(); err == nil || !strings.Contains(err.Error(), "AnxLineApiAddress") {
 		t.Fatalf("Start = %v", err)
+	}
+}
+
+// A reverse link has no carrier address and needs anx-node's rendezvous
+// listener; two listeners cannot be had. An anx-node the core did not
+// start keeps its own listener.
+func TestReverseDialLinks(t *testing.T) {
+	plan := dialPlan("PUB-1")
+	settings := plan.Transports[0].GetAnxLine()
+	settings.QuicAddr, settings.TcpAddr, settings.CarrierOrder = "", "", []string{"c1"}
+	settings.Reverse, settings.ReverseListen = true, "0.0.0.0:24444"
+	links, listen, err := dialLinks(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listen != "0.0.0.0:24444" || !links["tr-jp"].GetReverse() || links["tr-jp"].GetTcpAddr() != "" {
+		t.Fatalf("listen = %q, links = %v", listen, links)
+	}
+
+	two := dialPlan("PUB-1")
+	other := proto.Clone(plan.Transports[0]).(*networkv1.Transport)
+	other.Id = "tr-kr"
+	other.GetAnxLine().ReverseListen = "0.0.0.0:24445"
+	two.Transports = append(plan.Transports, other)
+	if _, _, err := dialLinks(two); err == nil || !strings.Contains(err.Error(), "one reverse listener") {
+		t.Fatalf("err = %v", err)
+	}
+
+	line := &fakeLine{links: map[string]*anxmgmtpb.Link{}}
+	_, core := lineCore(t, line)
+	if _, err := core.ApplyNetwork(plan); err != nil {
+		t.Fatal(err)
+	}
+	if !line.links["tr-jp"].GetReverse() || core.reverseListen != "" {
+		t.Fatalf("links = %v, reverse listen = %q", line.links, core.reverseListen)
 	}
 }

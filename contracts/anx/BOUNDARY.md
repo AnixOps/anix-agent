@@ -33,20 +33,20 @@ anx-node version
 anx-server keygen [--x25519-only] <key-file>
 anx-server userkey
 anx-server run --key <file> --sni <name>[,<name>…] [--listen <addr>] [--mgmt <addr>]
-               [--bare-listen <addr>] [--quic-listen <addr>] [--quic-sockbuf <bytes>] [--quic-dgram-buf <bytes>]
+               [--bare-listen <addr>] [--reverse-listen <addr>] [--quic-listen <addr>] [--quic-sockbuf <bytes>] [--quic-dgram-buf <bytes>]
                [--faketcp-listen <ipv4:port>] [--mptcp]
                [--dest <host:port>] [--users <file>] [--user <hex>[:<name>]]…
                [--alpn h2,http/1.1] [--max-streams N] [--require-device] [--no-enroll] [--shape-plain]
                [--state <file>]
 ```
 
-`--key` 与 `--sni` 必填，`--listen` 默认 `0.0.0.0:443`，不给 `--mgmt` 就不开管理接口。`--quic-sockbuf` 是 `--quic-listen` 那个 UDP socket 的收发缓冲字节数（受主机 `net.core.rmem_max` / `wmem_max` 截断，启动时 stderr 打出实际值），`--quic-dgram-buf` 是每连接的 UDP 数据报接收缓冲字节数；都是 0 / 不给 = 默认。退出码：0 成功；1 运行失败；`anx-server` 未知子命令为 2。
+`--key` 与 `--sni` 必填，`--listen` 默认 `0.0.0.0:443`，不给 `--mgmt` 就不开管理接口。`--quic-sockbuf` 是 `--quic-listen` 那个 UDP socket 的收发缓冲字节数（受主机 `net.core.rmem_max` / `wmem_max` 截断，启动时 stderr 打出实际值），`--quic-dgram-buf` 是每连接的 UDP 数据报接收缓冲字节数；都是 0 / 不给 = 默认。`--reverse-listen` 开反向监听：出口节点主动连进来，`reverse = true` 的链路使用这些连接，出口节点因此不需要监听端口；出口节点经 `SetReverseDials` 下发要连的地址。anx-node 配置的 `anx_line` 段对应 `reverse_listen` 与链路的 `reverse`。退出码：0 成功；1 运行失败；`anx-server` 未知子命令为 2。
 
 ## 3. 指标
 
 `Stats`：`handshake_failures`、`fallbacks`、`replay_rejects`、`probe_signatures`，按地区的 `regions[].{region, attempts, successes}`，以及 UDP 中继计数 `udp.{from_client, forwarded, forward_errors, from_upstream, to_client, to_client_errors}`。
 
-`LinkStats` 每条链路：`link_id`、`default_route`、`connected`、`carrier`、`switches`、`probes[].{carrier, ok, handshake_ms}`、`rtt_ms`、`sent_packets`、`lost_packets`、`draining`、`egress`、`mptcp`、`fec_repairs_sent`、`fec_recovered`、`rebinds`、`routed_users`、`udp_lane_connected`、`udp_lane_carrier`。`Link` 可带 `udp_lanes`（0 | 1）。
+`LinkStats` 每条链路：`link_id`、`default_route`、`connected`、`carrier`、`switches`、`probes[].{carrier, ok, handshake_ms}`、`rtt_ms`、`sent_packets`、`lost_packets`、`draining`、`egress`、`mptcp`、`fec_repairs_sent`、`fec_recovered`、`rebinds`、`routed_users`、`udp_lane_connected`、`udp_lane_carrier`、`reverse_idle`、`reverse_accepted`。`Link` 可带 `udp_lanes`（0 | 1）与 `reverse`。
 
 `Stats` 与 `GetTraffic` 的计数器单调递增，请求带 `reset = true` 时读后清零。
 
@@ -56,6 +56,7 @@ anx-server run --key <file> --sni <name>[,<name>…] [--listen <addr>] [--mgmt <
 | --- | --- |
 | `INVALID_ARGUMENT` | 字段格式或取值不合法（密钥长度、地址、`egress` 与承载地址组合等） |
 | `NOT_FOUND` | 未知用户 / 设备 / 链路；`SetLinkRoutes` 引用未添加的 `link_id`（整批拒绝） |
+| `FAILED_PRECONDITION` | 本节点没开反向监听却添加 `reverse` 链路；本节点不能处理回连却调用 `SetReverseDials` |
 | `PERMISSION_DENIED` | 设备申领被拒 |
 | `RESOURCE_EXHAUSTED` | 达到设备数上限 |
 | `UNIMPLEMENTED` | 当前形态不提供该 RPC（见第 1 节） |
