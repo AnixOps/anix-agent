@@ -293,3 +293,49 @@ func TestNetworkComponentListsAnxLineOnce(t *testing.T) {
 	assert.Equal(t, network.EgressHop, hop.GetKind(), "anx-server's relays leave by hop egresses")
 	assert.Equal(t, "agent", hop.GetExecutor())
 }
+
+// A hop ingress reports the state of the anx_line transports accepting on
+// it, not anixcore's (which runs no path from it and says down).
+func TestHopIngressStatesFollowAcceptingTransports(t *testing.T) {
+	plan := &networkv1.NetworkPlan{
+		Ingresses: []*networkv1.Ingress{
+			{Id: "in-hop", Audience: networkv1.Audience_AUDIENCE_HOP},
+			{Id: "in-idle", Audience: networkv1.Audience_AUDIENCE_HOP},
+			{Id: "in-user", Audience: networkv1.Audience_AUDIENCE_USER},
+		},
+		Transports: []*networkv1.Transport{
+			{Id: "tr-down", Role: networkv1.TransportRole_TRANSPORT_ROLE_ACCEPT, ToIngressId: "in-hop"},
+			{Id: "tr-up", Role: networkv1.TransportRole_TRANSPORT_ROLE_ACCEPT, ToIngressId: "in-hop"},
+			{Id: "tr-dial", Role: networkv1.TransportRole_TRANSPORT_ROLE_DIAL, ToIngressId: "in-idle"},
+		},
+	}
+	down, applied := networkv1.ComponentState_COMPONENT_STATE_DOWN, networkv1.ComponentState_COMPONENT_STATE_APPLIED
+	ingress, transport := networkv1.Component_COMPONENT_INGRESS, networkv1.Component_COMPONENT_TRANSPORT
+	got := hopIngressStates(plan, []*networkv1.ComponentStatus{
+		{Component: ingress, Id: "in-hop", State: down},
+		{Component: ingress, Id: "in-idle", State: down},
+		{Component: ingress, Id: "in-user", State: down},
+		{Component: transport, Id: "tr-down", State: down, Detail: "restarting"},
+		{Component: transport, Id: "tr-up", State: applied, ChangedAtUnixMs: 7},
+		{Component: transport, Id: "tr-dial", State: applied},
+	})
+	byID := map[string]*networkv1.ComponentStatus{}
+	for _, component := range got {
+		if component.GetComponent() == ingress {
+			byID[component.GetId()] = component
+		}
+	}
+	require.Len(t, byID, 3)
+	assert.Equal(t, applied, byID["in-hop"].GetState())
+	assert.Equal(t, int64(7), byID["in-hop"].GetChangedAtUnixMs())
+	assert.Equal(t, down, byID["in-idle"].GetState(), "no accepting transport: anixcore's state stays")
+	assert.Equal(t, down, byID["in-user"].GetState())
+	assert.Len(t, got, 6)
+
+	only := hopIngressStates(plan, []*networkv1.ComponentStatus{
+		{Component: transport, Id: "tr-down", State: down, Detail: "restarting"},
+	})
+	require.Len(t, only, 2)
+	assert.Equal(t, down, only[1].GetState())
+	assert.Equal(t, "restarting", only[1].GetDetail())
+}

@@ -363,6 +363,7 @@ func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 	status = proto.Clone(status).(*networkv1.NetworkStatus)
 	if c.servers != nil && plan != nil {
 		status.Components = append(status.Components, c.servers.Status()...)
+		status.Components = hopIngressStates(plan, status.Components)
 	}
 	status.PublicKeys = append(status.PublicKeys, keys...)
 	if len(status.GetInterfaces()) == 0 {
@@ -378,4 +379,55 @@ func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 	if err := client.DataPlane().SendNetworkStatus(report); err != nil && !errors.Is(err, agentapi.ErrSessionGone) {
 		c.logger().WithError(err).Warn("Could not send the network status")
 	}
+}
+
+// hopIngressStates gives each hop ingress that anx-server accepts on the
+// state of its accepting transports: anixcore runs no path from a hop
+// ingress (anx-server hands the traffic on), so its own report of one is
+// always down. The ingress is applied while one of them is, and otherwise
+// takes the first one's state and detail.
+func hopIngressStates(plan *networkv1.NetworkPlan, components []*networkv1.ComponentStatus) []*networkv1.ComponentStatus {
+	transports := map[string]*networkv1.ComponentStatus{}
+	for _, component := range components {
+		if component.GetComponent() == networkv1.Component_COMPONENT_TRANSPORT {
+			transports[component.GetId()] = component
+		}
+	}
+	states := map[string]*networkv1.ComponentStatus{}
+	for _, ingress := range plan.GetIngresses() {
+		if ingress.GetAudience() != networkv1.Audience_AUDIENCE_HOP {
+			continue
+		}
+		var state *networkv1.ComponentStatus
+		for _, transport := range plan.GetTransports() {
+			accepted := transports[transport.GetId()]
+			if transport.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_ACCEPT ||
+				transport.GetToIngressId() != ingress.GetId() || accepted == nil {
+				continue
+			}
+			if state == nil || accepted.GetState() == networkv1.ComponentState_COMPONENT_STATE_APPLIED &&
+				state.GetState() != networkv1.ComponentState_COMPONENT_STATE_APPLIED {
+				state = accepted
+			}
+		}
+		if state != nil {
+			states[ingress.GetId()] = &networkv1.ComponentStatus{
+				Component: networkv1.Component_COMPONENT_INGRESS, Id: ingress.GetId(), State: state.GetState(),
+				Detail: state.GetDetail(), ChangedAtUnixMs: state.GetChangedAtUnixMs(),
+			}
+		}
+	}
+	out := make([]*networkv1.ComponentStatus, 0, len(components)+len(states))
+	for _, component := range components {
+		if component.GetComponent() == networkv1.Component_COMPONENT_INGRESS && states[component.GetId()] != nil {
+			continue
+		}
+		out = append(out, component)
+	}
+	for _, ingress := range plan.GetIngresses() {
+		if state := states[ingress.GetId()]; state != nil {
+			out = append(out, state)
+		}
+	}
+	return out
 }
