@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.17 - 2026-10-30
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.17.
+
 ### Added
 
 - Port forwards report their targets' health (`PortForwardStatus.targets`):
