@@ -164,7 +164,9 @@ sudo sysctl --system
 ```
 
 The drop-in also raises `net.core.rmem_max` and `net.core.wmem_max` to
-7500000, the UDP socket buffer the anixops relay's QUIC links ask for.
+8388608 (8 MiB), the UDP socket buffer anx-server's QUIC listener asks for
+(`--quic-sockbuf`); the Agent raises them to that at run time too when it
+starts anx-server.
 
 gost was removed: the network model (anx-node) carries what its routes did.
 The Agent stops `anixops-gost.service` and clears `/var/lib/anixops-gost` at

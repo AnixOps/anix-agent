@@ -14,14 +14,15 @@ import (
 
 // ForwardSysctlDropIn is /etc/sysctl.d/90-anixops-forward.conf: nftables
 // DNAT forwards only when the kernel does, and QUIC carriers (the anixops
-// relay's) want 7 MB of UDP socket buffer, which an
-// unprivileged process gets only up to net.core.rmem_max and wmem_max. The
+// relay's, anx-server's --quic-sockbuf) want 8 MiB of UDP socket buffer,
+// which an unprivileged process gets only up to net.core.rmem_max and
+// wmem_max. The
 // installer writes it; the Agent only warns at start when forwarding is off.
 const ForwardSysctlDropIn = `# Written by the AnixOps Agent installer for forwarding (nftables DNAT, QUIC links).
 net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
-net.core.rmem_max = 7500000
-net.core.wmem_max = 7500000
+net.core.rmem_max = 8388608
+net.core.wmem_max = 8388608
 `
 
 var forwardCommand = &cobra.Command{

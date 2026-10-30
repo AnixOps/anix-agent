@@ -54,7 +54,7 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
   `anixops-relay` 程序与 `anixops-relay.service`，随发布的 zip 一起提供；Agent 侧开关为
   `Forward.AnixOps.Enable`，Control 侧开关为 `forward.anixops_experimental`，两边都开才生效；
   `ANIXOPS_FORWARD=1 ANIXOPS_RELAY=1` 的安装脚本会创建它的账号、目录和单元；
-  转发的 sysctl drop-in 把 `net.core.rmem_max` 与 `wmem_max` 提到 7500000（QUIC 用）；
+  转发的 sysctl drop-in 把 `net.core.rmem_max` 与 `wmem_max` 提到 8388608（8 MiB，anx-server 的 QUIC 用）；
   Control 推送的升级与 Control 自带的 O1 安装器**不会**暂存或安装新的 `anixops-relay`；
 - O1 安装布局、`agent.diagnostic` 诊断与转发检查、Control 推送的分阶段升级（`upgrade.v1`）；
 - `machine-telemetry` 可选上报 systemd 服务表（H24：只报单元、状态、CPU 与内存，只保留最新）；

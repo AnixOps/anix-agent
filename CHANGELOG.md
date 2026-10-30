@@ -13,6 +13,8 @@
   `--dest <first server name>:443`: what does not authenticate is forwarded to
   the site the jacket wears, and the ServerHello copies it, instead of being
   closed.
+- The forwarding sysctl drop-in raises `net.core.rmem_max`/`wmem_max` to 8 MiB,
+  what anx-server's `--quic-sockbuf` asks for (it was 7500000).
 
 ## 5.0.0-rc.15 - 2026-10-29
 

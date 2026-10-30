@@ -52,8 +52,8 @@ func TestForwardRelayUnit(t *testing.T) {
 }
 
 func TestForwardSysctlDropInRaisesTheQUICSocketBuffers(t *testing.T) {
-	require.Contains(t, ForwardSysctlDropIn, "net.core.rmem_max = 7500000")
-	require.Contains(t, ForwardSysctlDropIn, "net.core.wmem_max = 7500000")
+	require.Contains(t, ForwardSysctlDropIn, "net.core.rmem_max = 8388608")
+	require.Contains(t, ForwardSysctlDropIn, "net.core.wmem_max = 8388608")
 }
 
 func TestMigratePathsCopiesTheEarlierDefaults(t *testing.T) {
