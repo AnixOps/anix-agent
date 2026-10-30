@@ -20,7 +20,9 @@ import (
 // outbound of their next hop: `egress:<id>` for an internet egress, or
 // `anx-line:<transport id>` for a dialing anx_line transport, where the
 // targets are resolved and dialed at the last hop. anixcore counts each
-// inbound's bytes, which the status reports cumulatively.
+// inbound's bytes, which the status reports cumulatively, and checks each
+// target through the inbound's outbound (so end to end through the
+// route), which the status reports as the targets' health.
 
 // forwardTagPrefix starts the inbound tag of a port forward.
 const forwardTagPrefix = "forward-"
@@ -153,7 +155,8 @@ func sameInbound(a, b map[string]any) bool {
 }
 
 // forwardStatus answers one status per port forward anixcore runs, with
-// the bytes it relayed since it started.
+// the bytes it relayed since it started and its targets' health. An
+// anixcore without target health (404) reports none.
 func forwardStatus(client *client, tags []string) []*networkv1.PortForwardStatus {
 	var statuses []*networkv1.PortForwardStatus
 	for _, tag := range tags {
@@ -167,6 +170,12 @@ func forwardStatus(client *client, tags []string) []*networkv1.PortForwardStatus
 		} else {
 			status.State = networkv1.ComponentState_COMPONENT_STATE_APPLIED
 			status.UpBytes, status.DownBytes = traffic.Up, traffic.Down
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), requestTimeout)
+		targets, err := client.inboundTargets(ctx, tag)
+		cancel()
+		if err == nil {
+			status.Targets = targetHealth(targets)
 		}
 		statuses = append(statuses, status)
 	}
@@ -197,4 +206,50 @@ func (c *client) inboundTraffic(ctx context.Context, tag string) (inboundBytes, 
 	}
 	err := c.do(ctx, http.MethodGet, "/v1/inbounds/"+url.PathEscape(tag)+"/traffic", nil, &answer)
 	return answer.Inbound, err
+}
+
+// targetBody is one target of GET /v1/inbounds/{tag}/targets.
+type targetBody struct {
+	Address             string `json:"address"`
+	Port                uint32 `json:"port"`
+	State               string `json:"state"`
+	ConsecutiveFailures uint32 `json:"consecutive_failures"`
+	OpenUntilUnixMs     int64  `json:"circuit_open_until_unix_ms"`
+	RTTMicros           uint32 `json:"rtt_us"`
+	CheckedAtUnixMs     int64  `json:"checked_at_unix_ms"`
+}
+
+var targetStates = map[string]networkv1.TargetHealthState{
+	"healthy":      networkv1.TargetHealthState_TARGET_HEALTH_STATE_HEALTHY,
+	"unhealthy":    networkv1.TargetHealthState_TARGET_HEALTH_STATE_UNHEALTHY,
+	"circuit_open": networkv1.TargetHealthState_TARGET_HEALTH_STATE_CIRCUIT_OPEN,
+}
+
+// targetHealth converts anixcore's targets to the status's, at most
+// network.MaxForwardTargets, leaving out any Control would refuse.
+func targetHealth(targets []targetBody) []*networkv1.ForwardTargetHealth {
+	var out []*networkv1.ForwardTargetHealth
+	for _, target := range targets {
+		if len(out) == network.MaxForwardTargets {
+			break
+		}
+		if target.Address == "" || target.Port == 0 || target.Port > network.MaxPort || len(target.Address) > network.MaxTextBytes ||
+			target.OpenUntilUnixMs < 0 || target.CheckedAtUnixMs < 0 {
+			continue
+		}
+		out = append(out, &networkv1.ForwardTargetHealth{
+			Host: target.Address, Port: target.Port, State: targetStates[target.State],
+			ConsecutiveFailures: target.ConsecutiveFailures, CircuitOpenUntilUnixMs: target.OpenUntilUnixMs,
+			RttUs: target.RTTMicros, CheckedAtUnixMs: target.CheckedAtUnixMs,
+		})
+	}
+	return out
+}
+
+func (c *client) inboundTargets(ctx context.Context, tag string) ([]targetBody, error) {
+	var answer struct {
+		Targets []targetBody `json:"targets"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/inbounds/"+url.PathEscape(tag)+"/targets", nil, &answer)
+	return answer.Targets, err
 }

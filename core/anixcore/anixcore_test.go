@@ -127,6 +127,13 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 				{"name": "not-a-panel-user", "up": 5, "down": 5},
 				{"name": "2147483648", "up": 5, "down": 5},
 			}, "inbound": map[string]any{"up": 110, "down": 210}})
+		case r.Method == "GET" && rest == "targets" && tag == "forward-rt-2":
+			// forward-rt-1 answers 404, as an anixcore without target health.
+			reply(200, map[string]any{"targets": []map[string]any{
+				{"address": "203.0.113.10", "port": 443, "state": "healthy", "consecutive_failures": 0, "circuit_open_until_unix_ms": 0, "rtt_us": 1800, "checked_at_unix_ms": 1761800000000},
+				{"address": "a.example", "port": 443, "state": "circuit_open", "consecutive_failures": 3, "circuit_open_until_unix_ms": 1761800030000, "rtt_us": 0, "checked_at_unix_ms": 1761800000000},
+				{"address": "", "port": 443, "state": "healthy"},
+			}})
 		case r.Method == "GET" && rest == "online":
 			reply(200, map[string]any{"online": []map[string]any{
 				{"name": "7", "ip": "203.0.113.9", "connections": 2},
