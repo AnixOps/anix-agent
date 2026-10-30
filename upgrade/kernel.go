@@ -76,6 +76,11 @@ type KernelRecordFile struct {
 	Version       string `json:"version"`
 	SHA256        string `json:"sha256"`
 	InstalledAtMS int64  `json:"installed_at_unix_ms"`
+	// Server says whether the package held anx-server. A record without
+	// it predates installing anx-server: that kernel counts as installed
+	// only with anx-server next to it, so an Agent that skipped it gets it
+	// from the next hand-off of the same version.
+	Server *bool `json:"server,omitempty"`
 }
 
 // ReadKernelRecord reads anx-node.json in libDir.
@@ -101,8 +106,13 @@ func InstalledKernel(libDir string) string {
 	if err != nil {
 		return ""
 	}
-	if info, err := os.Stat(filepath.Join(libDir, KernelBinary)); err != nil || !info.Mode().IsRegular() {
-		return ""
+	for _, binary := range []string{KernelBinary, ServerBinary} {
+		if binary == ServerBinary && record.Server != nil && !*record.Server {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(libDir, binary)); err != nil || !info.Mode().IsRegular() {
+			return ""
+		}
 	}
 	return record.Version
 }
@@ -275,7 +285,8 @@ func (a *Applier) installKernel(ctx context.Context, dir string, kernel KernelHa
 			return codeError(ErrorInstall, "cannot install anx-server: %v", err)
 		}
 	}
-	record, _ := json.MarshalIndent(KernelRecordFile{Version: kernel.Version, SHA256: digest, InstalledAtMS: a.now().UnixMilli()}, "", "  ")
+	withServer := server != ""
+	record, _ := json.MarshalIndent(KernelRecordFile{Version: kernel.Version, SHA256: digest, InstalledAtMS: a.now().UnixMilli(), Server: &withServer}, "", "  ")
 	if err := writeFileAtomic(filepath.Join(lib, KernelRecord), append(record, '\n'), 0o644); err != nil {
 		return codeError(ErrorInstall, "cannot record the kernel: %v", err)
 	}
