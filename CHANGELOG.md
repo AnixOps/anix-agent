@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.19 - 2026-10-30
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.19.
+
 ### Added
 
 - ANX-Line reverse dial-back (anx ANX-Line §4.6): an egress whose
