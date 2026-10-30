@@ -27,41 +27,41 @@ import (
 )
 
 // Forward link certificates (owner decision H28; PROTOCOL.md "Forward link
-// certificates"). gost terminates and originates encrypted links with the
-// node's link certificate, which Control's dedicated link CA issues:
+// certificates"). The experimental anixops relay terminates and originates
+// encrypted links with the node's link certificate, which Control's
+// dedicated link CA issues (gost, which used them first, was removed; its
+// directory is no longer written):
 //
 //   - a link key of its own (ECDSA P-256), never the agent identity key,
 //     and a new one at every renewal;
 //   - asked for with IssueLinkCertificate over the agent certificate's mTLS
 //     once a HelloAck lists forward.v1, renewed at renew_after_unix, and
 //     whenever the node has no valid one;
-//   - stored in gost's directory, not the Agent's PKI directory:
-//     link.key (PKCS#8 PEM), link.crt and link-ca.crt (the whole link trust
-//     bundle) in LinkOptions.Dir (/var/lib/anixops-gost/tls), the directory
-//     0750 and the files 0640, group anixops-gost, so only the Agent writes
-//     them and only gost reads them; each written to a temporary file and
-//     renamed, the key and the certificate before the bundle;
+//   - stored in the consuming driver's directory, not the Agent's PKI
+//     directory: link.key (PKCS#8 PEM), link.crt and link-ca.crt (the
+//     whole link trust bundle) in LinkOptions.Dir (the relay's
+//     <Dir>/tls), the directory 0750 and the files 0640, group of the
+//     driver's user, so only the Agent writes them and only that driver
+//     reads them; each written to a temporary file and renamed, the key and
+//     the certificate before the bundle;
 //   - the bundle refreshed with GetLinkTrustBundle at start and hourly;
-//   - gost reloaded after any file changed; when the node gains or loses
-//     its link certificate the gost driver is rebuilt with or without the
+//   - the driver reloaded after any file changed; when the node gains or
+//     loses its link certificate the driver is rebuilt with or without the
 //     link securities, the state applied again and the session restarted,
 //     so Control plans with the node's new capabilities;
 //   - on agent_cert_revoked the link key and certificate are deleted;
-//   - a driver that cannot read gost's directory (the anixops relay, which
-//     runs as its own user, anix-control anixops-protocol.md section 6.2) gets
-//     a copy of every file in a directory of its own, a LinkMirror: the same
-//     modes and rules, its own group, copied key and certificate first, kept
-//     in step at every change and at start, deleted with the original, and
-//     its driver reloaded and rebuilt like gost's.
+//   - each further driver that reads the files (none today) gets a copy in
+//     a directory of its own, a LinkMirror: the same modes and rules, its
+//     own group, copied key and certificate first, kept in step at every
+//     change and at start, deleted with the original, and its driver
+//     reloaded and rebuilt alike.
 //
-// A reload re-creates gost's services and so restarts their counters, but
-// the driver records reloads only inside Apply (a follow-up of the gost
-// driver adds a certificate-reload entry point that ends the counter
-// epoch); until then Control counts nothing for the one observation
-// interval of a renewal.
+// A reload restarts the relay's counters, but the driver records reloads
+// only inside Apply; until then Control counts nothing for the one
+// observation interval of a renewal.
 
-// Link file names in LinkOptions.Dir: the gost driver's DefaultLinkCert,
-// DefaultLinkKey and DefaultLinkCA.
+// Link file names in LinkOptions.Dir: the anixops driver's LinkCert,
+// LinkKey and LinkCA.
 const (
 	linkCertFile   = "link.crt"
 	linkKeyFile    = "link.key"
@@ -81,15 +81,16 @@ var linkTick = 30 * time.Second
 
 // LinkOptions turn on forward link certificates.
 type LinkOptions struct {
-	// Dir is the directory gost reads them from: gost.DefaultDir + "/tls".
+	// Dir is the directory the driver reads them from (the anixops relay's
+	// <Dir>/tls).
 	Dir string
-	// Group is gost's group (anixops-gost), which gets read access; empty
+	// Group is the driver's group (anixops-relay), which gets read access; empty
 	// keeps the Agent's own group (tests).
 	Group string
-	// SetEnabled rebuilds the gost driver with the link securities (true)
+	// SetEnabled rebuilds the driver with the link securities (true)
 	// or RAW links only (false).
 	SetEnabled func(enabled bool) error
-	// Reload makes a running gost read the files again.
+	// Reload makes the running driver read the files again.
 	Reload func(ctx context.Context) error
 	// Mirrors are the other drivers that read the link files, each from a
 	// directory of its own.
@@ -173,7 +174,7 @@ func (c *Component) IdentityRejected(code string) {
 	c.linksChanged(c.ctx)
 }
 
-// linksAvailable tells whether gost has a link certificate to use.
+// linksAvailable tells whether the driver has a link certificate to use.
 func (c *Component) linksAvailable() bool {
 	if c.opts.Links == nil {
 		return c.opts.LinkCertificates
@@ -512,7 +513,7 @@ func (c *Component) reapply(ctx context.Context) {
 
 func (c *Component) ensureLinkDir() error { return ensureDir(c.opts.Links.Dir, c.links.gid) }
 
-// writeLinkFile writes one file atomically, 0640 with gost's group.
+// writeLinkFile writes one file atomically, 0640 with the driver's group.
 func (c *Component) writeLinkFile(name string, data []byte) error {
 	return writeFileIn(c.opts.Links.Dir, c.links.gid, name, data)
 }

@@ -164,7 +164,9 @@ sudo sysctl --system
 ```
 
 The drop-in also raises `net.core.rmem_max` and `net.core.wmem_max` to
-7500000, the UDP socket buffer the anixops relay's QUIC links ask for.
+8388608 (8 MiB), the UDP socket buffer anx-server's QUIC listener asks for
+(`--quic-sockbuf`); the Agent raises them to that at run time too when it
+starts anx-server.
 
 gost was removed: the network model (anx-node) carries what its routes did.
 The Agent stops `anixops-gost.service` and clears `/var/lib/anixops-gost` at
@@ -290,11 +292,14 @@ upgrades"). An Agent never upgrades on its own.
   package must match its size and SHA-256, be listed in the release's
   `SHA256SUMS`, and `SHA256SUMS.sig` must be a valid `ssh-keygen -Y sign`
   signature (namespace `anx-release`) by the anx release key compiled into
-  the Agent. The updater checks it all again, unpacks only
-  `<dist>/anx-node` (whose SHA-256 must be listed too), checks that
-  `anx-node version` runs, keeps the old one as `anx-node.prev`, installs
-  `/usr/lib/anixops-agent/anx-node` before swapping the Agent and restarts.
-  When the Agent fails to stay up the kernel is taken out again. A node
+  the Agent. The updater checks it all again, unpacks `<dist>/anx-node`
+  and `<dist>/anx-server` (whose SHA-256s must be listed too), checks that
+  `anx-node version` runs, keeps the old ones as `anx-node.prev` and
+  `anx-server.prev`, installs `/usr/lib/anixops-agent/anx-node` and
+  `/usr/lib/anixops-agent/anx-server` before swapping the Agent and
+  restarts. The Agent runs that anx-server (before one on `PATH`) for the
+  accepting ends of the network model's `anx_line` transports. When the
+  Agent fails to stay up both are taken out again. A node
   whose configuration lists no cores runs the installed anx-node as the
   anixcore core with ANX-Line, ahead of Xray and sing-box. arm64 has no
   anx-node release yet and keeps the old cores.

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+
+- Kernel upgrades install anx-server next to anx-node from the same signed
+  release (`/usr/lib/anixops-agent/anx-server`, kept as `anx-server.prev` and
+  taken out with the kernel), and the Agent runs it before one on `PATH`.
+  Until now only anx-node was installed, so a Control-managed node accepted no
+  `anx_line` transport.
+- A jacketed (l2, network-model kind `anx`) anx-server is started with
+  `--dest <first server name>:443`: what does not authenticate is forwarded to
+  the site the jacket wears, and the ServerHello copies it, instead of being
+  closed.
+- The forwarding sysctl drop-in raises `net.core.rmem_max`/`wmem_max` to 8 MiB,
+  what anx-server's `--quic-sockbuf` asks for (it was 7500000).
+
 ## 5.0.0-rc.15 - 2026-10-29
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.15. From this release the Agent

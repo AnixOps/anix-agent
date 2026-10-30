@@ -205,6 +205,9 @@ func TestApplyInstallsTheKernelWithTheAgent(t *testing.T) {
 	if !bytes.Equal(readFile(t, filepath.Join(f.lib, KernelBinary)), fakeKernel(false)) {
 		t.Fatal("the kernel is not installed")
 	}
+	if !bytes.Equal(readFile(t, filepath.Join(f.lib, ServerBinary)), []byte("server")) {
+		t.Fatal("anx-server is not installed with the kernel")
+	}
 	if InstalledKernel(f.lib) != "0.1.0-alpha.2" {
 		t.Fatalf("InstalledKernel = %q", InstalledKernel(f.lib))
 	}
@@ -255,6 +258,11 @@ func TestApplyRefusesABadKernel(t *testing.T) {
 			k.Sums = lines[0] + "\n"
 			k.SumsSignature = key.sign(t, []byte(k.Sums), KernelSignatureNamespace)
 		},
+		"anx-server not listed": func(t *testing.T, _ *applyFixture, k *KernelHandOff) {
+			lines := strings.Split(k.Sums, "\n")
+			k.Sums = lines[0] + "\n" + lines[1] + "\n"
+			k.SumsSignature = key.sign(t, []byte(k.Sums), KernelSignatureNamespace)
+		},
 		"does not run": func(t *testing.T, f *applyFixture, k *KernelHandOff) {
 			*k = f.stageKernel(t, key, fakeKernel(true))
 		},
@@ -267,7 +275,7 @@ func TestApplyRefusesABadKernel(t *testing.T) {
 			if _, err := f.applier.Apply(context.Background()); err == nil {
 				t.Fatal("applied")
 			}
-			if exists(filepath.Join(f.lib, KernelBinary)) || f.restarts(t) != 0 {
+			if exists(filepath.Join(f.lib, KernelBinary)) || exists(filepath.Join(f.lib, ServerBinary)) || f.restarts(t) != 0 {
 				t.Fatal("a refused kernel changed the installation")
 			}
 			if !bytes.Equal(readFile(t, filepath.Join(f.lib, BinaryName)), f.old) {
@@ -287,7 +295,7 @@ func TestApplyTakesTheKernelOutWhenTheAgentFails(t *testing.T) {
 	if err == nil || result.Outcome != OutcomeRestored || result.Kernel != "" {
 		t.Fatalf("result %+v %v", result, err)
 	}
-	if exists(filepath.Join(f.lib, KernelBinary)) || InstalledKernel(f.lib) != "" {
+	if exists(filepath.Join(f.lib, KernelBinary)) || exists(filepath.Join(f.lib, ServerBinary)) || InstalledKernel(f.lib) != "" {
 		t.Fatal("the kernel stayed with the previous Agent")
 	}
 }
@@ -295,5 +303,8 @@ func TestApplyTakesTheKernelOutWhenTheAgentFails(t *testing.T) {
 func TestTheCoreRunsTheInstalledKernel(t *testing.T) {
 	if got := filepath.Join(DefaultLibDir, KernelBinary); got != conf.InstalledAnxNodePath {
 		t.Fatalf("upgrades install anx-node at %s, the core runs %s", got, conf.InstalledAnxNodePath)
+	}
+	if got := filepath.Join(DefaultLibDir, ServerBinary); got != conf.InstalledAnxServerPath {
+		t.Fatalf("upgrades install anx-server at %s, the Agent runs %s", got, conf.InstalledAnxServerPath)
 	}
 }

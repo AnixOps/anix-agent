@@ -34,6 +34,11 @@ type AnixcoreConfig struct {
 // anixcore core with AnxLine when it is there.
 const InstalledAnxNodePath = "/usr/lib/anixops-agent/anx-node"
 
+// InstalledAnxServerPath is where Agent upgrades install anx-server from
+// the same release (upgrade.DefaultLibDir + upgrade.ServerBinary); the
+// Agent runs it for the accepting anx_line ends, before one on PATH.
+const InstalledAnxServerPath = "/usr/lib/anixops-agent/anx-server"
+
 func NewAnixcoreConfig() *AnixcoreConfig {
 	return &AnixcoreConfig{
 		BinaryPath:          "anixcore",
