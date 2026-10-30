@@ -3,12 +3,15 @@ package anixcore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -149,26 +152,46 @@ func (c *client) forKernel(users []apiUser) []apiUser {
 	return out
 }
 
+// wireTagPattern is the inbound tags anixcore accepts.
+var wireTagPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// wireTag answers the anixcore tag of an Agent tag. A node's tag
+// ("[<api host>]-vless:62") has characters anixcore refuses, so a tag
+// outside wireTagPattern is sent as node-<sha256 prefix>; a valid tag
+// (a port forward's) is sent as it is.
+func wireTag(tag string) string {
+	if wireTagPattern.MatchString(tag) {
+		return tag
+	}
+	sum := sha256.Sum256([]byte(tag))
+	return "node-" + hex.EncodeToString(sum[:12])
+}
+
+// inboundPath is the escaped path segment of tag's inbound.
+func inboundPath(tag string) string {
+	return url.PathEscape(wireTag(tag))
+}
+
 func (c *client) addInbound(ctx context.Context, inbound map[string]any) error {
 	return c.do(ctx, http.MethodPost, "/v1/inbounds", inbound, nil)
 }
 
 func (c *client) removeInbound(ctx context.Context, tag string) error {
-	return c.do(ctx, http.MethodDelete, "/v1/inbounds/"+url.PathEscape(tag), nil, nil)
+	return c.do(ctx, http.MethodDelete, "/v1/inbounds/"+inboundPath(tag), nil, nil)
 }
 
 func (c *client) addUsers(ctx context.Context, tag string, users []apiUser) error {
 	body := map[string]any{"users": c.forKernel(users)}
-	return c.do(ctx, http.MethodPost, "/v1/inbounds/"+url.PathEscape(tag)+"/users", body, nil)
+	return c.do(ctx, http.MethodPost, "/v1/inbounds/"+inboundPath(tag)+"/users", body, nil)
 }
 
 func (c *client) removeUsers(ctx context.Context, tag string, names []string) error {
 	body := map[string]any{"names": names}
-	return c.do(ctx, http.MethodPost, "/v1/inbounds/"+url.PathEscape(tag)+"/users/remove", body, nil)
+	return c.do(ctx, http.MethodPost, "/v1/inbounds/"+inboundPath(tag)+"/users/remove", body, nil)
 }
 
 func (c *client) traffic(ctx context.Context, tag string, reset bool) ([]apiTraffic, error) {
-	path := "/v1/inbounds/" + url.PathEscape(tag) + "/traffic"
+	path := "/v1/inbounds/" + inboundPath(tag) + "/traffic"
 	if reset {
 		path += "?reset=true"
 	}
@@ -201,7 +224,7 @@ func (c *client) online(ctx context.Context, tag string) ([]apiOnline, error) {
 	var answer struct {
 		Online []apiOnline `json:"online"`
 	}
-	path := "/v1/inbounds/" + url.PathEscape(tag) + "/online"
+	path := "/v1/inbounds/" + inboundPath(tag) + "/online"
 	if err := c.do(ctx, http.MethodGet, path, nil, &answer); err != nil {
 		return nil, err
 	}

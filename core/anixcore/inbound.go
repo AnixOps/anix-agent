@@ -51,7 +51,7 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		return nil, fmt.Errorf("listen ip %q is invalid", listen)
 	}
 	inbound := map[string]any{
-		"tag":         tag,
+		"tag":         wireTag(tag),
 		"listen":      listen,
 		"listen_port": info.Common.ServerPort,
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 
@@ -204,7 +203,7 @@ func (c *client) inboundTraffic(ctx context.Context, tag string) (inboundBytes, 
 	var answer struct {
 		Inbound inboundBytes `json:"inbound"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/inbounds/"+url.PathEscape(tag)+"/traffic", nil, &answer)
+	err := c.do(ctx, http.MethodGet, "/v1/inbounds/"+inboundPath(tag)+"/traffic", nil, &answer)
 	return answer.Inbound, err
 }
 
@@ -250,6 +249,6 @@ func (c *client) inboundTargets(ctx context.Context, tag string) ([]targetBody, 
 	var answer struct {
 		Targets []targetBody `json:"targets"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/inbounds/"+url.PathEscape(tag)+"/targets", nil, &answer)
+	err := c.do(ctx, http.MethodGet, "/v1/inbounds/"+inboundPath(tag)+"/targets", nil, &answer)
 	return answer.Targets, err
 }

@@ -254,3 +254,28 @@ func TestUnsupportedNodesAreRefused(t *testing.T) {
 		t.Fatal("an invalid listen ip should be refused")
 	}
 }
+
+func TestNodeTagsBecomeTagsAnixcoreAccepts(t *testing.T) {
+	node := "[https://control.example.com]-vless:62"
+	tag := wireTag(node)
+	if !wireTagPattern.MatchString(tag) || !strings.HasPrefix(tag, "node-") {
+		t.Fatalf("wire tag %q", tag)
+	}
+	if wireTag(node) != tag || wireTag(node+"-anixcore") == tag {
+		t.Fatal("the wire tag is not stable and distinct")
+	}
+	if got := wireTag("fwd-01JF1B000000000000000000N1"); got != "fwd-01JF1B000000000000000000N1" {
+		t.Fatalf("a valid tag changed: %q", got)
+	}
+	if got := inboundPath(node); got != tag {
+		t.Fatalf("path %q", got)
+	}
+	info := &panel.NodeInfo{Type: "shadowsocks", Common: &panel.CommonNode{ServerPort: 443}, Shadowsocks: &panel.ShadowsocksNode{Cipher: "aes-128-gcm"}}
+	inbound, err := inboundConfig(node, info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inbound["tag"] != tag {
+		t.Fatalf("inbound tag %v", inbound["tag"])
+	}
+}
