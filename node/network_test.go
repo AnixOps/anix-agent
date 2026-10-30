@@ -286,7 +286,10 @@ func TestNetworkComponentListsAnxLineOnce(t *testing.T) {
 	require.NoError(t, err)
 	caps, _, err := network.DeviceCapabilitiesFromHello([]*agentv1pb.Capability{capability}, "proxy-1")
 	require.NoError(t, err)
-	require.Len(t, caps.GetKinds(), 3)
+	require.Len(t, caps.GetKinds(), 4)
 	assert.Equal(t, "anixcore,agent", caps.GetKinds()[2].GetExecutor())
 	assert.Equal(t, "anixcore", core.kinds[2].GetExecutor(), "the core's own list is not changed")
+	hop := caps.GetKinds()[3]
+	assert.Equal(t, network.EgressHop, hop.GetKind(), "anx-server's relays leave by hop egresses")
+	assert.Equal(t, "agent", hop.GetExecutor())
 }

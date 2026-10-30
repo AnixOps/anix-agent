@@ -26,9 +26,12 @@ import (
 // the plan that uses it and removed after; a restarted anx-node gets its
 // links again before its plan. Links are not kept by anx-node.
 
-// lineKind is the transport kind anx-node dials.
-var lineKind = &networkv1.KindSupport{
-	Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: coreType,
+// lineKinds are what anx-node adds: the anx_line transports it dials and
+// the hop egresses they leave by (Control's auto routes give every dialing
+// transport one).
+var lineKinds = []*networkv1.KindSupport{
+	{Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: coreType},
+	{Component: networkv1.Component_COMPONENT_EGRESS, Kind: network.EgressHop, Versions: []uint32{1}, Executor: coreType},
 }
 
 // connectLine opens anx-node's ANX-Line management client.

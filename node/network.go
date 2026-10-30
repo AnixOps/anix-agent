@@ -126,15 +126,10 @@ func newNetworkComponent(nodeID int, core vCore.Core) *networkComponent {
 	}
 	servers := networkServers()
 	if servers != nil {
-		// A kind is listed once: where the core dials anx_line, its entry
-		// names both executors.
-		if kind := lineKind(caps); kind != nil {
-			kind.Executor += ",agent"
-		} else {
-			caps.Kinds = append(caps.Kinds, &networkv1.KindSupport{
-				Component: networkv1.Component_COMPONENT_TRANSPORT, Kind: network.TransportAnxLine, Versions: []uint32{1}, Executor: "agent",
-			})
-		}
+		// anx-server accepts anx_line and dials the transports relay hops
+		// use, leaving by a hop egress.
+		listKind(caps, networkv1.Component_COMPONENT_TRANSPORT, network.TransportAnxLine)
+		listKind(caps, networkv1.Component_COMPONENT_EGRESS, network.EgressHop)
 	}
 	return &networkComponent{
 		device: device, applier: applier, caps: caps, routes: routes, servers: servers,
@@ -269,14 +264,16 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	return nil
 }
 
-// lineKind answers caps's anx_line transport entry, nil without one.
-func lineKind(caps *networkv1.DeviceCapabilities) *networkv1.KindSupport {
-	for _, kind := range caps.GetKinds() {
-		if kind.GetComponent() == networkv1.Component_COMPONENT_TRANSPORT && kind.GetKind() == network.TransportAnxLine {
-			return kind
+// listKind lists kind v1 with the Agent as an executor. A kind is listed
+// once: where the core runs it too, its entry names both executors.
+func listKind(caps *networkv1.DeviceCapabilities, component networkv1.Component, kind string) {
+	for _, support := range caps.GetKinds() {
+		if support.GetComponent() == component && support.GetKind() == kind {
+			support.Executor = strings.TrimPrefix(support.GetExecutor()+",agent", ",")
+			return
 		}
 	}
-	return nil
+	caps.Kinds = append(caps.Kinds, &networkv1.KindSupport{Component: component, Kind: kind, Versions: []uint32{1}, Executor: "agent"})
 }
 
 // lineRoles refuses the anx_line ends this device cannot run: the core
