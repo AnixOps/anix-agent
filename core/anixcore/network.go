@@ -58,7 +58,7 @@ type kernelNetworkStatus struct {
 // NetworkKinds implements vCore.NetworkApplier.
 func (c *Core) NetworkKinds() []*networkv1.KindSupport {
 	if c.config.AnxLine {
-		return append(append([]*networkv1.KindSupport(nil), networkKinds...), lineKind)
+		return append(append([]*networkv1.KindSupport(nil), networkKinds...), lineKinds...)
 	}
 	return networkKinds
 }

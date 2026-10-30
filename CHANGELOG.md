@@ -12,6 +12,14 @@
   into a reverse link runs anx-server with `--reverse-listen`. Needs an
   anx-node / anx-server with reverse support; `contracts/anx` is resynced.
 
+### Fixed
+
+- A node whose network plan has a route over ANX (Control's auto routes)
+  refused the plan after the upgrade (`network plan: this Agent does not
+  run COMPONENT_EGRESS hop v1`) and was rolled back: anixcore with anx-node
+  now lists the hop egress its anx_line transports leave by, and so does
+  the Agent where anx-server relays.
+
 ## 5.0.0-rc.18 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.18.

@@ -108,9 +108,9 @@ func TestDialingAnxLineEndsAreAnxNodeLinks(t *testing.T) {
 	if line.addr != "127.0.0.1:7001" {
 		t.Fatalf("connected to %q", line.addr)
 	}
-	kinds := core.NetworkKinds()
-	if last := kinds[len(kinds)-1]; last.GetKind() != network.TransportAnxLine || last.GetComponent() != networkv1.Component_COMPONENT_TRANSPORT {
-		t.Fatalf("kinds = %v", kinds)
+	caps := &networkv1.DeviceCapabilities{Kinds: core.NetworkKinds()}
+	if missing := network.Unsupported(dialPlan("PUB-1"), caps); len(missing) > 0 {
+		t.Fatalf("anixcore with anx-node does not run %v", missing)
 	}
 
 	status, err := core.ApplyNetwork(dialPlan("PUB-1"))
