@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.20 - 2026-10-30
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.20.
+
 ### Added
 
 - The network status reports the host's line interfaces (`interfaces`:
