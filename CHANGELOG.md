@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- The network status reports the host's line interfaces (`interfaces`:
+  name, addresses, default IPv4/IPv6 gateway), read over netlink every
+  status report, even before the node has a plan. Control offers them on
+  the node page's network settings. Loopback, container and tunnel
+  interfaces and link-local addresses are left out.
+
 ## 5.0.0-rc.19 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.19.
