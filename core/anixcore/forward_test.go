@@ -67,6 +67,16 @@ func TestPortForwardsAreForwardInbounds(t *testing.T) {
 		forwards[0].GetState() != networkv1.ComponentState_COMPONENT_STATE_APPLIED {
 		t.Fatalf("status = %v", forwards)
 	}
+	if len(forwards[0].GetTargets()) != 0 {
+		t.Fatalf("rt-1 targets without the endpoint = %v", forwards[0].GetTargets())
+	}
+	targets := forwards[1].GetTargets()
+	if len(targets) != 2 || targets[0].GetHost() != "203.0.113.10" || targets[0].GetPort() != 443 ||
+		targets[0].GetState() != networkv1.TargetHealthState_TARGET_HEALTH_STATE_HEALTHY || targets[0].GetRttUs() != 1800 ||
+		targets[1].GetState() != networkv1.TargetHealthState_TARGET_HEALTH_STATE_CIRCUIT_OPEN || targets[1].GetConsecutiveFailures() != 3 ||
+		targets[1].GetCircuitOpenUntilUnixMs() != 1761800030000 {
+		t.Fatalf("rt-2 targets = %v", targets)
+	}
 	if status, err := core.NetworkStatus(); err != nil || len(status.GetPortForwards()) != 2 {
 		t.Fatalf("NetworkStatus = %v, %v", status, err)
 	}

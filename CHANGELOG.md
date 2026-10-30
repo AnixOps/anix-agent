@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Port forwards report their targets' health (`PortForwardStatus.targets`):
+  state, failures in a row, the breaker deadline and the last check's round
+  trip, read from anixcore's `GET /v1/inbounds/{tag}/targets`. The checks
+  dial through the forward's path, so Control gets end-to-end health,
+  latency history, diagnosis and DNS entry failover for ANX routes. An
+  anixcore without the endpoint reports none.
+
 ## 5.0.0-rc.16 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.16.
