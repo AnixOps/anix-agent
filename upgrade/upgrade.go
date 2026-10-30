@@ -182,7 +182,9 @@ type Result struct {
 }
 
 var (
-	versionPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(alpha|beta|rc)(?:\.([0-9]+))?)?$`)
+	// A dev build carries ".dev.N" after the release it follows
+	// (v5.0.0-rc.15.dev.42): newer than that release, older than the next.
+	versionPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(alpha|beta|rc)(?:\.([0-9]+)(?:\.dev\.([0-9]+))?)?)?$`)
 	assetPattern   = regexp.MustCompile(`^anix-agent-linux-[a-z0-9-]+\.zip$`)
 	sha256Pattern  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -206,8 +208,9 @@ func officialKey() ed25519.PublicKey {
 }
 
 // CompareVersions orders two release tags (with or without "v"): -1, 0 or
-// 1, with alpha < beta < rc < the release. ok is false when either is not
-// a release tag.
+// 1, with alpha < beta < rc < the release, and a dev build right after the
+// pre-release it follows (rc.15 < rc.15.dev.1 < rc.15.dev.2 < rc.16). ok is
+// false when either is not a release tag.
 func CompareVersions(a, b string) (result int, ok bool) {
 	pa, okA := parseVersion(a)
 	pb, okB := parseVersion(b)
@@ -226,9 +229,10 @@ func CompareVersions(a, b string) (result int, ok bool) {
 }
 
 // parseVersion answers major, minor, patch, the pre-release rank (alpha 0,
-// beta 1, rc 2, release 3) and its number.
-func parseVersion(version string) ([5]int, bool) {
-	var parts [5]int
+// beta 1, rc 2, release 3), its number and the dev build number plus one
+// (0: not a dev build).
+func parseVersion(version string) ([6]int, bool) {
+	var parts [6]int
 	match := versionPattern.FindStringSubmatch(strings.TrimSpace(version))
 	if match == nil {
 		return parts, false
@@ -247,6 +251,13 @@ func parseVersion(version string) ([5]int, bool) {
 			return parts, false
 		}
 		parts[4] = n
+	}
+	if match[6] != "" {
+		n, err := strconv.Atoi(match[6])
+		if err != nil {
+			return parts, false
+		}
+		parts[5] = n + 1
 	}
 	return parts, true
 }
