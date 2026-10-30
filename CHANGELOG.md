@@ -11,6 +11,15 @@
   latency history, diagnosis and DNS entry failover for ANX routes. An
   anixcore without the endpoint reports none.
 
+### Fixed
+
+- An Agent with anx-node installed by a kernel upgrade no longer exits at
+  start: the anixcore core wrote its runtime files to
+  `/etc/anixops/agent/anixcore`, which is read only under the unit's
+  `ProtectSystem=strict`, so `start core` failed and the updater reverted
+  the upgrade. The default is now `/run/anixops-agent/anixcore`, below the
+  unit's `RuntimeDirectory`.
+
 ## 5.0.0-rc.16 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.16.

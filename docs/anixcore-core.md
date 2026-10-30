@@ -23,7 +23,7 @@ anixcore 是外部程序，节点上没有安装时不应影响其他内核。
     {
       "Type": "anixcore",
       "BinaryPath": "/usr/local/bin/anixcore",
-      "RuntimeDir": "/etc/anixops/agent/anixcore",
+      "RuntimeDir": "/run/anixops-agent/anixcore",
       "AllowPrivateTargets": false,
       "StartTimeoutSeconds": 10,
       "RestartDelaySeconds": 3
