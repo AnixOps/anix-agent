@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.21 - 2026-10-30
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.21.
+
 ### Fixed
 
 - A kernel installed by an Agent before 5.0.0-rc.16 lacks anx-server, so
