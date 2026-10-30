@@ -308,3 +308,26 @@ func TestTheCoreRunsTheInstalledKernel(t *testing.T) {
 		t.Fatalf("upgrades install anx-server at %s, the Agent runs %s", got, conf.InstalledAnxServerPath)
 	}
 }
+
+func TestAKernelWithoutAnxServerIsNotInstalled(t *testing.T) {
+	lib := t.TempDir()
+	writeFile(t, filepath.Join(lib, KernelBinary), fakeKernel(false), 0o755)
+	// Agents before the record said whether the package held anx-server
+	// installed anx-node alone: the same version is installed again.
+	writeFile(t, filepath.Join(lib, KernelRecord), []byte(`{"version":"0.1.0-alpha.2","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`), 0o644)
+	if got := InstalledKernel(lib); got != "" {
+		t.Fatalf("an old record without anx-server: InstalledKernel = %q", got)
+	}
+	writeFile(t, filepath.Join(lib, KernelRecord), []byte(`{"version":"0.1.0-alpha.2","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","server":false}`), 0o644)
+	if got := InstalledKernel(lib); got != "0.1.0-alpha.2" {
+		t.Fatalf("a package without anx-server: InstalledKernel = %q", got)
+	}
+	writeFile(t, filepath.Join(lib, KernelRecord), []byte(`{"version":"0.1.0-alpha.2","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","server":true}`), 0o644)
+	if got := InstalledKernel(lib); got != "" {
+		t.Fatalf("anx-server missing: InstalledKernel = %q", got)
+	}
+	writeFile(t, filepath.Join(lib, ServerBinary), []byte("server"), 0o755)
+	if got := InstalledKernel(lib); got != "0.1.0-alpha.2" {
+		t.Fatalf("anx-server present: InstalledKernel = %q", got)
+	}
+}

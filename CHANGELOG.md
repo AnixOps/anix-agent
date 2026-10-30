@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- A kernel installed by an Agent before 5.0.0-rc.16 lacks anx-server, so
+  the node never reported an ANX-Line server key and every forward through
+  it stayed pending. The kernel record now says whether the package held
+  anx-server; a record without that field counts as installed only with
+  anx-server next to anx-node, so the next hand-off of the same kernel
+  version installs it.
+- The network status carries the anx-server hybrid public key (about
+  2.5 KB of text), which the SDK used to refuse as text over 1 KB.
+
 ## 5.0.0-rc.20 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.20.
