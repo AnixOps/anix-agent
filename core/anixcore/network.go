@@ -71,8 +71,11 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 	if err != nil {
 		return nil, err
 	}
-	links, err := dialLinks(plan)
+	links, reverse, err := dialLinks(plan)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.reopen(reverse); err != nil {
 		return nil, err
 	}
 	forwards, err := forwardInbounds(plan)

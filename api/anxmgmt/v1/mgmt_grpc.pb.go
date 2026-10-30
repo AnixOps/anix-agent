@@ -45,6 +45,7 @@ const (
 	Management_RotateLinkKey_FullMethodName        = "/anx.mgmt.v1.Management/RotateLinkKey"
 	Management_LinkStats_FullMethodName            = "/anx.mgmt.v1.Management/LinkStats"
 	Management_SetLinkRoutes_FullMethodName        = "/anx.mgmt.v1.Management/SetLinkRoutes"
+	Management_SetReverseDials_FullMethodName      = "/anx.mgmt.v1.Management/SetReverseDials"
 )
 
 // ManagementClient is the client API for Management service.
@@ -78,6 +79,8 @@ type ManagementClient interface {
 	LinkStats(ctx context.Context, in *LinkStatsRequest, opts ...grpc.CallOption) (*LinkStatsResponse, error)
 	// Per-user next-hop routes (relay node)
 	SetLinkRoutes(ctx context.Context, in *SetLinkRoutesRequest, opts ...grpc.CallOption) (*SetLinkRoutesResponse, error)
+	// Egress side: keep idle outbound connections to a rendezvous node so the egress needs no listening port.
+	SetReverseDials(ctx context.Context, in *SetReverseDialsRequest, opts ...grpc.CallOption) (*SetReverseDialsResponse, error)
 }
 
 type managementClient struct {
@@ -278,6 +281,16 @@ func (c *managementClient) SetLinkRoutes(ctx context.Context, in *SetLinkRoutesR
 	return out, nil
 }
 
+func (c *managementClient) SetReverseDials(ctx context.Context, in *SetReverseDialsRequest, opts ...grpc.CallOption) (*SetReverseDialsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetReverseDialsResponse)
+	err := c.cc.Invoke(ctx, Management_SetReverseDials_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ManagementServer is the server API for Management service.
 // All implementations must embed UnimplementedManagementServer
 // for forward compatibility.
@@ -309,6 +322,8 @@ type ManagementServer interface {
 	LinkStats(context.Context, *LinkStatsRequest) (*LinkStatsResponse, error)
 	// Per-user next-hop routes (relay node)
 	SetLinkRoutes(context.Context, *SetLinkRoutesRequest) (*SetLinkRoutesResponse, error)
+	// Egress side: keep idle outbound connections to a rendezvous node so the egress needs no listening port.
+	SetReverseDials(context.Context, *SetReverseDialsRequest) (*SetReverseDialsResponse, error)
 	mustEmbedUnimplementedManagementServer()
 }
 
@@ -375,6 +390,9 @@ func (UnimplementedManagementServer) LinkStats(context.Context, *LinkStatsReques
 }
 func (UnimplementedManagementServer) SetLinkRoutes(context.Context, *SetLinkRoutesRequest) (*SetLinkRoutesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetLinkRoutes not implemented")
+}
+func (UnimplementedManagementServer) SetReverseDials(context.Context, *SetReverseDialsRequest) (*SetReverseDialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetReverseDials not implemented")
 }
 func (UnimplementedManagementServer) mustEmbedUnimplementedManagementServer() {}
 func (UnimplementedManagementServer) testEmbeddedByValue()                    {}
@@ -739,6 +757,24 @@ func _Management_SetLinkRoutes_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Management_SetReverseDials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetReverseDialsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ManagementServer).SetReverseDials(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Management_SetReverseDials_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ManagementServer).SetReverseDials(ctx, req.(*SetReverseDialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Management_ServiceDesc is the grpc.ServiceDesc for Management service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -821,6 +857,10 @@ var Management_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetLinkRoutes",
 			Handler:    _Management_SetLinkRoutes_Handler,
+		},
+		{
+			MethodName: "SetReverseDials",
+			Handler:    _Management_SetReverseDials_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

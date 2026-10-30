@@ -394,11 +394,15 @@ func (s *server) serve() error {
 	defer func() { _ = closeClient() }()
 	admitted := map[string]admitted{}
 	relay := &relaying{links: map[string]*anxmgmtpb.Link{}}
+	var dials []*anxmgmtpb.ReverseDial
 	first := true
 	for {
 		err := s.admit(client, admitted, process, first)
 		if err == nil {
 			err = s.relay(client, admitted, relay)
+		}
+		if err == nil {
+			dials, err = s.dial(client, dials)
 		}
 		if err != nil {
 			select {
@@ -593,6 +597,38 @@ func (s *server) relay(client anxmgmtpb.ManagementClient, current map[string]adm
 	}
 	state.routes, state.set = routes, true
 	return nil
+}
+
+// dial makes the process keep exactly the reverse dials of the wanted
+// accepts (SetReverseDials, ANX-Line §4.6), given those it keeps; it
+// answers the dials it keeps now.
+func (s *server) dial(client anxmgmtpb.ManagementClient, current []*anxmgmtpb.ReverseDial) ([]*anxmgmtpb.ReverseDial, error) {
+	s.mu.Lock()
+	wanted := s.wanted
+	s.mu.Unlock()
+	var dials []*anxmgmtpb.ReverseDial
+	for _, accept := range wanted {
+		if accept.ReverseDial == "" {
+			continue
+		}
+		// Idle 0 is anx-server's default number of idle connections.
+		dials = append(dials, &anxmgmtpb.ReverseDial{DialId: accept.Transport, Addr: accept.ReverseDial, LinkKey: accept.LinkKey})
+	}
+	sort.Slice(dials, func(i, j int) bool { return dials[i].GetDialId() < dials[j].GetDialId() })
+	same := len(dials) == len(current)
+	for i := 0; same && i < len(dials); i++ {
+		same = proto.Equal(dials[i], current[i])
+	}
+	// A fresh process starts with none (current is nil).
+	if same {
+		return current, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+	if _, err := client.SetReverseDials(ctx, &anxmgmtpb.SetReverseDialsRequest{Dials: dials}); err != nil {
+		return current, fmt.Errorf("set reverse dials: %w", err)
+	}
+	return dials, nil
 }
 
 // freePort answers a free loopback TCP address.

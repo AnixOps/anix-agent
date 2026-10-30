@@ -72,6 +72,9 @@ type Core struct {
 	lineClose   func() error
 	links       map[string]*anxmgmtpb.Link
 	wantedLinks map[string]*anxmgmtpb.Link
+	// reverseListen is the rendezvous listener (`anx_line.reverse_listen`)
+	// the started anx-node opens, "" for none.
+	reverseListen string
 	// forwards are the forward inbounds anixcore runs for the plan's port
 	// forwards, wantedForwards those of the last plan, by tag.
 	forwards       map[string]map[string]any
@@ -157,7 +160,13 @@ func (c *Core) launch() error {
 		if lineAddress, err = freeLoopbackAddress(); err != nil {
 			return err
 		}
-		config["anx_line"] = map[string]any{"mgmt_listen": lineAddress}
+		line := map[string]any{"mgmt_listen": lineAddress}
+		c.mu.Lock()
+		if c.reverseListen != "" {
+			line["reverse_listen"] = c.reverseListen
+		}
+		c.mu.Unlock()
+		config["anx_line"] = line
 	}
 	document, err := json.Marshal(config)
 	if err != nil {
@@ -181,7 +190,7 @@ func (c *Core) launch() error {
 	go func() {
 		err := process.Wait()
 		close(exited)
-		c.supervise(err)
+		c.supervise(process, err)
 	}()
 	if err := c.waitReady(); err != nil {
 		_ = process.Process.Kill()
@@ -198,11 +207,18 @@ func (c *Core) launch() error {
 
 // supervise restarts an anixcore that exited on its own and gives it its
 // nodes and users again.
-func (c *Core) supervise(exitErr error) {
+func (c *Core) supervise(process *exec.Cmd, exitErr error) {
 	select {
 	case <-c.stop:
 		return
 	default:
+	}
+	c.mu.Lock()
+	replaced := process != nil && c.process != process
+	c.mu.Unlock()
+	if replaced {
+		// Stopped on purpose (reopen), which starts the next one.
+		return
 	}
 	log.WithField("core", coreType).WithError(exitErr).Error("anixcore exited; restarting")
 	for {

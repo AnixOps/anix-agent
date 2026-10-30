@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- ANX-Line reverse dial-back (anx ANX-Line §4.6): an egress whose
+  accepting anx_line transport is `reverse` opens no port and dials the
+  rendezvous instead (anx-server `SetReverseDials`); the dialing anx-node
+  opens the plan's rendezvous listener (`anx_line.reverse_listen`, an
+  anx-node the core starts is restarted when it changes), and a relay hop
+  into a reverse link runs anx-server with `--reverse-listen`. Needs an
+  anx-node / anx-server with reverse support; `contracts/anx` is resynced.
+
 ## 5.0.0-rc.18 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.18.
