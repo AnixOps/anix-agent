@@ -194,6 +194,18 @@ func (h *fakeHost) AddUsers(_ context.Context, in *anxmgmtpb.AddUsersRequest, _ 
 	return answer, nil
 }
 
+// LinkStats answers the relay links as connected over QUIC, measuring 23 ms
+// and one packet in a hundred lost.
+func (h *fakeHost) LinkStats(context.Context, *anxmgmtpb.LinkStatsRequest, ...grpc.CallOption) (*anxmgmtpb.LinkStatsResponse, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var links []*anxmgmtpb.LinkStat
+	for id := range h.relays {
+		links = append(links, &anxmgmtpb.LinkStat{LinkId: id, Connected: true, Carrier: "c2", RttMs: 23, SentPackets: 100, LostPackets: 1})
+	}
+	return &anxmgmtpb.LinkStatsResponse{Links: links}, nil
+}
+
 func (h *fakeHost) RemoveUsers(_ context.Context, in *anxmgmtpb.RemoveUsersRequest, _ ...grpc.CallOption) (*anxmgmtpb.RemoveUsersResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -410,6 +422,14 @@ func TestManagerRelays(t *testing.T) {
 		}, 2*time.Second, 5*time.Millisecond)
 	}
 	want(map[string]string{"tr-a": "tr-n"}, []string{"tr-n"})
+	require.Eventually(t, func() bool {
+		for _, component := range m.Status() {
+			if component.GetId() == "tr-n" {
+				return component.GetRttMs() == 23 && component.GetCarrier() == "c2" && component.GetLossPpm() == 10000
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "the relay link reports what the process measured")
 
 	host.last().Stop()
 	require.Eventually(t, func() bool { return host.started() == 2 }, 2*time.Second, 5*time.Millisecond)
@@ -514,4 +534,16 @@ func TestManagerDialsBack(t *testing.T) {
 		return assert.ObjectsAreEqual([]string{"tr-b=198.51.100.31:24444"}, host.reverseDials())
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, 2, host.started(), "changed on the running process")
+}
+
+// A carrier that measures no round trip (anything but QUIC) reports the
+// handshake of its last probe in its place.
+func TestWithStatFallsBackToTheProbeHandshake(t *testing.T) {
+	stat := &anxmgmtpb.LinkStat{Connected: true, Carrier: "c1", Probes: []*anxmgmtpb.CarrierProbe{
+		{Carrier: "c2", Ok: true, HandshakeMs: 9},
+		{Carrier: "c1", Ok: true, HandshakeMs: 31},
+	}}
+	assert.Equal(t, uint32(31), withStat(&networkv1.ComponentStatus{}, stat).GetRttMs())
+	stat.RttMs = 12
+	assert.Equal(t, uint32(12), withStat(&networkv1.ComponentStatus{}, stat).GetRttMs())
 }
