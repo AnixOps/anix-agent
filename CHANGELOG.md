@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.24 - 2026-10-31
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.24.
+
 ### Added
 
 - Reverse proxies: the NetworkPlan's `reverse_proxies` become anixcore
