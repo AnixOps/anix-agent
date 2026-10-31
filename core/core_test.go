@@ -214,3 +214,20 @@ func TestSelectorHandsARefusedNodeToTheNextCore(t *testing.T) {
 	require.ErrorContains(t, err, "port hopping")
 	require.ErrorContains(t, err, "bad")
 }
+
+func TestSelectorRunsANodeNamingARetiredCoreOnAnixcore(t *testing.T) {
+	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"vless", "shadowsocks"}}
+	withCores(t, map[string]*fakeCore{"anixcore": anixcore})
+	selector, err := NewSelector([]conf.CoreConfig{{Type: "anixcore"}})
+	require.NoError(t, err)
+	for tag, option := range map[string]*conf.Options{
+		"by-name": {CoreName: "sing", RawOptions: []byte(`{}`)},
+		"by-core": {Core: "xray", RawOptions: []byte(`{}`)},
+	} {
+		require.NoError(t, selector.AddNode(tag, &panel.NodeInfo{Type: "vless"}, option), tag)
+	}
+	require.ElementsMatch(t, []string{"by-name", "by-core"}, anixcore.nodes)
+
+	err = selector.AddNode("odd", &panel.NodeInfo{Type: "tuic"}, &conf.Options{CoreName: "xray", RawOptions: []byte(`{}`)})
+	require.Error(t, err, "no core serves the protocol")
+}
