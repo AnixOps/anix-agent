@@ -98,7 +98,7 @@ func (c *Core) Type() string {
 }
 
 func (c *Core) Protocols() []string {
-	return []string{"shadowsocks", "trojan", "vless", "vmess", "hysteria2", "tuic", "iwan", "anytls"}
+	return []string{"shadowsocks", "trojan", "vless", "vmess", "hysteria2", "tuic", "iwan", "anytls", "anx"}
 }
 
 func (c *Core) Start() error {
