@@ -333,7 +333,7 @@ func (c *GRPCClient) Register(authKey, name, host string, port int32, serverVers
 		Port:               port,
 		ServerVersion:      serverVersion,
 		ServerOs:           serverOS,
-		SupportedProtocols: []string{"vmess", "vless", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic", "anytls", "wireguard", "iwan"},
+		SupportedProtocols: []string{"vmess", "vless", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic", "anytls", "wireguard", "iwan", "anx"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("grpc register: %w", err)
@@ -489,6 +489,16 @@ func (c *GRPCClient) GetNodeConfig() (*panel.NodeInfo, error) {
 			return nil, fmt.Errorf("grpc get config: %w", err)
 		}
 		node.Iwan = iwan
+		node.Security = panel.None
+
+	case "anx":
+		extra := resp.GetExtra()
+		node.Anx = &panel.AnxNode{
+			CommonNode:  common,
+			ServerNames: parseStringList(extra["server_names"]),
+			Dest:        extra["dest"],
+			ALPN:        parseStringList(extra["alpn"]),
+		}
 		node.Security = panel.None
 	}
 

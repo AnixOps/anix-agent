@@ -40,6 +40,7 @@ type NodeInfo struct {
 	Hysteria2   *Hysteria2Node
 	WireGuard   *WireGuardNode
 	Iwan        *IwanNode
+	Anx         *AnxNode
 	Common      *CommonNode
 }
 
@@ -170,6 +171,16 @@ type IwanNode struct {
 	AllowClientToClient bool  `json:"allow_client_to_client"`
 	// Fixed tunnel addresses by panel user id.
 	FixedAddresses map[string]string `json:"fixed_addresses"`
+}
+
+// AnxNode is an ANX-A inbound (anx-node's `anx` inbound, A2 jacket): the
+// server names it answers to, the cover site everything else is forwarded
+// to, and the ALPN. The server key pair is the Agent's anx-server key.
+type AnxNode struct {
+	CommonNode
+	ServerNames []string `json:"server_names"`
+	Dest        string   `json:"dest"`
+	ALPN        []string `json:"alpn"`
 }
 
 type WireGuardRelay struct {
@@ -444,6 +455,15 @@ func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string
 		}
 		cm = &rsp.CommonNode
 		node.Iwan = rsp
+		node.Security = None
+	case "anx":
+		rsp := &AnxNode{}
+		err = json.Unmarshal(body, rsp)
+		if err != nil {
+			return nil, "", fmt.Errorf("decode anx params error: %s", err)
+		}
+		cm = &rsp.CommonNode
+		node.Anx = rsp
 		node.Security = None
 	}
 	if cm == nil {
