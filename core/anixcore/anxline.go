@@ -194,6 +194,16 @@ func linkStatus(line anxmgmtpb.ManagementClient, links []string) []*networkv1.Co
 			if stat.GetConnected() {
 				component.Carrier = truncate(stat.GetCarrier(), network.MaxTextBytes)
 				component.RttMs = stat.GetRttMs()
+				if component.RttMs == 0 {
+					// Only QUIC carriers measure a round trip: on the
+					// others the handshake of the carrier's last probe
+					// stands in for it.
+					for _, probe := range stat.GetProbes() {
+						if probe.GetCarrier() == stat.GetCarrier() && probe.GetOk() && probe.GetHandshakeMs() > 0 {
+							component.RttMs = probe.GetHandshakeMs()
+						}
+					}
+				}
 			}
 		}
 		components = append(components, component)

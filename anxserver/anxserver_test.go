@@ -535,3 +535,15 @@ func TestManagerDialsBack(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, 2, host.started(), "changed on the running process")
 }
+
+// A carrier that measures no round trip (anything but QUIC) reports the
+// handshake of its last probe in its place.
+func TestWithStatFallsBackToTheProbeHandshake(t *testing.T) {
+	stat := &anxmgmtpb.LinkStat{Connected: true, Carrier: "c1", Probes: []*anxmgmtpb.CarrierProbe{
+		{Carrier: "c2", Ok: true, HandshakeMs: 9},
+		{Carrier: "c1", Ok: true, HandshakeMs: 31},
+	}}
+	assert.Equal(t, uint32(31), withStat(&networkv1.ComponentStatus{}, stat).GetRttMs())
+	stat.RttMs = 12
+	assert.Equal(t, uint32(12), withStat(&networkv1.ComponentStatus{}, stat).GetRttMs())
+}

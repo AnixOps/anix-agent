@@ -355,6 +355,15 @@ func withStat(component *networkv1.ComponentStatus, stat *anxmgmtpb.LinkStat) *n
 	}
 	component.Carrier = stat.GetCarrier()
 	component.RttMs = stat.GetRttMs()
+	if component.RttMs == 0 {
+		// Only QUIC carriers measure a round trip: on the others the
+		// handshake the carrier's last probe took stands in for it.
+		for _, probe := range stat.GetProbes() {
+			if probe.GetCarrier() == stat.GetCarrier() && probe.GetOk() && probe.GetHandshakeMs() > 0 {
+				component.RttMs = probe.GetHandshakeMs()
+			}
+		}
+	}
 	if sent := stat.GetSentPackets(); sent > 0 {
 		component.LossPpm = uint32(min(stat.GetLostPackets()*1_000_000/sent, 1_000_000)) // #nosec G115 -- clamped.
 	}
