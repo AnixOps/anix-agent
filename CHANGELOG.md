@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.22 - 2026-10-31
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.22.
+
 ### Removed
 
 - The `nftables-forward` and `nat-egress` plugin runtimes (`cmd/nftables-forward`,
