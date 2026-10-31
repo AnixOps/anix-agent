@@ -80,6 +80,9 @@ type Core struct {
 	// forwards, wantedForwards those of the last plan, by tag.
 	forwards       map[string]map[string]any
 	wantedForwards map[string]map[string]any
+	// unsupportedProxies are the last plan's reverse proxies the kernel
+	// cannot run (no reverse_proxy feature), by id.
+	unsupportedProxies []string
 
 	process *exec.Cmd
 	stop    chan struct{}

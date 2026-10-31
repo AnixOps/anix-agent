@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Reverse proxies: the NetworkPlan's `reverse_proxies` become anixcore
+  `reverse_proxy` inbounds (`rproxy-<id>`): the sites and their path routes,
+  the upstreams with the route's balancing, health check and breaker, and
+  TLS terminated with the plan's certificate (HTTP/1.1, `X-Forwarded-Proto:
+  https`). The upstreams are dialed directly or over the plan's egress or
+  ANX-A link. Their status is reported in `NetworkStatus.reverse_proxies`.
+  An anx-node without the `reverse_proxy` feature reports them DOWN as
+  unsupported.
+
 ### Removed
 
 - `forward.RetireGost`, the `Forward.Gost` setting and the updater's removal of

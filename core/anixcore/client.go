@@ -74,6 +74,8 @@ type client struct {
 	userLimits atomic.Bool
 	// blockRules is whether the kernel takes block rules (PUT /v1/rules).
 	blockRules atomic.Bool
+	// reverseProxy is whether the kernel runs reverse_proxy inbounds.
+	reverseProxy atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -136,6 +138,7 @@ func (c *client) status(ctx context.Context) error {
 	}
 	c.userLimits.Store(slices.Contains(status.Features, "user_limits"))
 	c.blockRules.Store(slices.Contains(status.Features, "block_rules"))
+	c.reverseProxy.Store(slices.Contains(status.Features, reverseProxyFeature))
 	return nil
 }
 

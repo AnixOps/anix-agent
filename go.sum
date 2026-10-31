@@ -40,8 +40,8 @@ cloud.google.com/go/storage v1.10.0/go.mod h1:FLPqc6j+Ki4BU591ie1oL6qBQGu2Bl/tZ9
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
 github.com/AdamSLevy/jsonrpc2/v14 v14.1.0 h1:Dy3M9aegiI7d7PF1LUdjbVigJReo+QOceYsMyFh9qoE=
 github.com/AdamSLevy/jsonrpc2/v14 v14.1.0/go.mod h1:ZakZtbCXxCz82NJvq7MoREtiQesnDfrtF6RFUGzQfLo=
-github.com/AnixOps/anix-control/sdk v0.0.0-20261030210722-3c21e6f466d0 h1:NCHPTFgJdQYCTcOUunAR8wubPnBdnpHdQixQM/K7opE=
-github.com/AnixOps/anix-control/sdk v0.0.0-20261030210722-3c21e6f466d0/go.mod h1:+W8lHrhwVAHwSElRriWM9MN2VtZOrVzYdtAZ9lZkAgg=
+github.com/AnixOps/anix-control/sdk v0.0.0-20261031163603-b69dc6f3cb5e h1:/lVCAGFTpSmuvsQA8iAKA63zhpsSFKejDxWvc5hJUuA=
+github.com/AnixOps/anix-control/sdk v0.0.0-20261031163603-b69dc6f3cb5e/go.mod h1:+W8lHrhwVAHwSElRriWM9MN2VtZOrVzYdtAZ9lZkAgg=
 github.com/Azure/azure-sdk-for-go v68.0.0+incompatible h1:fcYLmCpyNYRnvJbPerq7U0hS+6+I79yEDJBqVNcqUzU=
 github.com/Azure/azure-sdk-for-go v68.0.0+incompatible/go.mod h1:9XXNKU+eRnpl9moKnB4QOLf1HestfXbmab5FXxiDBjc=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1 h1:Wc1ml6QlJs2BHQ/9Bqu1jiyggbsSjramq2oUmp5WeIo=
