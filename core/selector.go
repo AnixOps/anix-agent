@@ -107,7 +107,13 @@ func (s *Selector) AddNode(tag string, info *panel.NodeInfo, option *conf.Option
 		}
 	}
 	if core == nil {
-		return errors.New("the node type is not support")
+		// A node that names a core by CoreName or Core which is not
+		// configured (the retired xray, sing or hysteria2, whose names
+		// Control may still send) runs on the first core that serves its
+		// protocol.
+		log.WithFields(log.Fields{"tag": tag, "core": option.Core, "core_name": option.CoreName}).Warn("the node names a core that is not configured; running it on the first core that serves its protocol")
+		option.Core, option.CoreName = "", ""
+		return s.addByProtocol(tag, info, option)
 	}
 	err := core.AddNode(tag, info, option)
 	if err != nil {
