@@ -279,3 +279,42 @@ func TestNodeTagsBecomeTagsAnixcoreAccepts(t *testing.T) {
 		t.Fatalf("inbound tag %v", inbound["tag"])
 	}
 }
+
+func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
+	old := anxKeyFile
+	anxKeyFile = func() (string, error) { return "/var/lib/anixops-agent/anx-server/server.key", nil }
+	defer func() { anxKeyFile = old }()
+	info := &panel.NodeInfo{
+		Type:   "anx",
+		Common: &panel.CommonNode{ServerPort: 8443},
+		Anx:    &panel.AnxNode{ServerNames: []string{"www.apple.com"}, Dest: "www.apple.com:443", ALPN: []string{"h2"}},
+	}
+	inbound, err := inboundConfig("anx-1", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{
+		"type": "anx", "listen_port": 8443, "key_file": "/var/lib/anixops-agent/anx-server/server.key",
+		"server_names": []string{"www.apple.com"}, "dest": "www.apple.com:443", "alpn": []string{"h2"},
+	} {
+		if !reflect.DeepEqual(inbound[key], want) {
+			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
+		}
+	}
+	info.Anx.ServerNames = nil
+	if _, err := inboundConfig("anx-1", info, &conf.Options{}); err == nil {
+		t.Fatal("an anx node without server names was accepted")
+	}
+}
+
+func TestAnxUserKeyMatchesControl(t *testing.T) {
+	// The same vector as anix-control service.TestANXUserKeyVector.
+	const uuid = "C9A1E7B0-5B0E-4A4B-9A54-2F3F1C1B0D11"
+	if got, want := anxUserKey(uuid), "a05385f0ca7b3e2223b65d0af4dbc51cbd50a1330d27f509ed9de142b771f20a"; got != want {
+		t.Fatalf("anxUserKey = %s, want %s", got, want)
+	}
+	user, err := apiUserFor(&panel.NodeInfo{Type: "anx"}, panel.UserInfo{Id: 7, Uuid: uuid})
+	if err != nil || user.Password != "a05385f0ca7b3e2223b65d0af4dbc51cbd50a1330d27f509ed9de142b771f20a" || user.Name != "7" {
+		t.Fatalf("apiUserFor = %+v, %v", user, err)
+	}
+}
