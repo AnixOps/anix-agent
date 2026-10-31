@@ -1,12 +1,17 @@
 package anixcore
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -172,6 +177,28 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 			inbound["allow_encrypt"] = *node.AllowEncrypt
 		}
 		inbound["allow_client_to_client"] = node.AllowClientToClient
+	case "anx":
+		node := info.Anx
+		if node == nil {
+			return nil, errors.New("anx node info is missing")
+		}
+		names := node.ServerNames
+		if len(names) == 0 {
+			return nil, errors.New("anx node needs server names")
+		}
+		key, err := anxKeyFile()
+		if err != nil {
+			return nil, err
+		}
+		inbound["type"] = "anx"
+		inbound["key_file"] = key
+		inbound["server_names"] = names
+		if node.Dest != "" {
+			inbound["dest"] = node.Dest
+		}
+		if len(node.ALPN) > 0 {
+			inbound["alpn"] = node.ALPN
+		}
 	default:
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}
@@ -368,6 +395,31 @@ func iwanPassword(uuid string) (string, error) {
 	return strings.ToLower(digits[:16]), nil
 }
 
+// anxKeyFile is the path of the Agent's anx-server key, which anx-node's
+// anx inbound serves with too (the public half is what Control hands to
+// clients). The Agent makes it when it first reports to Control, so a node
+// that comes up before that fails with this error and is retried.
+var anxKeyFile = func() (string, error) {
+	path := filepath.Join(conf.DefaultStateRoot, "anx-server", "server.key")
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("anx server key %s is not made yet", path)
+	}
+	return path, nil
+}
+
+// anxUserKey is a panel user's ANX key: HMAC-SHA-256 of a fixed label under
+// the lower-case UUID, 64 hex digits. Control derives the same key for the
+// anx:// link (anix-control service.ANXUserKey).
+func anxUserKey(uuid string) string {
+	uuid = strings.ToLower(strings.TrimSpace(uuid))
+	if uuid == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(uuid))
+	mac.Write([]byte("anx/panel-user-key/v1"))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // userName is the anixcore user name of a panel user: its id, which comes
 // back in traffic and online reports.
 func userName(user panel.UserInfo) string {
@@ -414,6 +466,12 @@ func apiUserFor(info *panel.NodeInfo, user panel.UserInfo) (apiUser, error) {
 		if info.Iwan != nil {
 			out.Address = info.Iwan.FixedAddresses[out.Name]
 		}
+	case "anx":
+		password := anxUserKey(user.Uuid)
+		if password == "" {
+			return apiUser{}, fmt.Errorf("user %d has no uuid for an anx key", user.Id)
+		}
+		out.Password = password
 	default:
 		return apiUser{}, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}

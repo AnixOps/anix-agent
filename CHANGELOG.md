@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- ANX-A nodes for users. A node protocol of type `anx` runs as anx-node's
+  `anx` inbound (A2 jacket, TCP) with the Agent's anx-server key; a user's
+  key is derived from the UUID, the same way Control derives it for the
+  `anx://` link. The node comes up once the Agent has made its anx-server
+  key, which it does when it first reports to Control.
+
 ## 5.0.0-rc.21 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.21.
