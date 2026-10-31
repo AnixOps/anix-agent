@@ -130,7 +130,7 @@ func TestRetiredCoreTypesRunOnAnixcore(t *testing.T) {
 
 	var options conf.Options
 	require.NoError(t, json.Unmarshal([]byte(`{"Core":"sing"}`), &options))
-	require.Empty(t, options.Core, "the node runs on the first core that serves it")
+	require.Equal(t, "anixcore", options.Core)
 }
 
 // egressCore is a fakeCore that runs egress routes.

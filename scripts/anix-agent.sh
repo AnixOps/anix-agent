@@ -358,14 +358,7 @@ init_config_wizard() {
         info "已备份旧配置到 ${backup}"
     fi
 
-    while true; do
-        core_type="$(prompt_text "选择内核类型(sing/xray/hysteria2)" "sing")"
-        core_type="$(echo "${core_type}" | tr '[:upper:]' '[:lower:]')"
-        if [[ "${core_type}" == "sing" || "${core_type}" == "xray" || "${core_type}" == "hysteria2" ]]; then
-            break
-        fi
-        warn "仅支持 sing / xray / hysteria2"
-    done
+    core_type="anixcore"
 
     api_host="$(prompt_required_text "面板地址 ApiHost（生产环境必须使用 HTTPS）")"
     api_key="$(prompt_required_text "面板 API Key")"
@@ -432,32 +425,9 @@ init_config_wizard() {
         grpc_keepalive="$(prompt_int "GRPCKeepalive(秒)" "30")"
     fi
 
-    case "${core_type}" in
-        sing)
-            core_json='{
-      "Type": "sing",
-      "Log": {
-        "Level": "info",
-        "Timestamp": true
-      },
-      "NTP": {
-        "Enable": false,
-        "Server": "time.apple.com",
-        "ServerPort": 0
-      }
+    core_json='{
+      "Type": "anixcore"
     }'
-            ;;
-        xray)
-            core_json='{
-      "Type": "xray"
-    }'
-            ;;
-        hysteria2)
-            core_json='{
-      "Type": "hysteria2"
-    }'
-            ;;
-    esac
 
     cat >"${cfg}" <<EOF
 {

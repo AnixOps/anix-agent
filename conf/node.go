@@ -219,9 +219,9 @@ func (o *Options) UnmarshalJSON(data []byte) error {
 	}
 	switch o.Core {
 	// The third-party cores are gone: a node that still names one runs on
-	// the first core that serves its protocol.
-	case "xray", "sing", "hysteria2":
-		o.Core = ""
+	// anixcore.
+	case "xray", "sing", "hysteria2", "anixcore":
+		o.Core = "anixcore"
 		o.RawOptions = data
 		return nil
 	case "wireguard":
