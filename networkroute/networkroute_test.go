@@ -97,3 +97,61 @@ func TestApplyReconcilesTheRange(t *testing.T) {
 		"-4 route flush table 20009",
 	}, ip.calls)
 }
+
+// A dual-NIC entry: two uplink egresses towards one next device share
+// their uplink's table with any other egress on the same source, and the
+// dialing transport's peer is routed through the chosen uplink, after
+// every from rule; a moved peer rule goes without flushing a table still
+// in use.
+func TestRoutesSendTransportPeersThroughTheirEgress(t *testing.T) {
+	lookups, lookup := 0, LookupHost
+	LookupHost = func(host string) ([]netip.Addr, error) {
+		lookups++
+		require.Equal(t, "jp.example.com", host)
+		return []netip.Addr{netip.MustParseAddr("203.0.113.50"), netip.MustParseAddr("2001:db8::50")}, nil
+	}
+	t.Cleanup(func() { LookupHost = lookup })
+	plan := &networkv1.NetworkPlan{
+		Lines: []*networkv1.Line{
+			{Id: "up-cn2", Interface: "eth0", GatewayV4: "10.0.0.1"},
+			{Id: "up-cu", Interface: "eth1", GatewayV4: "10.0.1.1"},
+		},
+		Egresses: []*networkv1.Egress{
+			{Id: "auto-proxy-62-up-cn2-proxy-50", LineId: "up-cn2", Source: "10.0.0.2"},
+			{Id: "auto-proxy-62-up-cn2-proxy-57", LineId: "up-cn2", Source: "10.0.0.2"},
+			{Id: "auto-proxy-62-up-cu-proxy-50", LineId: "up-cu", Source: "10.0.1.2"},
+		},
+		Transports: []*networkv1.Transport{
+			{Id: "auto-proxy-62-proxy-50", Role: networkv1.TransportRole_TRANSPORT_ROLE_DIAL, FromEgressId: "auto-proxy-62-up-cu-proxy-50",
+				Settings: &networkv1.Transport_AnxLine{AnxLine: &networkv1.AnxLineSettings{TcpAddr: "jp.example.com:24443"}}},
+			{Id: "auto-proxy-62-proxy-57", Role: networkv1.TransportRole_TRANSPORT_ROLE_DIAL, FromEgressId: "auto-proxy-62-up-cn2-proxy-57",
+				Settings: &networkv1.Transport_AnxLine{AnxLine: &networkv1.AnxLineSettings{TcpAddr: "198.51.100.57:24443"}}},
+			{Id: "rev", Role: networkv1.TransportRole_TRANSPORT_ROLE_DIAL, FromEgressId: "auto-proxy-62-up-cn2-proxy-50",
+				Settings: &networkv1.Transport_AnxLine{AnxLine: &networkv1.AnxLineSettings{Reverse: true, ReverseListen: "0.0.0.0:24444"}}},
+		},
+	}
+	routes, err := Routes(plan, 20000, 20999)
+	require.NoError(t, err)
+	require.Equal(t, 1, lookups)
+	require.Len(t, routes, 2, "one route per uplink")
+	assert.Equal(t, Route{Egress: "auto-proxy-62-up-cn2-proxy-50", Source: netip.MustParseAddr("10.0.0.2"), Interface: "eth0",
+		Gateway: netip.MustParseAddr("10.0.0.1"), Table: 20000, Priority: 20000,
+		To: []netip.Prefix{netip.MustParsePrefix("198.51.100.57/32")}, ToPriority: 20999}, routes[0])
+	assert.Equal(t, []netip.Prefix{netip.MustParsePrefix("203.0.113.50/32")}, routes[1].To, "only the egress's family")
+
+	ip := &fakeIP{rules: map[string]string{
+		"-4": `[{"priority":20000,"src":"10.0.0.2","srclen":32,"table":"20000"},
+			{"priority":20999,"src":"all","dst":"203.0.113.50","dstlen":32,"table":"20000"}]`,
+		"-6": `[]`,
+	}}
+	manager := &Manager{IP: "ip", Run: ip.run, First: 20000, Last: 20999}
+	require.NoError(t, manager.Apply(routes))
+	assert.Equal(t, []string{
+		"-4 rule delete priority 20999 to 203.0.113.50/32 table 20000",
+		"-4 route replace default via 10.0.0.1 dev eth0 src 10.0.0.2 table 20000",
+		"-4 rule add to 198.51.100.57/32 table 20000 priority 20999",
+		"-4 route replace default via 10.0.1.1 dev eth1 src 10.0.1.2 table 20001",
+		"-4 rule add from 10.0.1.2/32 table 20001 priority 20001",
+		"-4 rule add to 203.0.113.50/32 table 20001 priority 20999",
+	}, ip.calls)
+}

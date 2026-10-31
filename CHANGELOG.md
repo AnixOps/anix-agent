@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Uplinks (dual-NIC entries): a dialing anx_line transport now leaves by
+  its from egress. When that egress has an address source, the transport's
+  peer addresses (resolved) get `ip rule add to <peer> table <egress table>`
+  at the routing range's last priority, after every `from` rule, so the
+  anx-node link takes the uplink Control chose. Egresses with the same
+  source, interface and gateway share one table. When Control moves a
+  transport to another uplink, the link is removed from anx-node and added
+  again so it dials from the new NIC.
+
 ## 5.0.0-rc.24 - 2026-10-31
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.24.
