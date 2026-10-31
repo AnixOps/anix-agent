@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.23 - 2026-10-31
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.23.
+
 ### Fixed
 
 - A node that names a core by `CoreName` or `Core` that is not configured (the
