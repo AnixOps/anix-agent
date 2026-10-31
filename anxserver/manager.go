@@ -280,6 +280,8 @@ type server struct {
 	ready  bool
 	detail string
 	since  time.Time
+	// client is the process's management endpoint while it runs.
+	client anxmgmtpb.ManagementClient
 
 	wake    chan struct{}
 	stop    chan struct{}
@@ -317,27 +319,74 @@ func (s *server) setState(ready bool, detail string) {
 	s.ready, s.detail = ready, detail
 }
 
+func (s *server) setClient(client anxmgmtpb.ManagementClient) {
+	s.mu.Lock()
+	s.client = client
+	s.mu.Unlock()
+}
+
+// linkStats answers the process's LinkStats by link id, empty when it is
+// not running or does not answer.
+func (s *server) linkStats(client anxmgmtpb.ManagementClient) map[string]*anxmgmtpb.LinkStat {
+	if client == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), statsTimeout)
+	defer cancel()
+	answer, err := client.LinkStats(ctx, &anxmgmtpb.LinkStatsRequest{})
+	if err != nil {
+		return nil
+	}
+	stats := make(map[string]*anxmgmtpb.LinkStat, len(answer.GetLinks()))
+	for _, stat := range answer.GetLinks() {
+		stats[stat.GetLinkId()] = stat
+	}
+	return stats
+}
+
+// statsTimeout bounds the link stats a status asks the process for.
+const statsTimeout = 2 * time.Second
+
+// withStat adds what the process measured of the link: its carrier, round
+// trip and loss, once it is connected (links connect on their first flow).
+func withStat(component *networkv1.ComponentStatus, stat *anxmgmtpb.LinkStat) *networkv1.ComponentStatus {
+	if stat == nil || !stat.GetConnected() {
+		return component
+	}
+	component.Carrier = stat.GetCarrier()
+	component.RttMs = stat.GetRttMs()
+	if sent := stat.GetSentPackets(); sent > 0 {
+		component.LossPpm = uint32(min(stat.GetLostPackets()*1_000_000/sent, 1_000_000)) // #nosec G115 -- clamped.
+	}
+	return component
+}
+
 func (s *server) status() []*networkv1.ComponentStatus {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	state := networkv1.ComponentState_COMPONENT_STATE_DOWN
 	if s.ready {
 		state = networkv1.ComponentState_COMPONENT_STATE_APPLIED
 	}
+	wanted, detail, since, client := s.wanted, s.detail, s.since, s.client
+	s.mu.Unlock()
+	var stats map[string]*anxmgmtpb.LinkStat
+	if state == networkv1.ComponentState_COMPONENT_STATE_APPLIED {
+		stats = s.linkStats(client)
+	}
 	var components []*networkv1.ComponentStatus
 	relayed := map[string]bool{}
-	for _, accept := range s.wanted {
-		components = append(components, &networkv1.ComponentStatus{
+	for _, accept := range wanted {
+		components = append(components, withStat(&networkv1.ComponentStatus{
 			Component: networkv1.Component_COMPONENT_TRANSPORT, Id: accept.Transport, State: state,
-			Detail: s.detail, ChangedAtUnixMs: s.since.UnixMilli(),
-		})
+			Detail: detail, ChangedAtUnixMs: since.UnixMilli(),
+		}, stats[accept.LinkID]))
 		// The dialing transport a relay hop relays into is this process's.
 		if next := accept.Next.GetLinkId(); next != "" && !relayed[next] {
 			relayed[next] = true
-			components = append(components, &networkv1.ComponentStatus{
+			components = append(components, withStat(&networkv1.ComponentStatus{
 				Component: networkv1.Component_COMPONENT_TRANSPORT, Id: next, State: state,
-				Detail: s.detail, ChangedAtUnixMs: s.since.UnixMilli(),
-			})
+				Detail: detail, ChangedAtUnixMs: since.UnixMilli(),
+			}, stats[next]))
 		}
 	}
 	return components
@@ -391,7 +440,11 @@ func (s *server) serve() error {
 	if err != nil {
 		return fmt.Errorf("management endpoint: %w", err)
 	}
-	defer func() { _ = closeClient() }()
+	s.setClient(client)
+	defer func() {
+		s.setClient(nil)
+		_ = closeClient()
+	}()
 	admitted := map[string]admitted{}
 	relay := &relaying{links: map[string]*anxmgmtpb.Link{}}
 	var dials []*anxmgmtpb.ReverseDial
