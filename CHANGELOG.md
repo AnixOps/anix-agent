@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- A node that names a core by `CoreName` or `Core` that is not configured (the
+  retired xray, sing or hysteria2, which Control's snapshot may still send)
+  now runs on the first core that serves its protocol instead of failing the
+  Agent with "the node type is not support".
+
 ## 5.0.0-rc.22 - 2026-10-31
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.22.
