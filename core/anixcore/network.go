@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"unicode/utf8"
 
 	vCore "github.com/AnixOps/anix-agent/v5/core"
@@ -82,10 +83,23 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 	if err != nil {
 		return nil, err
 	}
+	proxies, err := reverseProxyInbounds(plan)
+	if err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.client == nil {
 		return nil, errors.New("anixcore: the core is not started")
+	}
+	// Reverse proxies run next to the forwards, on a kernel that has them.
+	c.unsupportedProxies = nil
+	for tag, inbound := range proxies {
+		if c.client.reverseProxy.Load() {
+			forwards[tag] = inbound
+		} else {
+			c.unsupportedProxies = append(c.unsupportedProxies, strings.TrimPrefix(tag, reverseProxyTagPrefix))
+		}
 	}
 	// The links go in first: the plan's paths leave by them.
 	if err := c.syncLinks(links); err != nil {
@@ -107,7 +121,9 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 	if err := c.syncForwards(forwards); err != nil {
 		failed = err
 	}
-	answer.PortForwards = forwardStatus(c.client, c.heldForwards())
+	held, heldProxies := splitForwardTags(c.heldForwards())
+	answer.PortForwards = forwardStatus(c.client, held)
+	answer.ReverseProxies = reverseProxyStatus(c.client, heldProxies, c.unsupportedProxies)
 	c.ingresses = userIngresses(plan)
 	for tag, n := range c.nodes {
 		ingress := c.ingressOf(n)
@@ -129,6 +145,7 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 func (c *Core) NetworkStatus() (*networkv1.NetworkStatus, error) {
 	c.mu.Lock()
 	client, line, links, forwards := c.client, c.line, c.heldLinks(), c.heldForwards()
+	unsupported := append([]string(nil), c.unsupportedProxies...)
 	c.mu.Unlock()
 	if client == nil {
 		return nil, errors.New("anixcore: the core is not started")
@@ -141,20 +158,22 @@ func (c *Core) NetworkStatus() (*networkv1.NetworkStatus, error) {
 	}
 	status := answer.status()
 	status.Components = append(status.Components, linkStatus(line, links)...)
+	forwards, proxies := splitForwardTags(forwards)
 	status.PortForwards = forwardStatus(client, forwards)
+	status.ReverseProxies = reverseProxyStatus(client, proxies, unsupported)
 	return status, nil
 }
 
 // networkBody is plan as anixcore reads it: protojson with proto names,
-// `{}` for no plan, without the port forwards, which run as inbounds
-// (forward.go).
+// `{}` for no plan, without the port forwards and reverse proxies, which
+// run as inbounds (forward.go, reverse_proxy.go).
 func networkBody(plan *networkv1.NetworkPlan) (json.RawMessage, error) {
 	if plan == nil {
 		return json.RawMessage(`{}`), nil
 	}
-	if len(plan.GetPortForwards()) > 0 {
+	if len(plan.GetPortForwards())+len(plan.GetReverseProxies()) > 0 {
 		plan = proto.Clone(plan).(*networkv1.NetworkPlan)
-		plan.PortForwards = nil
+		plan.PortForwards, plan.ReverseProxies = nil, nil
 	}
 	encoded, err := networkPlanJSON.Marshal(plan)
 	if err != nil {

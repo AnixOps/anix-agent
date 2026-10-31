@@ -196,6 +196,9 @@ func Relayed(plan *networkv1.NetworkPlan) map[string]bool {
 	for _, forward := range plan.GetPortForwards() {
 		delete(relayed, forward.GetTransportId())
 	}
+	for _, proxy := range plan.GetReverseProxies() {
+		delete(relayed, proxy.GetTransportId())
+	}
 	return relayed
 }
 
