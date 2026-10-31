@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.0-rc.25 - 2026-10-31
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.25.
+
 ### Added
 
 - Uplinks (dual-NIC entries): a dialing anx_line transport now leaves by
