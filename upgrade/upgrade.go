@@ -59,9 +59,6 @@ const (
 	UpdaterPathUnit = "anixops-agent-updater.path"
 	// AgentUnit is the Agent's unit, which the updater restarts.
 	AgentUnit = "anix-agent.service"
-	// GostUnit is the unit of the removed gost, which the uninstaller
-	// still removes.
-	GostUnit = "anixops-gost.service"
 	// RelayUnit is the experimental anixops relay's unit, which nothing here
 	// restarts either.
 	RelayUnit = "anixops-relay.service"
@@ -75,9 +72,6 @@ const (
 	// PrevBinary is the binary kept for a rollback, PrevRecord its record.
 	PrevBinary = "anix-agent.prev"
 	PrevRecord = "anix-agent.prev.json"
-	// GostBinary is the gost earlier releases put in LibDir; the updater
-	// removes it.
-	GostBinary = "gost"
 
 	// HandOffSchema is HandOff.Schema.
 	HandOffSchema = "anixops.agent-upgrade-handoff/v1"
@@ -174,8 +168,6 @@ type Result struct {
 	Outcome   string `json:"outcome"`
 	ErrorCode string `json:"error_code,omitempty"`
 	Error     string `json:"error,omitempty"`
-	// GostRemoved is whether the updater deleted the retired gost binary.
-	GostRemoved bool `json:"gost_removed,omitempty"`
 	// Kernel is the kernel version the updater installed, if any.
 	Kernel     string `json:"kernel,omitempty"`
 	FinishedMS int64  `json:"finished_at_unix_ms"`

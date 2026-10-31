@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Removed
+
+- `forward.RetireGost`, the `Forward.Gost` setting and the updater's removal of
+  the `gost` binary: FR-test and every upgraded node hold no gost state any
+  more. A `Gost` key left in a configuration file is ignored. The installers
+  and `uninstall` still clear a host's old gost unit, state and account.
+
 ## 5.0.0-rc.23 - 2026-10-31
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.23.

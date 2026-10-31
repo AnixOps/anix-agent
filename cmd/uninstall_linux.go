@@ -50,6 +50,7 @@ const (
 	// rootInstallDir is the root installer's program directory.
 	rootInstallDir = "/usr/local/anixops-agent"
 
+	gostUnit      = "anixops-gost.service"
 	gostStateDir  = "/var/lib/anixops-gost"
 	relayStateDir = "/var/lib/anixops-relay"
 	sysctlDropIn  = "/etc/sysctl.d/90-anixops-forward.conf"
@@ -70,7 +71,7 @@ var legacyCommandLinks = []string{
 // stopped: the updater first, so that nothing replaces the Agent meanwhile,
 // then the Agent, so that it cannot apply its state again, then gost and the
 // anixops relay.
-var uninstallUnits = []string{upgrade.UpdaterPathUnit, updaterServiceUnit, upgrade.AgentUnit, upgrade.GostUnit, upgrade.RelayUnit}
+var uninstallUnits = []string{upgrade.UpdaterPathUnit, updaterServiceUnit, upgrade.AgentUnit, gostUnit, upgrade.RelayUnit}
 
 // errNoSystemctl is the host systemctl runner's answer on a host without
 // systemd: there is nothing to stop.
@@ -122,7 +123,7 @@ func (u *uninstaller) ctl(args ...string) error {
 // also removes the configuration and the state, which are kept otherwise so
 // that a later install finds the node's identity.
 func (u *uninstaller) uninstall() error {
-	forwarding := u.exists(filepath.Join(systemdUnitDir, upgrade.GostUnit)) || u.exists(filepath.Join(systemdUnitDir, upgrade.RelayUnit)) ||
+	forwarding := u.exists(filepath.Join(systemdUnitDir, gostUnit)) || u.exists(filepath.Join(systemdUnitDir, upgrade.RelayUnit)) ||
 		u.exists(sysctlDropIn) || u.exists(filepath.Join(conf.DefaultStateRoot, "forward")) || u.exists(gostStateDir) || u.exists(relayStateDir)
 
 	u.removeUnits()

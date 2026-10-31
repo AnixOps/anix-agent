@@ -2,7 +2,7 @@
 // 6 to 8, F3b): it runs Control's routes on the node with the drivers of
 // github.com/AnixOps/anix-control/sdk/forward/driver (the experimental
 // anixops relay as anixops-relay.service when the Agent enables it; nftables
-// and gost were removed, see RetireNftables and RetireGost), keeps the applied state across
+// and gost were removed, see RetireNftables), keeps the applied state across
 // restarts, checks the upstreams and fails over, and reports counters,
 // health and hop errors.
 //

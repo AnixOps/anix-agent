@@ -267,7 +267,6 @@ func (a *Applier) upgrade(ctx context.Context, dir string, handOff HandOff, resu
 		return codeError(ErrorStartFailed, "%v; %s was reinstated", err, a.Version)
 	}
 	result.Outcome = OutcomeInstalled
-	result.GostRemoved = a.removeGost()
 	return nil
 }
 
@@ -458,21 +457,6 @@ func (a *Applier) checkVersion(ctx context.Context, binary, version string) erro
 		return codeError(ErrorVersionMismatch, "the binary does not print %s: %q", version, strings.TrimSpace(string(output)))
 	}
 	return nil
-}
-
-// removeGost deletes the gost binary earlier releases shipped: gost was
-// removed (the network model replaced it), and the new Agent stops
-// anixops-gost.service at start. The installer removes the unit.
-func (a *Applier) removeGost() bool {
-	target := filepath.Join(a.libDir(), GostBinary)
-	if _, err := os.Lstat(target); err != nil {
-		return false
-	}
-	if err := os.Remove(target); err != nil {
-		log.WithField("component", "agent-updater").WithError(err).Warn("Could not remove the retired gost binary")
-		return false
-	}
-	return true
 }
 
 // verifyFile verifies the release copied to path.

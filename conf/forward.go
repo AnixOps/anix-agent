@@ -33,13 +33,12 @@ type ForwardConfig struct {
 	// StateDir keeps the applied forwarding state (DefaultForwardStateDir).
 	StateDir string                `json:"StateDir"`
 	Nftables ForwardNftablesConfig `json:"Nftables"`
-	Gost     ForwardGostConfig     `json:"Gost"`
 	// AnixOps configures the experimental anixops engine (off by default).
 	AnixOps ForwardAnixOpsConfig `json:"AnixOps"`
 }
 
-// DefaultForwardStateDir is the Agent's own forwarding state, not gost's
-// directory (/var/lib/anixops-gost) nor the Agent's PKI directory.
+// DefaultForwardStateDir is the Agent's own forwarding state, not the
+// Agent's PKI directory.
 const DefaultForwardStateDir = "/var/lib/anixops-agent/forward"
 
 // Forward node kinds.
@@ -55,13 +54,6 @@ const (
 type ForwardNftablesConfig struct {
 	NFT string `json:"NFT"`
 	TC  string `json:"TC"`
-}
-
-// ForwardGostConfig locates the gost the Agent ran before gost was removed:
-// the Agent stops it and clears Dir at start. Its other keys (Disable,
-// Binary, RuntimeDir, ManualLinkCertificates) are ignored.
-type ForwardGostConfig struct {
-	Dir string `json:"Dir"`
 }
 
 // ForwardAnixOpsConfig configures the experimental anixops forwarding engine
