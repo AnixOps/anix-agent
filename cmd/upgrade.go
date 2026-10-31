@@ -37,8 +37,7 @@ the official release key compiled into this binary), refuses a downgrade
 other than a rollback to the kept release, checks the new binary's version,
 keeps the installed binary as ` + upgrade.PrevBinary + `, swaps the new one in and
 restarts ` + upgrade.AgentUnit + `. When the new Agent does not stay active for
-30 seconds the previous binary is reinstated. After an upgrade it removes the
-` + upgrade.GostBinary + ` binary earlier releases shipped. The outcome goes to ` + upgrade.ResultFile + ` next to the request.`,
+30 seconds the previous binary is reinstated. The outcome goes to ` + upgrade.ResultFile + ` next to the request.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if os.Geteuid() != 0 && upgradeLibDir == upgrade.DefaultLibDir {

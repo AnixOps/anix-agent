@@ -18,7 +18,6 @@ import (
 // owner decisions H13 and H20).
 type Settings struct {
 	Nftables NftablesSettings
-	Gost     GostSettings
 	AnixOps  AnixOpsSettings
 }
 
@@ -27,18 +26,6 @@ type Settings struct {
 type NftablesSettings struct {
 	// NFT and TC are the binaries; empty runs nft and tc from PATH.
 	NFT, TC string
-}
-
-// GostSettings locate the gost the Agent ran before gost was removed (the
-// network model replaced it): RetireGost stops its unit and clears its
-// directory.
-type GostSettings struct {
-	// Dir is gost's directory; empty is DefaultGostDir.
-	Dir string
-	// Unit is gost's systemd unit; empty is DefaultGostUnit.
-	Unit string
-	// Systemctl is the binary; empty runs it from PATH.
-	Systemctl string
 }
 
 // AnixOpsSettings configure the experimental anixops driver (H22): the
@@ -108,7 +95,6 @@ func BuildDrivers(ctx context.Context, settings Settings) (*Drivers, error) {
 	RetireNftables(ctx, settings.Nftables)
 	unavailable(forwardv1.Engine_ENGINE_NFTABLES, "removed: nftables routes run on the network model")
 
-	RetireGost(ctx, settings.Gost)
 	unavailable(forwardv1.Engine_ENGINE_GOST, "removed: gost routes run on the network model")
 
 	if !settings.AnixOps.Enable {

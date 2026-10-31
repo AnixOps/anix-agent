@@ -572,7 +572,7 @@ func (a *Agent) LogLastResult() {
 		entry := log.WithFields(log.Fields{
 			"component": "agent-upgrade", "operation_id": result.OperationID, "campaign_id": result.CampaignID,
 			"action": result.Action, "target_version": result.TargetVersion, "outcome": result.Outcome,
-			"error_code": result.ErrorCode, "error": result.Error, "gost_removed": result.GostRemoved, "kernel": result.Kernel,
+			"error_code": result.ErrorCode, "error": result.Error, "kernel": result.Kernel,
 			"finished_at": time.UnixMilli(result.FinishedMS).UTC().Format(time.RFC3339), "version": a.Version,
 		})
 		switch result.Outcome {

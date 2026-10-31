@@ -36,7 +36,6 @@ func newApplyFixture(t *testing.T) *applyFixture {
 	}
 	f.old = fakeAgent("v4.1.0", false)
 	writeFile(t, filepath.Join(f.lib, BinaryName), f.old, 0o755)
-	writeFile(t, filepath.Join(f.lib, GostBinary), []byte("old gost"), 0o755)
 	f.applier = &Applier{
 		Request: filepath.Join(f.dir, RequestFile), LibDir: f.lib, Version: "v4.1.0", PublicKey: f.key.public,
 		Systemctl: fakeSystemctl(t, root, f.lib, f.log), StayUp: 30 * time.Millisecond, Poll: 5 * time.Millisecond,
@@ -85,7 +84,7 @@ func (f *applyFixture) systemctlCalls(t *testing.T) []string {
 func (f *applyFixture) restarts(t *testing.T) int {
 	n := 0
 	for _, call := range f.systemctlCalls(t) {
-		if strings.Contains(call, GostUnit) {
+		if strings.Contains(call, "gost") {
 			t.Fatalf("the updater never touches gost's unit: %q", call)
 		}
 		if call == "restart "+AgentUnit {
@@ -111,13 +110,13 @@ func TestApplyInstallsKeepsThePreviousAndRestartsOnlyTheAgent(t *testing.T) {
 		zipEntry{name: "LICENSE", data: []byte("license")},
 		zipEntry{name: "V2bX", data: []byte(BinaryName), symlink: true},
 		zipEntry{name: BinaryName, data: newAgent},
-		zipEntry{name: GostBinary, data: []byte("a gost of an older release")},
+		zipEntry{name: "gost", data: []byte("a gost of an older release")},
 	))
 	result, err := f.applier.Apply(context.Background())
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if result.Outcome != OutcomeInstalled || !result.GostRemoved {
+	if result.Outcome != OutcomeInstalled {
 		t.Fatalf("result: %+v", result)
 	}
 	if string(readFile(t, filepath.Join(f.lib, BinaryName))) != string(newAgent) {
@@ -130,8 +129,8 @@ func TestApplyInstallsKeepsThePreviousAndRestartsOnlyTheAgent(t *testing.T) {
 	if err != nil || record.Version != "v4.1.0" || record.SHA256 != digest(f.old) {
 		t.Fatalf("prev record: %+v %v", record, err)
 	}
-	if exists(filepath.Join(f.lib, GostBinary)) {
-		t.Fatal("the retired gost is removed, and a release's gost is not installed")
+	if exists(filepath.Join(f.lib, "gost")) {
+		t.Fatal("a release's gost is not installed")
 	}
 	if f.restarts(t) != 1 {
 		t.Fatalf("one restart: %v", f.systemctlCalls(t))
@@ -165,9 +164,6 @@ func TestApplyReinstatesThePreviousBinaryWhenTheNewAgentDoesNotStayUp(t *testing
 	}
 	if f.restarts(t) != 2 {
 		t.Fatalf("restarted, then restarted with the previous binary: %v", f.systemctlCalls(t))
-	}
-	if string(readFile(t, filepath.Join(f.lib, GostBinary))) != "old gost" {
-		t.Fatal("gost is removed only with an Agent that stayed up")
 	}
 	if written := f.result(t); written.Outcome != OutcomeRestored || written.ErrorCode != ErrorStartFailed {
 		t.Fatalf("result.json: %+v", written)
