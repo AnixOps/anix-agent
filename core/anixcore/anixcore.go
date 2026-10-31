@@ -19,15 +19,26 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/anxmtls"
 	"github.com/AnixOps/anix-agent/v5/anxserver"
 	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc/credentials"
 )
 
 const coreType = "anixcore"
+
+// lineSupportsMTLS reports whether the anx-node at binary (a path or a
+// name on PATH) knows `anx_line.mgmt_tls`; older releases reject it.
+var lineSupportsMTLS = func(binary string) bool {
+	if path, err := exec.LookPath(binary); err == nil {
+		binary = path
+	}
+	return anxmtls.Supports(binary, anxmtls.NodeMarker)
+}
 
 var (
 	_ vCore.Core                 = (*Core)(nil)
@@ -114,7 +125,14 @@ func (c *Core) Start() error {
 			if c.config.AnxLineApiAddress == "" {
 				return errors.New("anixcore: AnxLine with ApiAddress needs AnxLineApiAddress")
 			}
-			if err := c.connectLine(c.config.AnxLineApiAddress); err != nil {
+			var creds credentials.TransportCredentials
+			if tls := c.config.AnxLineApiTLS; tls != nil {
+				var err error
+				if creds, err = anxmtls.Load(tls.CertFile, tls.KeyFile, tls.CAFile, tls.ServerName); err != nil {
+					return fmt.Errorf("anixcore AnxLineApiTLS: %w", err)
+				}
+			}
+			if err := c.connectLine(c.config.AnxLineApiAddress, creds); err != nil {
 				return err
 			}
 		}
@@ -128,10 +146,10 @@ func (c *Core) Start() error {
 	return c.launch()
 }
 
-// connectLine opens the ANX-Line management client at addr; anx-node
-// starts without links.
-func (c *Core) connectLine(addr string) error {
-	line, closeLine, err := connectLine(addr)
+// connectLine opens the ANX-Line management client at addr (creds nil:
+// plaintext); anx-node starts without links.
+func (c *Core) connectLine(addr string, creds credentials.TransportCredentials) error {
+	line, closeLine, err := connectLine(addr, creds)
 	if err != nil {
 		return fmt.Errorf("anx-node ANX-Line management api: %w", err)
 	}
@@ -163,11 +181,22 @@ func (c *Core) launch() error {
 		"allow_private_targets": c.config.AllowPrivateTargets,
 	}
 	lineAddress := ""
+	var lineCreds credentials.TransportCredentials
 	if c.config.AnxLine {
 		if lineAddress, err = freeLoopbackAddress(); err != nil {
 			return err
 		}
 		line := map[string]any{"mgmt_listen": lineAddress}
+		// A release that knows mgmt_tls gets an mTLS management API
+		// (anx spec §7): a one-off bundle per start, the client half here.
+		if lineSupportsMTLS(c.config.BinaryPath) {
+			files, creds, err := anxmtls.Generate(filepath.Join(c.config.RuntimeDir, "anx-line-mgmt"), "127.0.0.1")
+			if err != nil {
+				return fmt.Errorf("anx_line management mTLS: %w", err)
+			}
+			line["mgmt_tls"] = map[string]any{"cert_file": files.Cert, "key_file": files.Key, "client_ca_file": files.ClientCA}
+			lineCreds = creds
+		}
 		c.mu.Lock()
 		if c.reverse.Listen != "" {
 			line["reverse_listen"] = c.reverse.Listen
@@ -214,7 +243,7 @@ func (c *Core) launch() error {
 		return err
 	}
 	if lineAddress != "" {
-		if err := c.connectLine(lineAddress); err != nil {
+		if err := c.connectLine(lineAddress, lineCreds); err != nil {
 			_ = process.Process.Kill()
 			return err
 		}
