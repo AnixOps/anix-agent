@@ -101,11 +101,17 @@ func (c *Core) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStat
 			c.unsupportedProxies = append(c.unsupportedProxies, strings.TrimPrefix(tag, reverseProxyTagPrefix))
 		}
 	}
-	// The links go in first: the plan's paths leave by them.
+	// The links go in first: the plan's paths leave by them. A link whose
+	// egress moved to another uplink is dropped and dialed again, from the
+	// uplink its peer is routed through now (networkroute).
+	egresses := linkEgresses(plan)
+	if err := c.dropMovedLinks(egresses); err != nil {
+		return nil, err
+	}
 	if err := c.syncLinks(links); err != nil {
 		return nil, err
 	}
-	c.wantedLinks = links
+	c.wantedLinks, c.linkEgress = links, egresses
 	answer, err := c.putNetwork(body)
 	if err != nil {
 		return nil, err

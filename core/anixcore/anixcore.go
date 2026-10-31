@@ -73,6 +73,9 @@ type Core struct {
 	lineClose   func() error
 	links       map[string]*anxmgmtpb.Link
 	wantedLinks map[string]*anxmgmtpb.Link
+	// linkEgress is the from egress of each link of the last plan: a link
+	// whose egress moved (another uplink) is dialed again.
+	linkEgress map[string]string
 	// reverse is the rendezvous listener (`anx_line.reverse_listen`) the
 	// started anx-node opens, Listen "" for none.
 	reverse reverseListener

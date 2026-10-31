@@ -230,3 +230,46 @@ func (c *Core) heldLinks() []string {
 	sort.Strings(ids)
 	return ids
 }
+
+// linkEgresses answers the from egress of each dialing anx_line transport
+// of plan, by id.
+func linkEgresses(plan *networkv1.NetworkPlan) map[string]string {
+	egresses := map[string]string{}
+	for _, transport := range plan.GetTransports() {
+		if transport.GetKind() == network.TransportAnxLine && transport.GetRole() == networkv1.TransportRole_TRANSPORT_ROLE_DIAL {
+			egresses[transport.GetId()] = transport.GetFromEgressId()
+		}
+	}
+	return egresses
+}
+
+// dropMovedLinks removes from anx-node the links it holds whose egress is
+// not egresses' any more, so syncLinks adds them again and anx-node dials
+// them anew: a connection open on the old uplink would keep its source
+// address and stall on the new route. c.mu is held.
+func (c *Core) dropMovedLinks(egresses map[string]string) error {
+	if c.line == nil {
+		return nil
+	}
+	var moved []string
+	for id := range c.links {
+		if before, ok := c.linkEgress[id]; ok && before != "" && egresses[id] != "" && before != egresses[id] {
+			moved = append(moved, id)
+		}
+	}
+	if len(moved) == 0 {
+		return nil
+	}
+	sort.Strings(moved)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	_, err := c.line.RemoveLinks(ctx, &anxmgmtpb.RemoveLinksRequest{LinkIds: moved})
+	cancel()
+	if err != nil {
+		return fmt.Errorf("anx-node relink %v: %w", moved, err)
+	}
+	for _, id := range moved {
+		delete(c.links, id)
+	}
+	log.WithField("core", coreType).WithField("links", moved).Info("anx-node links moved to another uplink; dialing them again")
+	return nil
+}

@@ -235,3 +235,33 @@ func TestReverseDialLinks(t *testing.T) {
 		t.Fatalf("links = %v, reverse listen = %q", line.links, core.reverse.Listen)
 	}
 }
+
+// A link whose from egress moves to another uplink is dialed again; the
+// same plan again leaves it be.
+func TestMovedLinkIsDialedAgain(t *testing.T) {
+	line := &fakeLine{links: map[string]*anxmgmtpb.Link{}}
+	_, core := lineCore(t, line)
+	moved := func(egress string) *networkv1.NetworkPlan {
+		plan := dialPlan("PUB-1")
+		plan.Egresses = append(plan.Egresses, &networkv1.Egress{Id: "eg-hop2", LineId: "ln-1", Kind: network.EgressHop, KindVersion: 1,
+			Audience: networkv1.Audience_AUDIENCE_HOP, Family: networkv1.Family_FAMILY_V4, Source: "auto"})
+		plan.Transports[0].FromEgressId = egress
+		return plan
+	}
+	if _, err := core.ApplyNetwork(moved("eg-hop")); err != nil {
+		t.Fatal(err)
+	}
+	line.take()
+	if _, err := core.ApplyNetwork(moved("eg-hop")); err != nil {
+		t.Fatal(err)
+	}
+	if calls := line.take(); len(calls) != 0 {
+		t.Fatalf("calls = %v", calls)
+	}
+	if _, err := core.ApplyNetwork(moved("eg-hop2")); err != nil {
+		t.Fatal(err)
+	}
+	if calls := line.take(); strings.Join(calls, ";") != "remove tr-jp;add tr-jp" {
+		t.Fatalf("calls = %v", calls)
+	}
+}

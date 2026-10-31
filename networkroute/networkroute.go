@@ -13,18 +13,32 @@
 // flushes their tables), also those an earlier Agent process left. An
 // egress with source "auto" leaves through the default route and needs
 // none.
+//
+// A dialing transport leaves by its from egress (anix-control uplinks:
+// a dual-NIC entry picks the NIC per next device). anx-node and
+// anx-server dial without binding a source, so the peer addresses of such
+// a transport whose egress has an address source get
+//
+//	ip rule add to <peer>/<32|128> table <T> priority <last>
+//
+// at the range's last priority, after every `from` rule: a socket bound
+// to another egress's source (a health probe) still leaves by its own
+// line.
 package networkroute
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
@@ -39,6 +53,11 @@ type Route struct {
 	Gateway  netip.Addr
 	Table    uint32
 	Priority uint32
+	// To are the peers of the transports that leave by the egress
+	// (rules at the range's last priority).
+	To []netip.Prefix
+	// ToPriority is that priority.
+	ToPriority uint32
 }
 
 func (r Route) family() string {
@@ -62,7 +81,11 @@ func Routes(plan *networkv1.NetworkPlan, first, last uint32) ([]Route, error) {
 		lines[line.GetId()] = line
 	}
 	var routes []Route
-	tables, priorities := map[uint32]bool{}, map[uint32]bool{}
+	tables, priorities := map[uint32]bool{}, map[uint32]bool{last: true}
+	// shared: a route with the same source, interface and gateway serves
+	// every such egress that names no table or priority.
+	shared := map[string]int{}
+	routeOf := map[string]int{}
 	for _, egress := range plan.GetEgresses() {
 		source := egress.GetSource()
 		if source == "" || source == network.SourceAuto {
@@ -101,7 +124,35 @@ func Routes(plan *networkv1.NetworkPlan, first, last uint32) ([]Route, error) {
 		if route.Priority != 0 {
 			priorities[route.Priority] = true
 		}
+		key := route.Source.String() + "|" + route.Interface + "|" + route.Gateway.String()
+		if route.Table == 0 && route.Priority == 0 {
+			if i, ok := shared[key]; ok {
+				routeOf[egress.GetId()] = i
+				continue
+			}
+			shared[key] = len(routes)
+		}
+		routeOf[egress.GetId()] = len(routes)
 		routes = append(routes, route)
+	}
+	peers, err := transportPeers(plan)
+	if err != nil {
+		return nil, err
+	}
+	for egress, prefixes := range peers {
+		i, ok := routeOf[egress]
+		if !ok {
+			continue
+		}
+		for _, prefix := range prefixes {
+			if prefix.Addr().Is4() == routes[i].Source.Is4() && !slicesContains(routes[i].To, prefix) {
+				routes[i].To = append(routes[i].To, prefix)
+				routes[i].ToPriority = last
+			}
+		}
+	}
+	for i := range routes {
+		sort.Slice(routes[i].To, func(a, b int) bool { return routes[i].To[a].Addr().Less(routes[i].To[b].Addr()) })
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Egress < routes[j].Egress })
 	next := func(used map[uint32]bool) (uint32, error) {
@@ -127,6 +178,56 @@ func Routes(plan *networkv1.NetworkPlan, first, last uint32) ([]Route, error) {
 		}
 	}
 	return routes, nil
+}
+
+func slicesContains(list []netip.Prefix, p netip.Prefix) bool {
+	for _, x := range list {
+		if x == p {
+			return true
+		}
+	}
+	return false
+}
+
+// LookupHost resolves a peer host name (net.DefaultResolver).
+var LookupHost = func(host string) ([]netip.Addr, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+}
+
+// transportPeers answers the peer addresses of plan's dialing anx_line
+// transports by from egress: their carrier addresses, resolved. A name
+// that does not resolve is left out (the link then takes the default
+// route) rather than refusing the plan.
+func transportPeers(plan *networkv1.NetworkPlan) (map[string][]netip.Prefix, error) {
+	peers := map[string][]netip.Prefix{}
+	for _, transport := range plan.GetTransports() {
+		anx := transport.GetAnxLine()
+		if transport.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_DIAL || transport.GetFromEgressId() == "" || anx == nil || anx.GetReverse() {
+			continue
+		}
+		for _, address := range []string{anx.GetTcpAddr(), anx.GetQuicAddr(), anx.GetFaketcpAddr()} {
+			if address == "" {
+				continue
+			}
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, fmt.Errorf("transport %s: address %q: %w", transport.GetId(), address, err)
+			}
+			var addrs []netip.Addr
+			if ip, err := netip.ParseAddr(host); err == nil {
+				addrs = []netip.Addr{ip}
+			} else if addrs, err = LookupHost(host); err != nil {
+				continue
+			}
+			for _, ip := range addrs {
+				ip = ip.Unmap()
+				peers[transport.GetFromEgressId()] = append(peers[transport.GetFromEgressId()], netip.PrefixFrom(ip, ip.BitLen()))
+			}
+		}
+	}
+	return peers, nil
 }
 
 // Runner runs a command and answers its standard output.
@@ -162,6 +263,8 @@ type rule struct {
 	Priority uint32 `json:"priority"`
 	Src      string `json:"src"`
 	SrcLen   int    `json:"srclen"`
+	Dst      string `json:"dst"`
+	DstLen   int    `json:"dstlen"`
 	Table    string `json:"table"`
 }
 
@@ -177,10 +280,15 @@ func (m *Manager) Apply(routes []Route) error {
 		if err != nil {
 			return err
 		}
-		wanted := map[string]bool{}
+		wanted, wantedTables := map[string]bool{}, map[string]bool{}
 		for _, route := range routes {
 			if route.family() == family {
-				wanted[ruleKey(route.Priority, route.from(), strconv.FormatUint(uint64(route.Table), 10))] = true
+				table := strconv.FormatUint(uint64(route.Table), 10)
+				wanted[ruleKey(route.Priority, route.from(), "", table)] = true
+				wantedTables[table] = true
+				for _, to := range route.To {
+					wanted[ruleKey(route.ToPriority, "", to.String(), table)] = true
+				}
 			}
 		}
 		present := map[string]bool{}
@@ -189,7 +297,14 @@ func (m *Manager) Apply(routes []Route) error {
 			if from != "" && existing.SrcLen > 0 {
 				from += "/" + strconv.Itoa(existing.SrcLen)
 			}
-			key := ruleKey(existing.Priority, from, existing.Table)
+			to := existing.Dst
+			if to != "" && existing.DstLen > 0 {
+				to += "/" + strconv.Itoa(existing.DstLen)
+			}
+			if to != "" && from == "all" {
+				from = ""
+			}
+			key := ruleKey(existing.Priority, from, to, existing.Table)
 			if wanted[key] {
 				present[key] = true
 				continue
@@ -198,13 +313,16 @@ func (m *Manager) Apply(routes []Route) error {
 			if from != "" {
 				args = append(args, "from", from)
 			}
+			if to != "" {
+				args = append(args, "to", to)
+			}
 			if existing.Table != "" {
 				args = append(args, "table", existing.Table)
 			}
 			if _, err := m.Run(m.ip(), args...); err != nil {
 				failed = errors.Join(failed, err)
 			}
-			if table, err := strconv.ParseUint(existing.Table, 10, 32); err == nil && m.owns(uint32(table)) {
+			if table, err := strconv.ParseUint(existing.Table, 10, 32); err == nil && m.owns(uint32(table)) && !wantedTables[existing.Table] {
 				if _, err := m.Run(m.ip(), family, "route", "flush", "table", existing.Table); err != nil {
 					failed = errors.Join(failed, err)
 				}
@@ -224,12 +342,20 @@ func (m *Manager) Apply(routes []Route) error {
 				failed = errors.Join(failed, fmt.Errorf("egress %s: %w", route.Egress, err))
 				continue
 			}
-			if present[ruleKey(route.Priority, route.from(), table)] {
-				continue
+			if !present[ruleKey(route.Priority, route.from(), "", table)] {
+				if _, err := m.Run(m.ip(), family, "rule", "add", "from", route.from(), "table", table,
+					"priority", strconv.FormatUint(uint64(route.Priority), 10)); err != nil {
+					failed = errors.Join(failed, fmt.Errorf("egress %s: %w", route.Egress, err))
+				}
 			}
-			if _, err := m.Run(m.ip(), family, "rule", "add", "from", route.from(), "table", table,
-				"priority", strconv.FormatUint(uint64(route.Priority), 10)); err != nil {
-				failed = errors.Join(failed, fmt.Errorf("egress %s: %w", route.Egress, err))
+			for _, to := range route.To {
+				if present[ruleKey(route.ToPriority, "", to.String(), table)] {
+					continue
+				}
+				if _, err := m.Run(m.ip(), family, "rule", "add", "to", to.String(), "table", table,
+					"priority", strconv.FormatUint(uint64(route.ToPriority), 10)); err != nil {
+					failed = errors.Join(failed, fmt.Errorf("egress %s: %w", route.Egress, err))
+				}
 			}
 		}
 	}
@@ -268,6 +394,6 @@ func (m *Manager) rules(family string) ([]rule, error) {
 	return owned, nil
 }
 
-func ruleKey(priority uint32, from, table string) string {
-	return strconv.FormatUint(uint64(priority), 10) + " " + from + " " + table
+func ruleKey(priority uint32, from, to, table string) string {
+	return strconv.FormatUint(uint64(priority), 10) + " " + from + " " + to + " " + table
 }
