@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Removed
+
+- The Xray, sing-box and Hysteria 2 cores, and every third-party library
+  they linked (`xray-core`, `sing-box`, `apernet/hysteria`, the sagernet
+  modules, and the quic-go pins they needed). The Agent runs anixcore
+  (`anx-node`) for the proxy protocols and the WireGuard core. A
+  configuration that still names `xray`, `sing` or `hysteria2` as a core
+  type, or as a node's `Core`, runs on anixcore.
+- The loopback REALITY handshake of `reality.probe` (it used Xray's REALITY
+  client); the probe still checks TLS 1.3, h2, X25519, the certificate and
+  the redirect, and leaves `reality_ms` unset.
+- The geoip/geosite data and the Xray-format example files from the release
+  archive.
+
 ## 5.0.0-rc.21 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.21.

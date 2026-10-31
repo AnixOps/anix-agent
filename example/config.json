@@ -5,7 +5,7 @@
   },
   "Cores": [
     {
-      "Type": "sing",
+      "Type": "anixcore",
       "Log": {
         "Level": "info",
         "Timestamp": true
@@ -20,7 +20,7 @@
   ],
   "Nodes": [
     {
-      "Core": "sing",
+      "Core": "anixcore",
       "ApiHost": "http://127.0.0.1",
       "Transport": "http",
       "AgentControlEnabled": true,

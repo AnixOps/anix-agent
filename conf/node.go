@@ -165,9 +165,6 @@ type Options struct {
 	ReportMinTraffic       int64           `json:"ReportMinTraffic"`
 	LimitConfig            LimitConfig     `json:"LimitConfig"`
 	RawOptions             json.RawMessage `json:"RawOptions"`
-	XrayOptions            *XrayOptions    `json:"XrayOptions"`
-	SingOptions            *SingOptions    `json:"SingOptions"`
-	Hysteria2ConfigPath    string          `json:"Hysteria2ConfigPath"`
 	CertConfig             *CertConfig     `json:"CertConfig"`
 	SyncConfig             *SyncConfig     `json:"SyncConfig"`
 }
@@ -221,13 +218,10 @@ func (o *Options) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	switch o.Core {
-	case "xray":
-		o.XrayOptions = NewXrayOptions()
-		return json.Unmarshal(data, o.XrayOptions)
-	case "sing":
-		o.SingOptions = NewSingOptions()
-		return json.Unmarshal(data, o.SingOptions)
-	case "hysteria2":
+	// The third-party cores are gone: a node that still names one runs on
+	// the first core that serves its protocol.
+	case "xray", "sing", "hysteria2":
+		o.Core = ""
 		o.RawOptions = data
 		return nil
 	case "wireguard":

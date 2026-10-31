@@ -49,7 +49,7 @@ func (p *Conf) ValidateForProduction() error {
 	for i := range p.CoresConfig {
 		coreType := strings.ToLower(strings.TrimSpace(p.CoresConfig[i].Type))
 		switch coreType {
-		case "sing", "xray", "hysteria2", "wireguard", "anixcore":
+		case "wireguard", "anixcore":
 			configuredCores[coreType] = struct{}{}
 		default:
 			if rootProduction {

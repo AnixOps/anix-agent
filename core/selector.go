@@ -29,6 +29,11 @@ func NewSelector(c []conf.CoreConfig) (Core, error) {
 	cs := make(map[string]Core, len(c))
 	order := make([]string, 0, len(c))
 	for _, t := range c {
+		// A configuration that listed several of the retired cores
+		// (xray, sing, hysteria2) now names anixcore more than once.
+		if _, seen := cs[coreKey(t)]; seen {
+			continue
+		}
 		f, ok := cores[strings.ToLower(t.Type)]
 		if !ok {
 			return nil, errors.New("unknown core type: " + t.Type)
@@ -37,19 +42,21 @@ func NewSelector(c []conf.CoreConfig) (Core, error) {
 		if err != nil {
 			return nil, err
 		}
-		key := t.Name
-		if key == "" {
-			key = t.Type
-		}
-		if _, seen := cs[key]; !seen {
-			order = append(order, key)
-		}
+		key := coreKey(t)
+		order = append(order, key)
 		cs[key] = core1
 	}
 	return &Selector{
 		cores: cs,
 		order: order,
 	}, nil
+}
+
+func coreKey(t conf.CoreConfig) string {
+	if t.Name != "" {
+		return t.Name
+	}
+	return t.Type
 }
 
 func (s *Selector) Start() error {

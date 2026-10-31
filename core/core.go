@@ -48,7 +48,7 @@ func RegisteredCore() []string {
 // that lists none: a protocol more than one core serves runs on the first.
 // anixcore, our own kernel, comes first once its binary is installed
 // (anixcoreBinary); until then it is left out.
-var defaultCorePreference = []string{"anixcore", "xray", "sing", "hysteria2", "wireguard"}
+var defaultCorePreference = []string{"anixcore", "wireguard"}
 
 // anixcoreBinary finds the binary the default anixcore core runs: the
 // anx-node that Agent upgrades install (conf.InstalledAnxNodePath), which

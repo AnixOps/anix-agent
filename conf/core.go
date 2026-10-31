@@ -7,9 +7,6 @@ import (
 type CoreConfig struct {
 	Type            string           `json:"Type"`
 	Name            string           `json:"Name"`
-	XrayConfig      *XrayConfig      `json:"-"`
-	SingConfig      *SingConfig      `json:"-"`
-	Hysteria2Config *Hysteria2Config `json:"-"`
 	WireGuardConfig *WireGuardConfig `json:"-"`
 	AnixcoreConfig  *AnixcoreConfig  `json:"-"`
 }
@@ -22,15 +19,12 @@ func (c *CoreConfig) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	switch c.Type {
-	case "xray":
-		c.XrayConfig = NewXrayConfig()
-		return json.Unmarshal(b, c.XrayConfig)
-	case "sing":
-		c.SingConfig = NewSingConfig()
-		return json.Unmarshal(b, c.SingConfig)
-	case "hysteria2":
-		c.Hysteria2Config = NewHysteria2Config()
-		return json.Unmarshal(b, c.Hysteria2Config)
+	// The third-party cores are gone: a configuration that still lists
+	// one runs on anixcore.
+	case "xray", "sing", "hysteria2":
+		c.Type = "anixcore"
+		c.AnixcoreConfig = NewAnixcoreConfig()
+		return nil
 	case "wireguard":
 		c.WireGuardConfig = NewWireGuardConfig()
 		return json.Unmarshal(b, c.WireGuardConfig)

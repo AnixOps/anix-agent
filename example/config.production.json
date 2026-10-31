@@ -3,7 +3,7 @@
   "Log": {"Level": "info", "Output": ""},
   "Cores": [
     {
-      "Type": "sing",
+      "Type": "anixcore",
       "Log": {"Level": "warn", "Timestamp": true},
       "NTP": {"Enable": false, "Server": "time.cloudflare.com", "ServerPort": 123},
       "OriginalPath": "/etc/anixops/agent/sing_origin.json"
@@ -11,7 +11,7 @@
   ],
   "Nodes": [
     {
-      "Core": "sing",
+      "Core": "anixcore",
       "ApiHost": "https://control.example.com",
       "Transport": "grpc",
       "GRPCHost": "control.example.com:443",

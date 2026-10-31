@@ -15,7 +15,7 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 
 ## 主要能力
 
-- Xray-core、Sing-box、Hysteria2 多内核统一管理
+- AnixOps 自研内核 anixcore（anx-node）与 WireGuard 内核
 - VMess、VLESS、Trojan、Shadowsocks、Hysteria2 等协议
 - 用户流量、在线 IP、设备数量与动态限速上报
 - 节点自动注册、签名鉴权与凭证加密存储
@@ -341,7 +341,7 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
 - `package-reports.v1`：Supervisor 为插件进程设置 `ANIXOPS_NODE_ID`，
   `machine-telemetry` 采集本节点的 systemd 服务表；Agent 每 5 分钟（以及每次连接时）
   以 `PackageReport` 发送最新值，`version` 为节点被分配的插件版本。
-- `destinations.v1`（访问统计）：sing-box、Xray、Hysteria 2（TCP）按用户统计每个目标的
+- `destinations.v1`（访问统计）：代理内核按用户统计每个目标的
   连接数与上下行字节。目标只记可注册域名（`www.youtube.com` 记为 `youtube.com`），
   没有域名时记地址网段（IPv4 `/24`、IPv6 `/48`），并带嗅探到的协议（`tls`、`quic`、
   `bittorrent` 等）；每个用户每个窗口最多 200 个目标，超出的合并为一条“其他”。
@@ -437,5 +437,3 @@ cd .. && bash api/grpc/gen.sh && git diff --exit-code -- api/grpc/v2boardpb
 - [V2bX](https://github.com/wyx2685/V2bX)
 - [Project X](https://github.com/XTLS/)
 - [V2Fly](https://github.com/v2fly)
-- [XrayR](https://github.com/XrayR/XrayR)
-- [SagerNet/sing-box](https://github.com/SagerNet/sing-box)

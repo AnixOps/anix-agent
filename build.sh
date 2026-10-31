@@ -33,7 +33,7 @@ LDFLAGS="-s -w -X 'github.com/AnixOps/anix-agent/v5/cmd.version=${VERSION}'"
 # 默认值
 PLATFORM=""
 ARCH=""
-TAGS="xray sing hy2"
+TAGS="anixcore"
 BUILD_ALL=false
 CLEAN=false
 
@@ -58,7 +58,7 @@ print_help() {
     echo "Options:"
     echo "  -p, --platform    Target platform (linux, windows, darwin)"
     echo "  -a, --arch        Target architecture (amd64, arm64, 386)"
-    echo "  -t, --tags        Build tags (default: xray sing hy2)"
+    echo "  -t, --tags        Build tags (default: anixcore)"
     echo "  --all             Build for all platforms"
     echo "  --clean           Clean build directory"
     echo "  -h, --help        Show this help message"
