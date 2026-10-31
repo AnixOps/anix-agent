@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Removed
+
+- The `nftables-forward` and `nat-egress` plugin runtimes (`cmd/nftables-forward`,
+  `cmd/nat-egress`, `plugin/nftablesforward`, `plugin/nategress`) and the nftables
+  forwarding driver. Relays run on the network model (ANX); the egress NIC, source
+  and gateway come from Control's node settings. At start the Agent deletes the
+  nftables table `inet anixops_fwd` and the tc root qdisc `af00:` an earlier Agent
+  left behind. `Forward.Nftables` keeps only `NFT` and `TC` (the binaries used for
+  that cleanup); its other keys are ignored. An `ENGINE_NFTABLES` hop is reported
+  as unavailable.
+
 ## 5.0.0-rc.21 - 2026-10-30
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.21.

@@ -35,7 +35,7 @@ func TestBuildDriversAnixOps(t *testing.T) {
 	binary, systemctl, dir, runtime := fakeRelayHost(t)
 	settings := func(mod func(*AnixOpsSettings)) Settings {
 		s := Settings{
-			Nftables: NftablesSettings{Disable: true},
+			Nftables: NftablesSettings{NFT: "/nonexistent/nft", TC: "/nonexistent/tc"},
 			AnixOps:  AnixOpsSettings{Enable: true, Binary: binary, Systemctl: systemctl, Dir: dir, RuntimeDir: runtime},
 		}
 		if mod != nil {
@@ -45,7 +45,7 @@ func TestBuildDriversAnixOps(t *testing.T) {
 	}
 
 	t.Run("off by default: listed as unavailable, no driver", func(t *testing.T) {
-		d, err := BuildDrivers(t.Context(), Settings{Nftables: NftablesSettings{Disable: true}})
+		d, err := BuildDrivers(t.Context(), Settings{Nftables: NftablesSettings{NFT: "/nonexistent/nft", TC: "/nonexistent/tc"}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -48,21 +48,13 @@ const (
 	ForwardNodeKindForward = "forward"
 )
 
-// ForwardNftablesConfig configures the nftables driver (H13: the Agent
-// needs CAP_NET_ADMIN).
+// ForwardNftablesConfig locates the nft and tc of the nftables driver the
+// Agent ran before it was removed: the Agent deletes the table and qdisc the
+// driver left at start. Its other keys (Disable, MarkMask, LimitInterfaces,
+// MSSClampInterfaces) are ignored.
 type ForwardNftablesConfig struct {
-	Disable bool `json:"Disable"`
-	// MarkMask is the connection mark bits the driver owns (0x0fff0000 when
-	// 0); change it where Docker, WireGuard or policy routing use them.
-	MarkMask uint32 `json:"MarkMask"`
-	// LimitInterfaces are the egress interfaces that carry rate-limited
-	// hops (tc HTB); without one, bandwidth limits are off on this node.
-	LimitInterfaces []string `json:"LimitInterfaces"`
-	// MSSClampInterfaces are encapsulating egress interfaces (WireGuard,
-	// GRE) whose forwarded SYNs get their MSS clamped.
-	MSSClampInterfaces []string `json:"MSSClampInterfaces"`
-	NFT                string   `json:"NFT"`
-	TC                 string   `json:"TC"`
+	NFT string `json:"NFT"`
+	TC  string `json:"TC"`
 }
 
 // ForwardGostConfig locates the gost the Agent ran before gost was removed:
@@ -192,13 +184,6 @@ func (f *ForwardConfig) Validate() error {
 	for what, p := range map[string]string{"Binary": f.AnixOps.Binary, "Dir": f.AnixOps.Dir, "RuntimeDir": f.AnixOps.RuntimeDir} {
 		if p != "" && !filepath.IsAbs(p) {
 			return fmt.Errorf("Forward.AnixOps.%s %q must be an absolute path", what, p)
-		}
-	}
-	for _, list := range [][]string{f.Nftables.LimitInterfaces, f.Nftables.MSSClampInterfaces} {
-		for _, name := range list {
-			if strings.TrimSpace(name) == "" || len(name) > 15 {
-				return fmt.Errorf("Forward.Nftables: %q is not an interface name", name)
-			}
 		}
 	}
 	return nil

@@ -154,7 +154,7 @@ one line. Errors go to stderr, with Control's error code (`join_rejected`,
 
 ### Forwarding and sysctl
 
-nftables forwarding needs the kernel to forward. The Agent checks
+A forwarding relay needs the kernel to forward. The Agent checks
 `net.ipv4.ip_forward` and `net.ipv6.conf.all.forwarding` at start and logs a
 warning when they are off; it never changes them itself. The drop-in:
 

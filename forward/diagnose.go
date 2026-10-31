@@ -53,8 +53,6 @@ const (
 	maxCheckItems = 64
 	// udpProbePayload is the one datagram a UDP probe sends.
 	udpProbePayload = "anixops-diag\n"
-	// ownTable is the nftables driver's table, which is never foreign.
-	ownFamily, ownTable = "inet", "anixops_fwd"
 )
 
 // IsCheck reports whether action is a forward check.
@@ -240,7 +238,7 @@ func hopProtocols(hop *forwardv1.NodeHop) []string {
 }
 
 // socketProcess answers the process name whose sockets an engine's hops are,
-// or "" for an engine without sockets of its own (nftables).
+// or "" for an engine without sockets of its own.
 func socketProcess(engine forwardv1.Engine) string {
 	switch engine {
 	case forwardv1.Engine_ENGINE_GOST:
@@ -270,10 +268,10 @@ func (c *Component) hopError(hop *forwardv1.NodeHop) string {
 	return ""
 }
 
-// checkListen: the hop's own listener holds its port. nftables has no
-// socket: the driver running the hop (its rules in inet anixops_fwd) is
-// the listener. gost's and the anixops relay's listeners are sockets on the
-// port (hopProtocols says which).
+// checkListen: the hop's own listener holds its port. An engine without a
+// socket of its own is listened for by the driver running the hop. gost's
+// and the anixops relay's listeners are sockets on the port (hopProtocols
+// says which).
 func (c *Component) checkListen(ctx context.Context, hop *forwardv1.NodeHop, result *CheckResult) {
 	if message := c.hopError(hop); message != "" {
 		result.Status, result.Code, result.Message = VerdictFailed, "hop_error", message
@@ -316,7 +314,7 @@ func (c *Component) checkListen(ctx context.Context, hop *forwardv1.NodeHop, res
 		}
 	}
 	for _, proto := range protocols(hop.GetListen()) {
-		item := CheckItem{Target: target, Protocol: proto, Status: VerdictOK, Code: "listening", Message: "the hop's rules are in " + ownFamily + " " + ownTable}
+		item := CheckItem{Target: target, Protocol: proto, Status: VerdictOK, Code: "listening", Message: "the driver runs the hop"}
 		if !obs.Applied || !running {
 			item.Status, item.Code, item.Message = VerdictFailed, "not_listening", "the driver does not run the hop"
 		}
@@ -325,7 +323,8 @@ func (c *Component) checkListen(ctx context.Context, hop *forwardv1.NodeHop, res
 }
 
 // checkPortConflict: no socket of another process and no rule of another
-// nftables table claims the hop's listen port.
+// nftables table claims the hop's listen port (a rule an earlier Agent's
+// retired table left counts).
 func (c *Component) checkPortConflict(ctx context.Context, hop *forwardv1.NodeHop, result *CheckResult) {
 	listen := hop.GetListen()
 	port := listen.GetPort()
@@ -668,7 +667,7 @@ type natRule struct {
 // foreignNATRules reads the whole ruleset (read only) and answers the rules
 // of other tables that rewrite destinations (dnat, redirect, tproxy, or
 // iptables-nft's DNAT, REDIRECT and TPROXY targets) and match port, as the
-// nftables driver's conflict detection does before an apply. Named sets
+// removed nftables driver's conflict detection did before an apply. Named sets
 // and rules nft cannot decode are not followed.
 func (c *Component) foreignNATRules(ctx context.Context, port uint32, protos []string) ([]natRule, error) {
 	nft := c.opts.NFT
@@ -697,9 +696,6 @@ func (c *Component) foreignNATRules(ctx context.Context, port uint32, protos []s
 		family, _ := rule["family"].(string)
 		table, _ := rule["table"].(string)
 		chain, _ := rule["chain"].(string)
-		if family == ownFamily && table == ownTable {
-			continue
-		}
 		exprs, _ := rule["expr"].([]any)
 		if !rewritesDestination(exprs) {
 			continue

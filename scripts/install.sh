@@ -623,7 +623,7 @@ retire_gost() {
 # setup_forward prepares a forward-capable node (ANIXOPS_FORWARD=1):
 #   - the Agent's forwarding state ${FORWARD_STATE_DIR}, mode 0700;
 #   - /etc/sysctl.d/90-anixops-forward.conf: the kernel forwards IPv4 and
-#     IPv6 (nftables DNAT needs it).
+#     IPv6 (a forwarding relay needs it).
 setup_forward() {
     [[ "${FORWARD}" == "1" ]] || return 0
     if [[ "${release}" == "alpine" ]]; then

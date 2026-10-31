@@ -36,11 +36,8 @@ func NewForwardComponent(cfg *conf.ForwardConfig, nodes []conf.NodeConfig) (*for
 	ctx, cancel := context.WithTimeout(context.Background(), forwardProbeTimeout)
 	defer cancel()
 	drivers, err := forward.BuildDrivers(ctx, forward.Settings{
-		Nftables: forward.NftablesSettings{
-			Disable: cfg.Nftables.Disable, NFT: cfg.Nftables.NFT, TC: cfg.Nftables.TC, MarkMask: cfg.Nftables.MarkMask,
-			LimitInterfaces: cfg.Nftables.LimitInterfaces, MSSClampInterfaces: cfg.Nftables.MSSClampInterfaces,
-		},
-		Gost: forward.GostSettings{Dir: cfg.Gost.Dir},
+		Nftables: forward.NftablesSettings{NFT: cfg.Nftables.NFT, TC: cfg.Nftables.TC},
+		Gost:     forward.GostSettings{Dir: cfg.Gost.Dir},
 		AnixOps: forward.AnixOpsSettings{
 			Enable: cfg.AnixOps.Enable, Binary: cfg.AnixOps.Binary, Dir: cfg.AnixOps.Dir, RuntimeDir: cfg.AnixOps.RuntimeDir,
 			ManualLinkCertificates: cfg.AnixOps.ManualLinkCertificates,

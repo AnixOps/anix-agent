@@ -21,8 +21,7 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 - 节点自动注册、签名鉴权与凭证加密存储
 - ACME 证书申请、续期和自定义证书
 - REST、WebSocket、旧版 gRPC API 与 `anix.agent.v1` 双向 gRPC 控制流
-- 可选的官方签名插件 Supervisor，以及真实的 `nftables-forward` 和
-  `nat-egress` Linux 插件运行时
+- 可选的官方签名插件 Supervisor（官方插件现只剩 `machine-telemetry`）
 - Linux、Windows 和 macOS 构建
 
 ## 5.0.0-rc.21 范围
@@ -65,42 +64,13 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 
 ## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.21 发布范围）
 
-官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
-真实的 `nftables-forward` 与 `nat-egress` 独立进程（`gost-mesh` 已随 gost 一起删除）。
-Supervisor 可从签名包物化并逐次复验辅助运行时。业务流量由内核网络栈承载，
-不经过 Supervisor 控制进程。
+官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。`nftables-forward`
+与 `nat-egress` 插件已随 nftables 转发引擎一起删除：中转走网络模型（ANX），出口网卡、
+源地址和网关在 Control 的节点页设置。Agent 启动时会删除旧版本留下的 nftables 表
+`inet anixops_fwd` 和 tc 根 qdisc `af00:`。
 
-`nftables-forward` 1.2.0 与 `nat-egress` 清单声明 `plugin.runtime-state` 和
-`plugin.cleanup`。Supervisor 为它们保留稳定的私有 ownership journal，并在崩溃、禁用、配置变更、升级和关闭
-时调用签名 cleanup 入口。清理失败会持久化 `cleanup_pending`，插件保持禁用；
-升级目标版本的清理成功后才允许自动启动旧版本，避免旧版本覆盖可能残留的路由
-或 NAT 状态。`nftables-forward` 在安装后默认保持 `apply=false`，只有显式规则
-和 `apply=true` 才会修改内核；硬退出后的下一次启动先恢复原表快照。
-其 1.2 包额外声明 `kernel.observed-state`。Supervisor 每次 heartbeat 都先检查
-运行时 Unix health socket；只有仍在 serving 的私有、签名包声明规则集摘要和计数器
-才会与自身的 config hash/revision 绑定后发送给 Control，失效时改发无指纹的
-`unhealthy` 证据。
-
-特权 namespace 验收已覆盖 marked forwarded traffic、wrong-mark isolation、
-policy route、masquerade、正常退出清理和既有状态恢复：
-
-```bash
-sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
-  bash plugin/nategress/namespace_acceptance.sh
-```
-
-`nftables-forward` 还覆盖 IPv4/IPv6 TCP/UDP DNAT、内核规则计数、正常回滚、
-`SIGKILL` journal 留存和同一 state path 的重启恢复。常规 CI 使用预构建插件
-二进制执行同一 privileged namespace 验收：
-
-```bash
-sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
-  bash plugin/nftablesforward/namespace_acceptance.sh
-```
-
-这些能力仍是预览：生产启用必须使用正式签名 Release，并完成 mark producer、
-FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、分批 canary
-和运维审批。
+Supervisor 可从签名包物化并逐次复验辅助运行时，并为声明 `plugin.runtime-state` 和
+`plugin.cleanup` 的插件保留私有 ownership journal。
 完整生命周期契约见 [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)。
 
 ## 默认路径
