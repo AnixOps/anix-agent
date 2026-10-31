@@ -15,6 +15,13 @@
 
 ### Added
 
+- C2 (QUIC) and C3 (fake TCP) reverse dial-back for `anx_line` reverse
+  transports, picked by the transport's carrier order (`c2` / `c3`; an empty
+  order stays C1 only). The egress keeps `ReverseDial.quic` / `faketcp`; the
+  rendezvous (anx-node `anx_line.reverse_quic` / `reverse_faketcp`, or a relay
+  hop's `anx-server --reverse-quic` / `--reverse-faketcp`) accepts them on the
+  reverse listener's UDP port and the next TCP port. Needs an anx build with
+  these flags (anx #115); `contracts/anx` resynced.
 - ANX-A nodes for users. A node protocol of type `anx` runs as anx-node's
   `anx` inbound (A2 jacket, TCP) with the Agent's anx-server key; a user's
   key is derived from the UUID, the same way Control derives it for the

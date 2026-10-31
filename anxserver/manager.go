@@ -674,7 +674,8 @@ func (s *server) dial(client anxmgmtpb.ManagementClient, current []*anxmgmtpb.Re
 			continue
 		}
 		// Idle 0 is anx-server's default number of idle connections.
-		dials = append(dials, &anxmgmtpb.ReverseDial{DialId: accept.Transport, Addr: accept.ReverseDial, LinkKey: accept.LinkKey})
+		dials = append(dials, &anxmgmtpb.ReverseDial{DialId: accept.Transport, Addr: accept.ReverseDial, LinkKey: accept.LinkKey,
+			Quic: accept.ReverseQUIC, Faketcp: accept.ReverseFakeTCP})
 	}
 	sort.Slice(dials, func(i, j int) bool { return dials[i].GetDialId() < dials[j].GetDialId() })
 	same := len(dials) == len(current)
