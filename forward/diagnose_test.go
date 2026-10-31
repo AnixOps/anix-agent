@@ -103,8 +103,6 @@ func TestDiagnoseListenAndConflicts(t *testing.T) {
  {"rule":{"family":"ip","table":"nat","chain":"PREROUTING","handle":4,"expr":[
    {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":{"set":[80,{"range":[30990,31010]}]}}},
    {"dnat":{"addr":"10.0.0.2"}}]}},
- {"rule":{"family":"inet","table":"anixops_fwd","chain":"prerouting","handle":9,"expr":[
-   {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":31000}},{"dnat":{"addr":"198.51.100.1"}}]}},
  {"rule":{"family":"ip","table":"filter","chain":"INPUT","handle":2,"expr":[
    {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":31000}},{"accept":null}]}}]}`,
 	}

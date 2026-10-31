@@ -179,17 +179,10 @@ old version; the old version is started only after target cleanup succeeds.
 This intentionally prefers no stale nftables or policy-routing ownership over
 automatic availability.
 
-The `nftables-forward` 1.2.0, `nat-egress`, and `gost-mesh` runtimes use this
-contract for private crash-safe ownership journals. `nftables-forward` writes
-the original table snapshot before applying rules, restores an interrupted
-journal before a new start, and exposes signed cleanup and config-validation
-modes. Its privileged namespace test proves IPv4/IPv6 TCP and UDP DNAT,
-per-rule kernel counters, process `SIGKILL`, and same-state Agent restart
-recovery in regular CI. `gost-mesh` also consumes a signed pinned GOST
-runtime from `runtime/gost`; QUIC and WSS require mutual TLS, and its privileged
-namespace matrix proves TCP/UDP data flow, TLS rejection, policy routing, child
-cleanup, and unrelated-state preservation. TUIC is not a GOST Mesh v1
-capability. Signed artifact transport and Control-to-Agent Secret private-file
+Plugin runtimes use this contract for private crash-safe ownership
+journals and signed cleanup modes. (The `nftables-forward`, `nat-egress` and
+`gost-mesh` runtimes were removed; relays run on the network model.)
+Signed artifact transport and Control-to-Agent Secret private-file
 materialization now have cross-repository process coverage. Topology apply,
 GOST-to-NAT composition, multi-node rollback and sustained canary evidence
 remain release gates, so this phase must not be described as production

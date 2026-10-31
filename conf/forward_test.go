@@ -29,7 +29,6 @@ func TestForwardConfigValidate(t *testing.T) {
 		"forward node proxy": {Enable: true, ForwardNode: &ApiConfig{}},
 		"unknown kind":       {Enable: true, NodeKind: "relay"},
 		"relative dir":       {Enable: true, StateDir: "forward"},
-		"bad interface":      {Enable: true, Nftables: ForwardNftablesConfig{LimitInterfaces: []string{strings.Repeat("e", 16)}}},
 		"relative relay dir": {Enable: true, AnixOps: ForwardAnixOpsConfig{Enable: true, Dir: "relay"}},
 		"relative relay bin": {Enable: true, AnixOps: ForwardAnixOpsConfig{Enable: true, Binary: "anixops-relay"}},
 	} {

@@ -29,8 +29,6 @@ jobs:
           bash -n scripts/V2bX.sh
           bash -n scripts/test_install_migration.sh
           bash -n scripts/test_manager_uninstall.sh
-          bash -n plugin/nftablesforward/namespace_acceptance.sh
-          bash -n plugin/nategress/namespace_acceptance.sh
           bash scripts/install.sh --help >/dev/null
           bash scripts/anix-agent.sh --help >/dev/null
           bash scripts/V2bX.sh --help >/dev/null
@@ -101,51 +99,3 @@ jobs:
           bash api/grpc/gen.sh
           git diff --exit-code -- api/grpc/v2boardpb api/anxmgmt
           test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb api/anxmgmt)"
-
-  nftables-forward-integration:
-    name: nftables-forward IPv4/IPv6 namespace acceptance
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout codebase
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.9"
-
-      - name: Install namespace test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y iproute2 nftables python3
-
-      - name: Build nftables-forward Agent plugin
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go build -o "${RUNNER_TEMP}/nftables-forward" ./cmd/nftables-forward
-
-      - name: Verify IPv4/IPv6 DNAT, counters, restart recovery, and rollback
-        run: |
-          sudo bash plugin/nftablesforward/namespace_acceptance.sh \
-            --agent-binary "${RUNNER_TEMP}/nftables-forward"
-
-  forward-component-netns:
-    name: privileged nftables Forward component acceptance (F3b)
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout codebase
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26.9"
-
-      - name: Install namespace test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y iproute2 nftables
-
-      - name: Build the forward component tests
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -c -o "${RUNNER_TEMP}/forward.test" ./forward
-
-      - name: Apply a snapshot from the fake Control in throwaway namespaces and pass traffic
-        run: sudo ANIXOPS_FORWARD_E2E=1 "${RUNNER_TEMP}/forward.test" -test.run 'TestNetns' -test.v -test.count=1

@@ -10,7 +10,6 @@ import (
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
 	"github.com/AnixOps/anix-control/sdk/forward/driver"
 	"github.com/AnixOps/anix-control/sdk/forward/driver/anixops"
-	"github.com/AnixOps/anix-control/sdk/forward/driver/nftables"
 	"github.com/AnixOps/anix-control/sdk/forward/leastconn"
 	log "github.com/sirupsen/logrus"
 )
@@ -23,26 +22,11 @@ type Settings struct {
 	AnixOps  AnixOpsSettings
 }
 
-// NftablesSettings configure the nftables driver. The Agent needs
-// CAP_NET_ADMIN (H13): it runs as root today, or as a dedicated user with
-// that ambient capability.
+// NftablesSettings locate the nft and tc the Agent ran the removed nftables
+// driver with: RetireNftables deletes the table and qdisc it left.
 type NftablesSettings struct {
-	// Disable leaves the engine out: its hops are reported as unsupported.
-	Disable bool
 	// NFT and TC are the binaries; empty runs nft and tc from PATH.
 	NFT, TC string
-	// MarkMask is the connection mark bits the driver owns; 0 is
-	// nftables.DefaultMarkMask (0x0fff0000). Change it on hosts where
-	// Docker, WireGuard or policy routing use those bits.
-	MarkMask uint32
-	// LimitInterfaces are the egress interfaces that carry rate-limited
-	// hops (tc HTB): both directions of a forwarded connection leave the
-	// node through them. Without one the probe turns bandwidth limits off
-	// and Control does not plan bandwidth-limited nftables hops here.
-	LimitInterfaces []string
-	// MSSClampInterfaces are encapsulating egress interfaces (WireGuard,
-	// GRE) on which forwarded SYNs get their MSS clamped.
-	MSSClampInterfaces []string
 }
 
 // GostSettings locate the gost the Agent ran before gost was removed (the
@@ -100,7 +84,7 @@ type Drivers struct {
 	Links *LinkOptions
 }
 
-// BuildDrivers probes the host once (nftables.Probe, anixops.Probe), at start,
+// BuildDrivers probes the host once (anixops.Probe), at start,
 // and registers each engine the host can run. An engine it cannot run is
 // listed in Unavailable with the reason, so Control knows before planning.
 // The probes change nothing on the host.
@@ -121,38 +105,8 @@ func BuildDrivers(ctx context.Context, settings Settings) (*Drivers, error) {
 		}
 	}
 
-	if settings.Nftables.Disable {
-		unavailable(forwardv1.Engine_ENGINE_NFTABLES, "disabled in the Agent configuration")
-	} else {
-		runner := nftables.ExecRunner{NFT: settings.Nftables.NFT, TC: settings.Nftables.TC}
-		base := nftables.DefaultConfig()
-		if settings.Nftables.MarkMask != 0 {
-			base.MarkMask = settings.Nftables.MarkMask
-		}
-		base.LimitInterfaces = settings.Nftables.LimitInterfaces
-		base.MSSClampInterfaces = settings.Nftables.MSSClampInterfaces
-		cfg, rep, err := nftables.Probe(ctx, runner, base)
-		if err != nil {
-			return nil, fmt.Errorf("forward: probe nftables: %w", err)
-		}
-		if rep != nil {
-			logReport(forwardv1.Engine_ENGINE_NFTABLES, rep.Missing, rep.Warnings)
-		}
-		if cfg.Version == "" {
-			unavailable(forwardv1.Engine_ENGINE_NFTABLES, cfg.Unavailable)
-		} else {
-			d, err := nftables.New(cfg, nftables.WithRunner(runner), nftables.WithRetiredCounters(out.Retired.Add))
-			if err != nil {
-				return nil, fmt.Errorf("forward: nftables driver: %w", err)
-			}
-			if err := out.Registry.Register(d); err != nil {
-				return nil, err
-			}
-			if src := newConntrackSource(cfg.MarkMask); src != nil {
-				out.Sources[forwardv1.Engine_ENGINE_NFTABLES] = src
-			}
-		}
-	}
+	RetireNftables(ctx, settings.Nftables)
+	unavailable(forwardv1.Engine_ENGINE_NFTABLES, "removed: nftables routes run on the network model")
 
 	RetireGost(ctx, settings.Gost)
 	unavailable(forwardv1.Engine_ENGINE_GOST, "removed: gost routes run on the network model")
@@ -235,8 +189,8 @@ func BuildDrivers(ctx context.Context, settings Settings) (*Drivers, error) {
 	return out, nil
 }
 
-// checkIPForwarding warns when the kernel does not forward: nftables DNAT
-// needs net.ipv4.ip_forward (and IPv6 forwarding for v6 routes). The
+// checkIPForwarding warns when the kernel does not forward: a forwarding
+// relay needs net.ipv4.ip_forward (and IPv6 forwarding for v6 routes). The
 // installer writes the sysctl drop-in /etc/sysctl.d/90-anixops-forward.conf
 // on forward-capable nodes; the Agent only checks, it never changes a
 // host-wide setting by itself.
@@ -250,7 +204,7 @@ func checkIPForwarding(logger *log.Entry) {
 			continue
 		}
 		if strings.TrimSpace(string(data)) != "1" {
-			logger.WithField("sysctl", name).Warn("The kernel does not forward packets; nftables forwarding needs it: as root, run 'anix-agent forward sysctl-dropin > /etc/sysctl.d/90-anixops-forward.conf && sysctl --system'")
+			logger.WithField("sysctl", name).Warn("The kernel does not forward packets; relaying needs it: as root, run 'anix-agent forward sysctl-dropin > /etc/sysctl.d/90-anixops-forward.conf && sysctl --system'")
 		}
 	}
 }
