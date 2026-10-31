@@ -46,6 +46,12 @@ anixcore 是外部程序，节点上没有安装时不应影响其他内核。
   自行运行的 anx-node（`ApiAddress`）时，必须用 `AnxLineApiAddress` 给出它的
   `anx_line.mgmt_listen`。接收（accept）端由 Agent 自己拉起 anx-server，见
   CHANGELOG。
+- 管理面 mTLS（anx 规格 §7）：anx-node / anx-server 认识 mTLS 设置时（二进制里有
+  `mgmt_insecure_public` / `--mgmt-tls-cert`），Agent 每次拉起进程都生成一次性 CA、
+  服务端证书（`127.0.0.1`）与客户端证书，服务端那一半写进运行目录（0600，
+  `mgmt_tls` / `--mgmt-tls-*`），Agent 用客户端证书连接；旧版本仍走回环明文。
+  自行运行的 anx-node 的管理面不在回环上时必须开 mTLS，Agent 侧用
+  `AnxLineApiTLS: {CertFile, KeyFile, CAFile, ServerName}` 给出客户端证书。
 
 - `"Cores": []` 的节点：Agent 升级装好的 `/usr/lib/anixops-agent/anx-node` 存在时，
   默认 anixcore 内核就用它（`BinaryPath` 指向它，`AnxLine` 打开）；否则用 PATH 上的

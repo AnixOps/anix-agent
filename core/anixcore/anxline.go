@@ -14,6 +14,7 @@ import (
 	"github.com/AnixOps/anix-control/sdk/network"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 )
@@ -34,9 +35,13 @@ var lineKinds = []*networkv1.KindSupport{
 	{Component: networkv1.Component_COMPONENT_EGRESS, Kind: network.EgressHop, Versions: []uint32{1}, Executor: coreType},
 }
 
-// connectLine opens anx-node's ANX-Line management client.
-var connectLine = func(addr string) (anxmgmtpb.ManagementClient, func() error, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+// connectLine opens anx-node's ANX-Line management client, with creds
+// (nil: plaintext).
+var connectLine = func(addr string, creds credentials.TransportCredentials) (anxmgmtpb.ManagementClient, func() error, error) {
+	if creds == nil {
+		creds = insecure.NewCredentials()
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, nil, err
 	}

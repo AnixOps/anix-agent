@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 func init() {
@@ -163,6 +164,8 @@ type fakeHost struct {
 	next      int
 	// unready fails the next AddUsers calls, as a process still starting.
 	unready int
+	// creds are the credentials each connect got.
+	creds []credentials.TransportCredentials
 }
 
 func (h *fakeHost) launch(binary string, args []string) (Process, error) {
@@ -174,7 +177,10 @@ func (h *fakeHost) launch(binary string, args []string) (Process, error) {
 	return process, nil
 }
 
-func (h *fakeHost) connect(string) (anxmgmtpb.ManagementClient, func() error, error) {
+func (h *fakeHost) connect(_ string, creds credentials.TransportCredentials) (anxmgmtpb.ManagementClient, func() error, error) {
+	h.mu.Lock()
+	h.creds = append(h.creds, creds)
+	h.mu.Unlock()
 	return h, func() error { return nil }, nil
 }
 
@@ -413,6 +419,60 @@ func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 // A relay hop's process holds the link it relays into and routes the
 // accepted link there; a restarted process gets both again, and a plan
 // without the relay clears the route and removes the link.
+// With MTLS each process gets a one-off bundle next to the server key:
+// its server half on the command line, the client half on the connection;
+// the bundle goes when the process does.
+func TestManagerSecuresTheManagementAPI(t *testing.T) {
+	host := &fakeHost{}
+	m, _ := newManager(t, host)
+	m.MTLS = true
+	accepts, err := Accepts(acceptPlan())
+	require.NoError(t, err)
+	require.NoError(t, m.Apply(accepts[:1]))
+	applied(t, m, "tr-a")
+	args := host.last().args
+	flag := func(name string) string {
+		for i, arg := range args {
+			if arg == name && i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		t.Fatalf("%s missing from %v", name, args)
+		return ""
+	}
+	cert, key, ca := flag("--mgmt-tls-cert"), flag("--mgmt-tls-key"), flag("--mgmt-client-ca")
+	assert.Equal(t, m.Dir, filepath.Dir(filepath.Dir(cert)))
+	for _, path := range []string{cert, key, ca} {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
+	host.mu.Lock()
+	require.Len(t, host.creds, 1)
+	assert.NotNil(t, host.creds[0])
+	assert.Equal(t, "tls", host.creds[0].Info().SecurityProtocol)
+	host.mu.Unlock()
+
+	m.Close()
+	_, err = os.Stat(filepath.Dir(cert))
+	assert.True(t, os.IsNotExist(err), "the bundle is removed with its process")
+}
+
+// Without MTLS the API stays plaintext on loopback.
+func TestManagerPlaintextWithoutMTLS(t *testing.T) {
+	host := &fakeHost{}
+	m, _ := newManager(t, host)
+	accepts, err := Accepts(acceptPlan())
+	require.NoError(t, err)
+	require.NoError(t, m.Apply(accepts[:1]))
+	applied(t, m, "tr-a")
+	assert.NotContains(t, strings.Join(host.last().args, " "), "--mgmt-tls")
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	require.Len(t, host.creds, 1)
+	assert.Nil(t, host.creds[0])
+}
+
 func TestManagerRelays(t *testing.T) {
 	host := &fakeHost{}
 	m, _ := newManager(t, host)

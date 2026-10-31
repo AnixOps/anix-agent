@@ -28,6 +28,22 @@ type AnixcoreConfig struct {
 	// AnxLineApiAddress (its `anx_line.mgmt_listen`).
 	AnxLine           bool   `json:"AnxLine"`
 	AnxLineApiAddress string `json:"AnxLineApiAddress"`
+	// AnxLineApiTLS is the client certificate for an AnxLineApiAddress
+	// served with mTLS (anx-node `anx_line.mgmt_tls`, required off
+	// loopback). A started anx-node needs none: the core makes a one-off
+	// bundle when the binary supports it.
+	AnxLineApiTLS *ManagementTLSConfig `json:"AnxLineApiTLS"`
+}
+
+// ManagementTLSConfig is the Agent's side of an mTLS management API (anx
+// spec §7): its client certificate and key, the CA the server's
+// certificate chains to, and optionally the name to check it against (the
+// dialed host otherwise).
+type ManagementTLSConfig struct {
+	CertFile   string `json:"CertFile"`
+	KeyFile    string `json:"KeyFile"`
+	CAFile     string `json:"CAFile"`
+	ServerName string `json:"ServerName"`
 }
 
 // InstalledAnxNodePath is where Agent upgrades install anx-node, the

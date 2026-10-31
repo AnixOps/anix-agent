@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AnixOps/anix-agent/v5/anxline"
+	"github.com/AnixOps/anix-agent/v5/anxmtls"
 	"github.com/AnixOps/anix-agent/v5/anxserver"
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -72,6 +73,8 @@ var networkServers = func() *anxserver.Manager {
 			return anxline.ApplyRST(ctx, anxline.ExecRunner{}, "", anxserver.RSTTable, links)
 		},
 		Buffers: func() error { return anxserver.RaiseSocketBuffers("/proc/sys") },
+		// Releases that know --mgmt-tls-* get an mTLS management API.
+		MTLS: anxmtls.Supports(path, anxmtls.ServerMarker),
 	}
 }
 

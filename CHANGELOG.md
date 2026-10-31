@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- mTLS on the anx-server / anx-node management APIs (anx spec §7, F-24).
+  When the installed release supports it, every anx-server the Agent
+  starts and every anx-node with AnxLine gets a one-off CA, a server
+  certificate for 127.0.0.1 and a client certificate; the server's half is
+  written next to the process (0600) and the Agent connects with the
+  client certificate, so other local users can no longer drive the
+  management API. Older releases keep the loopback plaintext API. An
+  anx-node that runs on its own takes `AnxLineApiTLS` (CertFile, KeyFile,
+  CAFile, ServerName) for its `anx_line.mgmt_tls`.
+
 ## 5.0.0-rc.25 - 2026-10-31
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.25.

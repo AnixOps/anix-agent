@@ -18,10 +18,12 @@ import (
 	"time"
 
 	"github.com/AnixOps/anix-agent/v5/anxline"
+	"github.com/AnixOps/anix-agent/v5/anxmtls"
 	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 )
@@ -60,8 +62,9 @@ type Process interface {
 // Launcher starts binary with args.
 type Launcher func(binary string, args []string) (Process, error)
 
-// Connector opens the management client of the process at addr.
-type Connector func(addr string) (anxmgmtpb.ManagementClient, func() error, error)
+// Connector opens the management client of the process at addr, with
+// creds (nil: plaintext).
+type Connector func(addr string, creds credentials.TransportCredentials) (anxmgmtpb.ManagementClient, func() error, error)
 
 // Runner runs a command and answers its standard output (keygen).
 type Runner func(name string, args ...string) ([]byte, error)
@@ -80,6 +83,11 @@ type Manager struct {
 	// Buffers lets the host's sockets have QUICSocketBuffer bytes before a
 	// QUIC listener starts; nil leaves the host alone.
 	Buffers func() error
+	// MTLS secures each process's loopback management API with mutual
+	// TLS (anx spec §7): a one-off CA per process start, the Agent holds
+	// the client certificate. Set it when Binary supports it
+	// (anxmtls.Supports with anxmtls.ServerMarker).
+	MTLS bool
 
 	mu      sync.Mutex
 	public  string
@@ -259,7 +267,7 @@ func (m *Manager) newServer(l listener) *server {
 		connect = connectGRPC
 	}
 	return &server{
-		listener: l, binary: m.Binary, key: filepath.Join(m.Dir, keyFile), launch: launch, connect: connect,
+		listener: l, binary: m.Binary, key: filepath.Join(m.Dir, keyFile), launch: launch, connect: connect, mtls: m.MTLS,
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{}),
 	}
 }
@@ -271,6 +279,7 @@ type server struct {
 	key      string
 	launch   Launcher
 	connect  Connector
+	mtls     bool
 
 	mu sync.Mutex
 	// wanted are the accepts the process serves.
@@ -430,6 +439,20 @@ func (s *server) serve() error {
 		return err
 	}
 	args := []string{"run", "--key", s.key, "--mgmt", mgmt}
+	var creds credentials.TransportCredentials
+	if s.mtls {
+		dir, err := os.MkdirTemp(filepath.Dir(s.key), "mgmt-")
+		if err != nil {
+			return fmt.Errorf("management mTLS: %w", err)
+		}
+		defer os.RemoveAll(dir)
+		files, client, err := anxmtls.Generate(dir, "127.0.0.1")
+		if err != nil {
+			return fmt.Errorf("management mTLS: %w", err)
+		}
+		creds = client
+		args = append(args, "--mgmt-tls-cert", files.Cert, "--mgmt-tls-key", files.Key, "--mgmt-client-ca", files.ClientCA)
+	}
 	if !s.listener.L2 {
 		// anx-server always runs its jacketed listener: a bare server keeps
 		// it on loopback, out of the hop ingress's way.
@@ -445,7 +468,7 @@ func (s *server) serve() error {
 		return fmt.Errorf("start: %w", err)
 	}
 	defer process.Stop()
-	client, closeClient, err := s.connect(mgmt)
+	client, closeClient, err := s.connect(mgmt, creds)
 	if err != nil {
 		return fmt.Errorf("management endpoint: %w", err)
 	}
@@ -705,8 +728,11 @@ func freePort() (string, error) {
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(address.Port)), nil
 }
 
-func connectGRPC(addr string) (anxmgmtpb.ManagementClient, func() error, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func connectGRPC(addr string, creds credentials.TransportCredentials) (anxmgmtpb.ManagementClient, func() error, error) {
+	if creds == nil {
+		creds = insecure.NewCredentials()
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return nil, nil, err
 	}

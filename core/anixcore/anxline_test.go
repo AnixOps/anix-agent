@@ -11,6 +11,7 @@ import (
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -65,7 +66,7 @@ func (f *fakeLine) take() []string {
 func lineCore(t *testing.T, line *fakeLine) (*fakeAPI, *Core) {
 	t.Helper()
 	previous := connectLine
-	connectLine = func(addr string) (anxmgmtpb.ManagementClient, func() error, error) {
+	connectLine = func(addr string, _ credentials.TransportCredentials) (anxmgmtpb.ManagementClient, func() error, error) {
 		line.addr = addr
 		return line, func() error { return nil }, nil
 	}
