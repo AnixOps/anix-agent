@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -257,7 +258,14 @@ func (h *fakeHost) SetReverseDials(_ context.Context, in *anxmgmtpb.SetReverseDi
 	defer h.mu.Unlock()
 	h.dials = nil
 	for _, dial := range in.GetDials() {
-		h.dials = append(h.dials, dial.GetDialId()+"="+dial.GetAddr())
+		entry := dial.GetDialId() + "=" + dial.GetAddr()
+		if dial.GetQuic() {
+			entry += "+quic"
+		}
+		if dial.GetFaketcp() {
+			entry += "+faketcp"
+		}
+		h.dials = append(h.dials, entry)
 	}
 	return &anxmgmtpb.SetReverseDialsResponse{Dials: uint32(len(in.GetDials()))}, nil
 }
@@ -507,6 +515,23 @@ func TestAcceptsReverse(t *testing.T) {
 	assert.Empty(t, accepts[0].Next.GetTcpAddr())
 	assert.Equal(t, "0.0.0.0:24444", accepts[0].ReverseListen)
 	assert.Contains(t, strings.Join(accepts[0].listener().args(), " "), "--reverse-listen 0.0.0.0:24444")
+	assert.NotContains(t, strings.Join(accepts[0].listener().args(), " "), "--reverse-quic", "an empty order is C1 only")
+
+	// C2 / C3 dial-backs follow the carrier order (anx ANX-LINE-REVERSE §6.3).
+	next.CarrierOrder = []string{"c2", "c3", "c1"}
+	accepts, err = Accepts(relay)
+	require.NoError(t, err)
+	args := strings.Join(accepts[0].listener().args(), " ")
+	assert.Contains(t, args, "--reverse-listen 0.0.0.0:24444 --reverse-quic --reverse-faketcp")
+	assert.Contains(t, args, "--quic-sockbuf", "the C2 dial-back gets the large UDP buffer")
+	egress := reversePlan()
+	egress.Transports[0].GetAnxLine().CarrierOrder = []string{"quic", "tcp"}
+	accepts, err = Accepts(egress)
+	require.NoError(t, err)
+	assert.True(t, accepts[1].ReverseQUIC)
+	assert.False(t, accepts[1].ReverseFakeTCP)
+	assert.Equal(t, []string{"--sni", "anx-line", "--quic-sockbuf", strconv.Itoa(QUICSocketBuffer),
+		"--quic-dgram-buf", strconv.Itoa(QUICDatagramBuffer)}, accepts[1].listener().args(), "still listens on nothing")
 }
 
 // The egress process keeps the reverse dials of its accepts, again after a
@@ -534,6 +559,13 @@ func TestManagerDialsBack(t *testing.T) {
 		return assert.ObjectsAreEqual([]string{"tr-b=198.51.100.31:24444"}, host.reverseDials())
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, 2, host.started(), "changed on the running process")
+
+	// Adding C2 needs the large UDP buffer, so a new process.
+	reverse[0].ReverseQUIC = true
+	require.NoError(t, m.Apply(reverse))
+	require.Eventually(t, func() bool {
+		return assert.ObjectsAreEqual([]string{"tr-b=198.51.100.31:24444+quic"}, host.reverseDials())
+	}, 2*time.Second, 5*time.Millisecond)
 }
 
 // A carrier that measures no round trip (anything but QUIC) reports the

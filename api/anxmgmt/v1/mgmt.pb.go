@@ -2119,7 +2119,9 @@ type Link struct {
 	// 0 = UDP shares the link's connection with TCP; 1 = UDP uses a separate connection. >1 rejected.
 	UdpLanes uint32 `protobuf:"varint,11,opt,name=udp_lanes,json=udpLanes,proto3" json:"udp_lanes,omitempty"`
 	// Take connections dialed in by the egress instead of dialing out. quic_addr / faketcp_addr / tcp_addr
-	// must be empty, egress must be l1, and the node must run a reverse listener.
+	// must be empty, egress must be l1, and the node must run a reverse listener. policy.order containing
+	// quic / faketcp also takes dialed-in connections on those carriers (the node must run --reverse-quic /
+	// --reverse-faketcp); an empty order uses whichever reverse carriers the node runs.
 	Reverse       bool `protobuf:"varint,12,opt,name=reverse,proto3" json:"reverse,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2772,8 +2774,11 @@ type LinkStat struct {
 	// Reverse links: idle dialed-in connections waiting in the pool, and total accepted; zero otherwise.
 	ReverseIdle     uint32 `protobuf:"varint,19,opt,name=reverse_idle,json=reverseIdle,proto3" json:"reverse_idle,omitempty"`
 	ReverseAccepted uint64 `protobuf:"varint,20,opt,name=reverse_accepted,json=reverseAccepted,proto3" json:"reverse_accepted,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Reverse links: idle dialed-in quic / faketcp connections in the pool; zero otherwise.
+	ReverseQuicIdle    uint32 `protobuf:"varint,21,opt,name=reverse_quic_idle,json=reverseQuicIdle,proto3" json:"reverse_quic_idle,omitempty"`
+	ReverseFaketcpIdle uint32 `protobuf:"varint,22,opt,name=reverse_faketcp_idle,json=reverseFaketcpIdle,proto3" json:"reverse_faketcp_idle,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *LinkStat) Reset() {
@@ -2946,6 +2951,20 @@ func (x *LinkStat) GetReverseAccepted() uint64 {
 	return 0
 }
 
+func (x *LinkStat) GetReverseQuicIdle() uint32 {
+	if x != nil {
+		return x.ReverseQuicIdle
+	}
+	return 0
+}
+
+func (x *LinkStat) GetReverseFaketcpIdle() uint32 {
+	if x != nil {
+		return x.ReverseFaketcpIdle
+	}
+	return 0
+}
+
 type LinkStatsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Links         []*LinkStat            `protobuf:"bytes,1,rep,name=links,proto3" json:"links,omitempty"`
@@ -2998,8 +3017,12 @@ type ReverseDial struct {
 	Addr string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
 	// 32 bytes, the link_key of the reverse link on the rendezvous node (also add it here via AddUsers).
 	LinkKey []byte `protobuf:"bytes,3,opt,name=link_key,json=linkKey,proto3" json:"link_key,omitempty"`
-	// Idle connections to keep; 0 = 2, at most 16.
-	Idle          uint32 `protobuf:"varint,4,opt,name=idle,proto3" json:"idle,omitempty"`
+	// Idle connections to keep per carrier; 0 = 2, at most 16.
+	Idle uint32 `protobuf:"varint,4,opt,name=idle,proto3" json:"idle,omitempty"`
+	// Also keep quic connections to the same port number of addr (UDP).
+	Quic bool `protobuf:"varint,5,opt,name=quic,proto3" json:"quic,omitempty"`
+	// Also keep faketcp connections to addr's port + 1. addr must be IPv4; Linux only, needs CAP_NET_RAW.
+	Faketcp       bool `protobuf:"varint,6,opt,name=faketcp,proto3" json:"faketcp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3060,6 +3083,20 @@ func (x *ReverseDial) GetIdle() uint32 {
 		return x.Idle
 	}
 	return 0
+}
+
+func (x *ReverseDial) GetQuic() bool {
+	if x != nil {
+		return x.Quic
+	}
+	return false
+}
+
+func (x *ReverseDial) GetFaketcp() bool {
+	if x != nil {
+		return x.Faketcp
+	}
+	return false
 }
 
 // Replaces the whole dial table (not persisted; re-send after reconnect). Empty = stop all.
@@ -3324,7 +3361,7 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\fCarrierProbe\x12\x18\n" +
 	"\acarrier\x18\x01 \x01(\tR\acarrier\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x12!\n" +
-	"\fhandshake_ms\x18\x03 \x01(\rR\vhandshakeMs\"\xa8\x05\n" +
+	"\fhandshake_ms\x18\x03 \x01(\rR\vhandshakeMs\"\x86\x06\n" +
 	"\bLinkStat\x12\x17\n" +
 	"\alink_id\x18\x01 \x01(\tR\x06linkId\x12#\n" +
 	"\rdefault_route\x18\x02 \x01(\bR\fdefaultRoute\x12\x1c\n" +
@@ -3346,14 +3383,18 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\x12udp_lane_connected\x18\x11 \x01(\bR\x10udpLaneConnected\x12(\n" +
 	"\x10udp_lane_carrier\x18\x12 \x01(\tR\x0eudpLaneCarrier\x12!\n" +
 	"\freverse_idle\x18\x13 \x01(\rR\vreverseIdle\x12)\n" +
-	"\x10reverse_accepted\x18\x14 \x01(\x04R\x0freverseAccepted\"@\n" +
+	"\x10reverse_accepted\x18\x14 \x01(\x04R\x0freverseAccepted\x12*\n" +
+	"\x11reverse_quic_idle\x18\x15 \x01(\rR\x0freverseQuicIdle\x120\n" +
+	"\x14reverse_faketcp_idle\x18\x16 \x01(\rR\x12reverseFaketcpIdle\"@\n" +
 	"\x11LinkStatsResponse\x12+\n" +
-	"\x05links\x18\x01 \x03(\v2\x15.anx.mgmt.v1.LinkStatR\x05links\"i\n" +
+	"\x05links\x18\x01 \x03(\v2\x15.anx.mgmt.v1.LinkStatR\x05links\"\x97\x01\n" +
 	"\vReverseDial\x12\x17\n" +
 	"\adial_id\x18\x01 \x01(\tR\x06dialId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x19\n" +
 	"\blink_key\x18\x03 \x01(\fR\alinkKey\x12\x12\n" +
-	"\x04idle\x18\x04 \x01(\rR\x04idle\"H\n" +
+	"\x04idle\x18\x04 \x01(\rR\x04idle\x12\x12\n" +
+	"\x04quic\x18\x05 \x01(\bR\x04quic\x12\x18\n" +
+	"\afaketcp\x18\x06 \x01(\bR\afaketcp\"H\n" +
 	"\x16SetReverseDialsRequest\x12.\n" +
 	"\x05dials\x18\x01 \x03(\v2\x18.anx.mgmt.v1.ReverseDialR\x05dials\"/\n" +
 	"\x17SetReverseDialsResponse\x12\x14\n" +

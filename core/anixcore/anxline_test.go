@@ -206,8 +206,15 @@ func TestReverseDialLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listen != "0.0.0.0:24444" || !links["tr-jp"].GetReverse() || links["tr-jp"].GetTcpAddr() != "" {
-		t.Fatalf("listen = %q, links = %v", listen, links)
+	if listen != (reverseListener{Listen: "0.0.0.0:24444"}) || !links["tr-jp"].GetReverse() || links["tr-jp"].GetTcpAddr() != "" {
+		t.Fatalf("listen = %+v, links = %v", listen, links)
+	}
+
+	// C2 / C3 dial-backs follow the carrier order (anx ANX-LINE-REVERSE §6.3).
+	c2 := proto.Clone(plan).(*networkv1.NetworkPlan)
+	c2.Transports[0].GetAnxLine().CarrierOrder = []string{"c2", "c3", "c1"}
+	if _, listen, err = dialLinks(c2); err != nil || listen != (reverseListener{Listen: "0.0.0.0:24444", QUIC: true, FakeTCP: true}) {
+		t.Fatalf("listen = %+v, err = %v", listen, err)
 	}
 
 	two := dialPlan("PUB-1")
@@ -224,7 +231,7 @@ func TestReverseDialLinks(t *testing.T) {
 	if _, err := core.ApplyNetwork(plan); err != nil {
 		t.Fatal(err)
 	}
-	if !line.links["tr-jp"].GetReverse() || core.reverseListen != "" {
-		t.Fatalf("links = %v, reverse listen = %q", line.links, core.reverseListen)
+	if !line.links["tr-jp"].GetReverse() || core.reverse.Listen != "" {
+		t.Fatalf("links = %v, reverse listen = %q", line.links, core.reverse.Listen)
 	}
 }

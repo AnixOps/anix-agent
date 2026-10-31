@@ -43,14 +43,21 @@ var connectLine = func(addr string) (anxmgmtpb.ManagementClient, func() error, e
 	return anxmgmtpb.NewManagementClient(conn), conn.Close, nil
 }
 
+// reverseListener is anx-node's rendezvous listener (anx ANX-Line §4.6):
+// Listen ("" for none) and whether it also accepts the C2 / C3 dial-backs
+// (`anx_line.reverse_quic` / `reverse_faketcp`, anx ANX-LINE-REVERSE §6.3).
+type reverseListener struct {
+	Listen        string
+	QUIC, FakeTCP bool
+}
+
 // dialLinks answers the links of plan's dialing anx_line ends, by id, and
-// the rendezvous listener their reverse links need (anx ANX-Line §4.6, ""
-// for none); transports only relay hops use are anx-server's
-// (anxserver.Relayed).
-func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, string, error) {
+// the rendezvous listener their reverse links need; transports only relay
+// hops use are anx-server's (anxserver.Relayed).
+func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, reverseListener, error) {
 	relayed := anxserver.Relayed(plan)
 	links := map[string]*anxmgmtpb.Link{}
-	reverse := ""
+	var reverse reverseListener
 	for _, transport := range plan.GetTransports() {
 		if transport.GetKind() != network.TransportAnxLine || transport.GetRole() != networkv1.TransportRole_TRANSPORT_ROLE_DIAL ||
 			relayed[transport.GetId()] {
@@ -58,16 +65,19 @@ func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, string,
 		}
 		link, err := anxserver.DialLink(transport)
 		if err != nil {
-			return nil, "", err
+			return nil, reverseListener{}, err
 		}
 		if link.GetReverse() {
 			// anx-node opens one rendezvous listener for all its reverse
 			// links (`anx_line.reverse_listen`).
 			listen := transport.GetAnxLine().GetReverseListen()
-			if listen == "" || (reverse != "" && listen != reverse) {
-				return nil, "", fmt.Errorf("transport %s: reverse links need one reverse listener, have %q and %q", transport.GetId(), reverse, listen)
+			if listen == "" || (reverse.Listen != "" && listen != reverse.Listen) {
+				return nil, reverseListener{}, fmt.Errorf("transport %s: reverse links need one reverse listener, have %q and %q", transport.GetId(), reverse.Listen, listen)
 			}
-			reverse = listen
+			reverse.Listen = listen
+			// One listener for all: it accepts a carrier any link orders.
+			quic, faketcp := anxserver.ReverseCarriers(transport.GetAnxLine().GetCarrierOrder())
+			reverse.QUIC, reverse.FakeTCP = reverse.QUIC || quic, reverse.FakeTCP || faketcp
 		}
 		links[link.GetLinkId()] = link
 	}
@@ -77,14 +87,14 @@ func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, string,
 // reopen relaunches an anx-node this core started whose rendezvous
 // listener is not listen, and gives it everything again; an anx-node the
 // core did not start (ApiAddress) keeps its own `anx_line.reverse_listen`.
-func (c *Core) reopen(listen string) error {
+func (c *Core) reopen(listen reverseListener) error {
 	c.mu.Lock()
 	process, exited := c.process, c.exited
-	if process == nil || !c.config.AnxLine || c.reverseListen == listen {
+	if process == nil || !c.config.AnxLine || c.reverse == listen {
 		c.mu.Unlock()
 		return nil
 	}
-	c.reverseListen = listen
+	c.reverse = listen
 	// Not c.process any more: supervise leaves it be.
 	c.process = nil
 	c.mu.Unlock()
@@ -103,7 +113,7 @@ func (c *Core) reopen(listen string) error {
 			// A process that started and failed is supervised already.
 			go c.supervise(nil, err)
 		}
-		return fmt.Errorf("anixcore: relaunch anx-node for reverse listener %q: %w", listen, err)
+		return fmt.Errorf("anixcore: relaunch anx-node for reverse listener %q: %w", listen.Listen, err)
 	}
 	// The last plan's links may need the listener that just went; the
 	// plan being applied replaces them.

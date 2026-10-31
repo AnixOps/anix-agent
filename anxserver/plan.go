@@ -52,6 +52,27 @@ type Accept struct {
 	// listens on nothing. ReverseListen is the rendezvous listener a relay
 	// hop opens when Next is a reverse link.
 	ReverseDial, ReverseListen string
+	// ReverseQUIC and ReverseFakeTCP are the C2 / C3 dial-backs of a
+	// reverse transport (anx ANX-LINE-REVERSE §6.3), on when its carrier
+	// order names the carrier: the egress keeps them toward ReverseDial, a
+	// relay hop accepts them on ReverseListen (the same UDP port, the next
+	// TCP port).
+	ReverseQUIC, ReverseFakeTCP bool
+}
+
+// ReverseCarriers answers whether a reverse transport's carrier order
+// names C2 (quic) and C3 (faketcp); an empty order is C1 only, so both
+// ends agree without anx's default order.
+func ReverseCarriers(order []string) (quic, faketcp bool) {
+	for _, carrier := range order {
+		switch carrier {
+		case "c2", "quic":
+			quic = true
+		case "c3", "faketcp":
+			faketcp = true
+		}
+	}
+	return quic, faketcp
 }
 
 // Accepts answers the anx_line transports plan has this device accept, in
@@ -90,6 +111,7 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 		}
 		if settings.GetReverse() {
 			accept.ReverseDial = settings.GetReverseDial()
+			accept.ReverseQUIC, accept.ReverseFakeTCP = ReverseCarriers(settings.GetCarrierOrder())
 		}
 		if accept.LinkID == "" {
 			accept.LinkID = accept.Transport
@@ -107,6 +129,7 @@ func Accepts(plan *networkv1.NetworkPlan) ([]Accept, error) {
 				accept.Next = link
 				if link.GetReverse() {
 					accept.ReverseListen = into.GetAnxLine().GetReverseListen()
+					accept.ReverseQUIC, accept.ReverseFakeTCP = ReverseCarriers(into.GetAnxLine().GetCarrierOrder())
 				}
 				accepts = append(accepts, accept)
 				continue
@@ -184,6 +207,9 @@ type listener struct {
 	ServerName         string
 	Sources            string
 	ReverseListen      string
+	// ReverseQUIC / ReverseFakeTCP: the C2 / C3 dial-backs, accepted on
+	// ReverseListen or, with no ReverseListen, dialed by the egress.
+	ReverseQUIC, ReverseFakeTCP bool
 }
 
 func (a Accept) listener() listener {
@@ -193,7 +219,8 @@ func (a Accept) listener() listener {
 	}
 	sort.Strings(sources)
 	return listener{TCP: a.TCP, QUIC: a.QUIC, FakeTCP: a.FakeTCP, L2: a.L2, ServerName: a.ServerName,
-		Sources: strings.Join(sources, ","), ReverseListen: a.ReverseListen}
+		Sources: strings.Join(sources, ","), ReverseListen: a.ReverseListen,
+		ReverseQUIC: a.ReverseQUIC, ReverseFakeTCP: a.ReverseFakeTCP}
 }
 
 // defaultServerName is the --sni of a bare (l1) server, which serves no
@@ -222,18 +249,27 @@ func (l listener) args() []string {
 		}
 	}
 	if l.QUIC != "" {
+		args = append(args, "--quic-listen", l.QUIC)
+	}
+	if l.QUIC != "" || l.ReverseQUIC {
 		// UDP relayed over QUIC is dropped in the listener's socket buffer
 		// under load (anx ANX-LINE-ONBOARDING §6): a large socket buffer,
 		// which the host's net.core.rmem_max/wmem_max must allow
-		// (RaiseSocketBuffers), and a larger DATAGRAM buffer.
-		args = append(args, "--quic-listen", l.QUIC,
-			"--quic-sockbuf", strconv.Itoa(QUICSocketBuffer), "--quic-dgram-buf", strconv.Itoa(QUICDatagramBuffer))
+		// (RaiseSocketBuffers), and a larger DATAGRAM buffer. The same
+		// holds for the C2 dial-back on both ends (anx TBD-L16).
+		args = append(args, "--quic-sockbuf", strconv.Itoa(QUICSocketBuffer), "--quic-dgram-buf", strconv.Itoa(QUICDatagramBuffer))
 	}
 	if l.FakeTCP != "" {
 		args = append(args, "--faketcp-listen", l.FakeTCP)
 	}
 	if l.ReverseListen != "" {
 		args = append(args, "--reverse-listen", l.ReverseListen)
+		if l.ReverseQUIC {
+			args = append(args, "--reverse-quic")
+		}
+		if l.ReverseFakeTCP {
+			args = append(args, "--reverse-faketcp")
+		}
 	}
 	if l.Sources != "" {
 		for _, source := range strings.Split(l.Sources, ",") {
@@ -285,7 +321,12 @@ func group(accepts []Accept) (map[listener][]Accept, error) {
 	}
 	owners := map[string]listener{}
 	for l := range groups {
-		for _, address := range []string{"tcp " + l.TCP, "udp " + l.QUIC, "fake-tcp " + l.FakeTCP, "tcp " + l.ReverseListen} {
+		addresses := []string{"tcp " + l.TCP, "udp " + l.QUIC, "fake-tcp " + l.FakeTCP, "tcp " + l.ReverseListen}
+		if l.ReverseListen != "" && l.ReverseQUIC {
+			// The C2 dial-backs share the rendezvous port number on UDP.
+			addresses = append(addresses, "udp "+l.ReverseListen)
+		}
+		for _, address := range addresses {
 			if strings.HasSuffix(address, " ") {
 				continue
 			}

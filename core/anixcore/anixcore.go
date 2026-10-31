@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/anxserver"
 	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -72,9 +73,9 @@ type Core struct {
 	lineClose   func() error
 	links       map[string]*anxmgmtpb.Link
 	wantedLinks map[string]*anxmgmtpb.Link
-	// reverseListen is the rendezvous listener (`anx_line.reverse_listen`)
-	// the started anx-node opens, "" for none.
-	reverseListen string
+	// reverse is the rendezvous listener (`anx_line.reverse_listen`) the
+	// started anx-node opens, Listen "" for none.
+	reverse reverseListener
 	// forwards are the forward inbounds anixcore runs for the plan's port
 	// forwards, wantedForwards those of the last plan, by tag.
 	forwards       map[string]map[string]any
@@ -162,8 +163,18 @@ func (c *Core) launch() error {
 		}
 		line := map[string]any{"mgmt_listen": lineAddress}
 		c.mu.Lock()
-		if c.reverseListen != "" {
-			line["reverse_listen"] = c.reverseListen
+		if c.reverse.Listen != "" {
+			line["reverse_listen"] = c.reverse.Listen
+			// The C2 / C3 dial-backs of reverse links (anx
+			// ANX-LINE-REVERSE §6.3); C2 with the large UDP buffer of
+			// anx-server's QUIC listeners (anx TBD-L16).
+			if c.reverse.QUIC {
+				line["reverse_quic"] = true
+				line["reverse_quic_sockbuf"] = anxserver.QUICSocketBuffer
+			}
+			if c.reverse.FakeTCP {
+				line["reverse_faketcp"] = true
+			}
 		}
 		c.mu.Unlock()
 		config["anx_line"] = line
