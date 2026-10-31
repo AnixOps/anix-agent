@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-V2bX AnixOps 是一个代理服务节点后端程序，支持多内核（Xray、Sing-box、Hysteria2），与 V2Board 面板通过 API 进行交互，提供用户认证、流量统计、节点管理等功能。
+V2bX AnixOps 是一个代理服务节点后端程序，运行 AnixOps 自研内核 anixcore（anx-node）与 WireGuard 内核，与 V2Board 面板通过 API 进行交互，提供用户认证、流量统计、节点管理等功能。
 
 **项目路径**: `C:\Users\z7299\Documents\GitHub\V2bX_AnixOps`
 
@@ -21,9 +21,6 @@ V2bX AnixOps 是一个代理服务节点后端程序，支持多内核（Xray、
 │   │         V2bX_AnixOps (本项目)            │                  │
 │   │  ┌─────────────────────────────────┐    │                  │
 │   │  │  多内核支持:                      │    │                  │
-│   │  │  - Xray-core (VMess/VLESS/Trojan)│    │                  │
-│   │  │  - Sing-box (多协议)              │    │                  │
-│   │  │  - Hysteria2 (QUIC 高速传输)      │    │                  │
 │   │  └─────────────────────────────────┘    │                  │
 │   │              ↓                           │                  │
 │   │  ┌─────────────────────────────────┐    │                  │
@@ -50,9 +47,6 @@ V2bX AnixOps 是一个代理服务节点后端程序，支持多内核（Xray、
 | 类别 | 技术 | 版本/说明 |
 |------|------|----------|
 | 语言 | Go | 1.26.9 (需 GOEXPERIMENT=jsonv2) |
-| 代理内核 | Xray | v1.251202.0 |
-| 代理内核 | Sing-box | v1.13.0 |
-| 代理内核 | Hysteria2 | v2.6.4 |
 | CLI 框架 | Cobra | 命令行解析 |
 | 配置管理 | Viper | 配置文件解析 |
 | HTTP 客户端 | Resty | API 请求 |
@@ -82,9 +76,6 @@ V2bX_AnixOps/
 │   ├── conf.go                 # 主配置结构
 │   ├── core.go                 # 内核配置
 │   ├── node.go                 # 节点配置
-│   ├── xray.go                 # Xray 配置
-│   ├── sing.go                 # Sing-box 配置
-│   ├── hy.go                   # Hysteria 配置
 │   ├── limit.go                # 限流配置
 │   ├── cert.go                 # 证书配置
 │   └── watch.go                # 文件监控配置
@@ -92,9 +83,6 @@ V2bX_AnixOps/
 │   ├── core.go                 # 核心管理器
 │   ├── interface.go            # Core 接口定义
 │   ├── selector.go             # 多内核选择器
-│   ├── xray/                   # Xray 内核实现
-│   ├── sing/                   # Sing-box 内核实现
-│   └── hy2/                    # Hysteria2 内核实现
 ├── node/                       # 节点控制器
 │   ├── node.go                 # 节点管理器
 │   ├── controller.go           # 节点控制器
@@ -148,9 +136,6 @@ type Core interface {
 
 | 内核 | 支持协议 |
 |------|----------|
-| Xray | VMess, VLESS, Trojan, Shadowsocks |
-| Sing-box | VMess, VLESS, Trojan, TUIC, AnyTLS, Hysteria, Hysteria2 |
-| Hysteria2 | Hysteria2 |
 
 ## 配置文件结构
 
@@ -163,7 +148,7 @@ type Core interface {
   },
   "Cores": [
     {
-      "Type": "sing",
+      "Type": "anixcore",
       "Log": { "Level": "info", "Timestamp": true },
       "NTP": { "Enable": false, "Server": "time.apple.com" },
       "OriginalPath": "/etc/V2bX/sing_origin.json"
@@ -171,7 +156,7 @@ type Core interface {
   ],
   "Nodes": [
     {
-      "Core": "sing",
+      "Core": "anixcore",
       "ApiHost": "http://127.0.0.1",
       "ApiKey": "your-api-key",
       "NodeID": 1,
@@ -334,7 +319,7 @@ V2bX server -c /etc/V2bX/config.json
 
 ## 项目特点
 
-1. **多内核支持**: 通过接口抽象支持 Xray、Sing-box、Hysteria2
+1. **多内核支持**: 通过接口抽象支持 anixcore 与 WireGuard
 2. **热重载**: 配置文件变更自动重启
 3. **自动注册**: 支持通过 AuthKey 自动注册节点
 4. **安全增强**: 支持请求签名、凭证加密存储

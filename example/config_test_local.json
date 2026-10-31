@@ -5,7 +5,7 @@
   },
   "Cores": [
     {
-      "Type": "xray",
+      "Type": "anixcore",
       "Log": {
         "Level": "debug",
         "Timestamp": true
@@ -14,7 +14,7 @@
   ],
   "Nodes": [
     {
-      "Core": "xray",
+      "Core": "anixcore",
       "ApiHost": "http://127.0.0.1:8080",
       "Transport": "http",
       "GRPCHost": "127.0.0.1:50051",

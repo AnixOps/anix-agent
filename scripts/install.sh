@@ -571,13 +571,7 @@ install_files() {
         mv -f "${RELAY_BINARY}.new" "${RELAY_BINARY}"
     fi
 
-    for f in geoip.dat geosite.dat; do
-        if [[ -f "${extract_dir}/${f}" ]]; then
-            install -m 0644 "${extract_dir}/${f}" "${CONFIG_DIR}/${f}"
-        fi
-    done
-
-    for f in config.json dns.json route.json custom_outbound.json custom_inbound.json; do
+    for f in config.json; do
         if [[ -f "${extract_dir}/${f}" && ! -f "${CONFIG_DIR}/${f}" ]]; then
             install -m 0644 "${extract_dir}/${f}" "${CONFIG_DIR}/${f}"
         fi

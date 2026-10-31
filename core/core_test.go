@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -63,10 +64,12 @@ func TestSelectorPicksTheFirstConfiguredCoreForAProtocol(t *testing.T) {
 }
 
 func TestNewForConfigRunsEveryCompiledInCoreWithoutConfiguredCores(t *testing.T) {
-	xray := &fakeCore{kind: "xray", protocols: []string{"vless"}}
-	sing := &fakeCore{kind: "sing", protocols: []string{"vless", "hysteria2"}}
+	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"vless", "hysteria2"}}
 	wireguard := &fakeCore{kind: "wireguard", protocols: []string{"wireguard"}}
-	withCores(t, map[string]*fakeCore{"wireguard": wireguard, "sing": sing, "xray": xray})
+	withCores(t, map[string]*fakeCore{"wireguard": wireguard, "anixcore": anixcore})
+	binary := anixcoreBinary
+	t.Cleanup(func() { anixcoreBinary = binary })
+	anixcoreBinary = func() (string, bool, bool) { return "anixcore", false, true }
 
 	defaults, err := DefaultCoreConfigs()
 	require.NoError(t, err)
@@ -74,7 +77,7 @@ func TestNewForConfigRunsEveryCompiledInCoreWithoutConfiguredCores(t *testing.T)
 	for _, config := range defaults {
 		order = append(order, config.Type)
 	}
-	require.Equal(t, []string{"xray", "sing", "wireguard"}, order)
+	require.Equal(t, []string{"anixcore", "wireguard"}, order)
 
 	built, err := NewForConfig(nil, 1)
 	require.NoError(t, err)
@@ -83,28 +86,51 @@ func TestNewForConfigRunsEveryCompiledInCoreWithoutConfiguredCores(t *testing.T)
 	for tag, protocol := range map[string]string{"v": "vless", "h": "hysteria2", "w": "wireguard"} {
 		require.NoError(t, selector.AddNode(tag, &panel.NodeInfo{Type: protocol}, &conf.Options{RawOptions: []byte(`{}`)}))
 	}
-	require.Equal(t, []string{"v"}, xray.nodes)
-	require.Equal(t, []string{"h"}, sing.nodes)
+	require.ElementsMatch(t, []string{"v", "h"}, anixcore.nodes)
 	require.Equal(t, []string{"w"}, wireguard.nodes)
 
 	// A forward node only (no proxy node) runs no core at all, and a
 	// configuration with cores keeps them.
 	_, err = NewForConfig(nil, 0)
 	require.Error(t, err)
-	built, err = NewForConfig([]conf.CoreConfig{{Type: "sing"}}, 1)
+	built, err = NewForConfig([]conf.CoreConfig{{Type: "anixcore"}}, 1)
 	require.NoError(t, err)
-	require.Same(t, sing, built)
+	require.Same(t, anixcore, built)
 }
 
 func TestDefaultCoreConfigsCarryTheCoreDefaults(t *testing.T) {
-	withCores(t, map[string]*fakeCore{"xray": {}, "sing": {}, "hysteria2": {}, "wireguard": {}})
+	withCores(t, map[string]*fakeCore{"anixcore": {}, "wireguard": {}})
+	binary := anixcoreBinary
+	t.Cleanup(func() { anixcoreBinary = binary })
+	anixcoreBinary = func() (string, bool, bool) { return "anixcore", false, true }
 	defaults, err := DefaultCoreConfigs()
 	require.NoError(t, err)
-	require.Len(t, defaults, 4)
-	require.NotNil(t, defaults[0].XrayConfig)
-	require.NotNil(t, defaults[1].SingConfig)
-	require.NotNil(t, defaults[2].Hysteria2Config)
-	require.NotNil(t, defaults[3].WireGuardConfig)
+	require.Len(t, defaults, 2)
+	require.NotNil(t, defaults[0].AnixcoreConfig)
+	require.NotNil(t, defaults[1].WireGuardConfig)
+}
+
+func TestRetiredCoreTypesRunOnAnixcore(t *testing.T) {
+	var configured []conf.CoreConfig
+	require.NoError(t, json.Unmarshal([]byte(`[{"Type":"xray"},{"Type":"sing"},{"Type":"hysteria2"}]`), &configured))
+	for _, c := range configured {
+		require.Equal(t, "anixcore", c.Type)
+		require.NotNil(t, c.AnixcoreConfig)
+	}
+	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"vless"}}
+	created := 0
+	previous := cores
+	t.Cleanup(func() { cores = previous })
+	cores = map[string]func(*conf.CoreConfig) (Core, error){
+		"anixcore": func(*conf.CoreConfig) (Core, error) { created++; return anixcore, nil },
+	}
+	_, err := NewSelector(configured)
+	require.NoError(t, err)
+	require.Equal(t, 1, created, "the three retired cores are one anixcore")
+
+	var options conf.Options
+	require.NoError(t, json.Unmarshal([]byte(`{"Core":"sing"}`), &options))
+	require.Equal(t, "anixcore", options.Core)
 }
 
 // egressCore is a fakeCore that runs egress routes.
@@ -143,9 +169,8 @@ func TestSelectorAppliesEgressOnTheFirstCoreThatRunsIt(t *testing.T) {
 
 func TestDefaultCoresPutAnInstalledAnixcoreFirst(t *testing.T) {
 	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"vless", "iwan"}}
-	xray := &fakeCore{kind: "xray", protocols: []string{"vless"}}
-	sing := &fakeCore{kind: "sing", protocols: []string{"vless", "hysteria"}}
-	withCores(t, map[string]*fakeCore{"anixcore": anixcore, "xray": xray, "sing": sing})
+	wireguard := &fakeCore{kind: "wireguard", protocols: []string{"wireguard"}}
+	withCores(t, map[string]*fakeCore{"anixcore": anixcore, "wireguard": wireguard})
 	binary := anixcoreBinary
 	t.Cleanup(func() { anixcoreBinary = binary })
 
@@ -162,11 +187,11 @@ func TestDefaultCoresPutAnInstalledAnixcoreFirst(t *testing.T) {
 		return types
 	}
 	anixcoreBinary = func() (string, bool, bool) { return "anixcore", false, true }
-	require.Equal(t, []string{"anixcore", "xray", "sing"}, order())
+	require.Equal(t, []string{"anixcore", "wireguard"}, order())
 	require.Equal(t, "anixcore", defaults()[0].AnixcoreConfig.BinaryPath)
 	require.False(t, defaults()[0].AnixcoreConfig.AnxLine)
 	anixcoreBinary = func() (string, bool, bool) { return "", false, false }
-	require.Equal(t, []string{"xray", "sing"}, order(), "an anixcore without its binary is left out")
+	require.Equal(t, []string{"wireguard"}, order(), "an anixcore without its binary is left out")
 	// The anx-node an Agent upgrade installed runs with ANX-Line.
 	anixcoreBinary = func() (string, bool, bool) { return conf.InstalledAnxNodePath, true, true }
 	config := defaults()[0].AnixcoreConfig

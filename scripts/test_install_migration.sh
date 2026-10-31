@@ -226,7 +226,6 @@ done
 
     prompt_text() {
         case "$1" in
-            "选择内核类型"*) printf '%s' sing ;;
             "节点类型"*) printf '%s' vless ;;
             "监听 IP"*) printf '%s' 0.0.0.0 ;;
             "发送 IP"*) printf '%s' 0.0.0.0 ;;

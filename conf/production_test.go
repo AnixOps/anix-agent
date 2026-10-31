@@ -10,7 +10,7 @@ import (
 func readyProductionAgentConfig() *Conf {
 	return &Conf{
 		Environment: "production",
-		CoresConfig: []CoreConfig{{Type: "sing"}},
+		CoresConfig: []CoreConfig{{Type: "anixcore"}},
 		NodeConfig: []NodeConfig{{
 			ApiConfig: ApiConfig{
 				APIHost: "https://control.company.net", Transport: "grpc",
@@ -20,7 +20,7 @@ func readyProductionAgentConfig() *Conf {
 				PluginOfficialPublicKey: "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
 				NodeID:                  7, Key: strings.Repeat("k", 32), Timeout: 30, EnableSign: true, GRPCKeepalive: 30,
 			},
-			Options: Options{Core: "sing", SyncConfig: &SyncConfig{
+			Options: Options{Core: "anixcore", SyncConfig: &SyncConfig{
 				EnableWebSocket: true, WSEndpoint: "/api/v2/agent/ws", ReconnectInterval: 5,
 				PingInterval: 30, PongTimeout: 10, AckTimeout: 5, AckRetries: 2, BufferSize: 100,
 			}},
@@ -63,7 +63,7 @@ func TestProductionValidationRejectsUnknownEnvironmentAliases(t *testing.T) {
 
 func TestProductionValidationRejectsMissingCoreAndInvalidGRPCTarget(t *testing.T) {
 	cfg := readyProductionAgentConfig()
-	cfg.NodeConfig[0].Options.Core = "xray"
+	cfg.NodeConfig[0].Options.Core = "wireguard"
 	require.ErrorContains(t, cfg.ValidateForProduction(), "not configured")
 
 	cfg = readyProductionAgentConfig()

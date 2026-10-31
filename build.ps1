@@ -8,7 +8,7 @@
 param(
     [string]$Platform = "windows",
     [string]$Arch = "amd64",
-    [string]$Tags = "xray sing hy2",
+    [string]$Tags = "anixcore",
     [switch]$All,
     [switch]$Clean
 )
