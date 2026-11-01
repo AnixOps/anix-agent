@@ -37,10 +37,6 @@ func NewForwardComponent(cfg *conf.ForwardConfig, nodes []conf.NodeConfig) (*for
 	defer cancel()
 	drivers, err := forward.BuildDrivers(ctx, forward.Settings{
 		Nftables: forward.NftablesSettings{NFT: cfg.Nftables.NFT, TC: cfg.Nftables.TC},
-		AnixOps: forward.AnixOpsSettings{
-			Enable: cfg.AnixOps.Enable, Binary: cfg.AnixOps.Binary, Dir: cfg.AnixOps.Dir, RuntimeDir: cfg.AnixOps.RuntimeDir,
-			ManualLinkCertificates: cfg.AnixOps.ManualLinkCertificates,
-		},
 	})
 	if err != nil {
 		return nil, 0, err
@@ -48,7 +44,6 @@ func NewForwardComponent(cfg *conf.ForwardConfig, nodes []conf.NodeConfig) (*for
 	component, err := forward.New(forward.Options{
 		Node: node, Registry: drivers.Registry, Unavailable: drivers.Unavailable, Retired: drivers.Retired, Sources: drivers.Sources,
 		StateDir: cfg.Dir(), AgentVersion: panel.Version, Host: forward.ProbeHost(),
-		LinkCertificates: drivers.LinkCertificates, Links: drivers.Links,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -103,8 +98,6 @@ func (n *Node) SetForward(component *forward.Component, nodeID int) {
 // attachForward binds the component to a proxy node's new client.
 func attachForward(component *forward.Component, client *agentapi.Client) {
 	component.SetSender(client.DataPlane().SendForwardReport)
-	component.AttachLinkClient(client)
-	client.OnIdentityRejected(component.IdentityRejected)
 }
 
 // StartForward connects a forward node's Agent (forward-<id>): no proxy

@@ -118,8 +118,6 @@ func StartNode(ctx context.Context, config NodeConfig) (*Node, error) {
 		return nil, err
 	}
 	config.Component.SetSender(client.DataPlane().SendForwardReport)
-	config.Component.AttachLinkClient(client)
-	client.OnIdentityRejected(config.Component.IdentityRejected)
 	plane := client.DataPlane()
 	if persisted := plane.PersistedConfig(); persisted != nil {
 		// The component re-applied its own state at start; the stored

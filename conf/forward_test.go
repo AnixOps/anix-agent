@@ -29,24 +29,10 @@ func TestForwardConfigValidate(t *testing.T) {
 		"forward node proxy": {Enable: true, ForwardNode: &ApiConfig{}},
 		"unknown kind":       {Enable: true, NodeKind: "relay"},
 		"relative dir":       {Enable: true, StateDir: "forward"},
-		"relative relay dir": {Enable: true, AnixOps: ForwardAnixOpsConfig{Enable: true, Dir: "relay"}},
-		"relative relay bin": {Enable: true, AnixOps: ForwardAnixOpsConfig{Enable: true, Binary: "anixops-relay"}},
 	} {
 		if err := c.Validate(); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
-	}
-}
-
-// The experimental anixops engine is off unless the section says so.
-func TestForwardAnixOpsIsOffByDefault(t *testing.T) {
-	c := &ForwardConfig{Enable: true, ProxyNodeID: 7}
-	if c.AnixOps.Enable {
-		t.Fatal("the experimental engine is on by default")
-	}
-	c.AnixOps = ForwardAnixOpsConfig{Enable: true, Binary: "/usr/lib/anixops-agent/anixops-relay", Dir: "/var/lib/anixops-relay", RuntimeDir: "/run/anixops-relay"}
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
 	}
 }
 

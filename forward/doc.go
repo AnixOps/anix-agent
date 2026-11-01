@@ -1,16 +1,14 @@
 // Package forward is the Agent's forward component (forward-sdk.md sections
-// 6 to 8, F3b): it runs Control's routes on the node with the drivers of
-// github.com/AnixOps/anix-control/sdk/forward/driver (the experimental
-// anixops relay as anixops-relay.service when the Agent enables it; nftables
-// and gost were removed, see RetireNftables), keeps the applied state across
-// restarts, checks the upstreams and fails over, and reports counters,
-// health and hop errors.
+// 6 to 8, F3b). Every engine it had a driver for (nftables, gost and the
+// experimental anixops relay) was removed: routes run on the network model.
+// It keeps the forwarding state Control sends, probes entry addresses for
+// Control's entry HA (vantage.go), runs the forward diagnostics and reports
+// health and hop errors; RetireNftables cleans up after the nftables driver.
 //
 // # Wiring
 //
 // The component rides the Agent Control stream of the node it serves (a
-// forward node, forward-<id>, or a proxy node, proxy-<id>; one per host,
-// since the anixops driver owns one relay unit):
+// forward node, forward-<id>, or a proxy node, proxy-<id>; one per host):
 //
 //   - Hello: forward.v1 with NodeCapabilities in its node_capabilities
 //     attribute (HelloCapability, sdk/forward/wire), next to config.v1 and
@@ -23,9 +21,8 @@
 //
 // # Start
 //
-// BuildDrivers probes the host once (anixops.Probe, only with
-// Forward.AnixOps.Enable: the relay binary and its unit) and registers the engines the host can run; the others are listed
-// unavailable in the Hello, and their hops come back as hop errors. Start
+// BuildDrivers lists every engine unavailable in the Hello (all were
+// removed), so their hops come back as hop errors. Start
 // re-applies the persisted state before the Agent connects to Control.
 //
 // # Persisted state

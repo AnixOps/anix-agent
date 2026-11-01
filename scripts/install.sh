@@ -39,12 +39,9 @@ SYSCTL_DIR="${SYSCTL_DIR:-/etc/sysctl.d}"
 # Forwarding (forward-sdk.md sections 6, 9 and 14): ANIXOPS_FORWARD=1
 # prepares the node for the Agent's forward component: its state directory
 # and the sysctl drop-in. gost was removed (the network model replaced it):
-# every install retires the gost an earlier one set up. ANIXOPS_RELAY=1 (with ANIXOPS_FORWARD=1) adds the same for the
-# experimental anixops engine (anix-control anixops-protocol.md, H22): the
-# anixops-relay account and directory and the anixops-relay unit. The engine
-# stays off until Forward.AnixOps.Enable is set in the Agent's configuration.
+# every install retires the gost an earlier one set up, and the experimental
+# anixops relay (removed the same way) an earlier ANIXOPS_RELAY=1 set up.
 FORWARD="${ANIXOPS_FORWARD:-0}"
-RELAY="${ANIXOPS_RELAY:-0}"
 GOST_USER="anixops-gost"
 GOST_DIR="/var/lib/anixops-gost"
 GOST_BINARY="/usr/lib/anixops-agent/gost"
@@ -564,13 +561,6 @@ install_files() {
         install -m 0600 "${extract_dir}/config.production.json" "${CONFIG_DIR}/config.json"
     fi
 
-    # The anixops relay (H22, experimental), run by anixops-relay.service.
-    if [[ -f "${extract_dir}/anixops-relay" && ! -L "${extract_dir}/anixops-relay" ]]; then
-        mkdir -p "$(dirname "${RELAY_BINARY}")"
-        install -m 0755 "${extract_dir}/anixops-relay" "${RELAY_BINARY}.new"
-        mv -f "${RELAY_BINARY}.new" "${RELAY_BINARY}"
-    fi
-
     for f in config.json; do
         if [[ -f "${extract_dir}/${f}" && ! -f "${CONFIG_DIR}/${f}" ]]; then
             install -m 0644 "${extract_dir}/${f}" "${CONFIG_DIR}/${f}"
@@ -614,6 +604,27 @@ retire_gost() {
     fi
 }
 
+# retire_relay removes what an earlier ANIXOPS_RELAY=1 install set up for the
+# removed experimental anixops relay: anixops-relay.service, the binary,
+# ${RELAY_DIR} and the anixops-relay account. Nothing happens on a host that
+# never had it.
+retire_relay() {
+    if [[ -f "${SYSTEMD_UNIT_DIR}/anixops-relay.service" ]]; then
+        info "Removing the experimental anixops relay (replaced by the network model) ..."
+        systemctl disable --now anixops-relay >/dev/null 2>&1 || true
+        rm -f "${SYSTEMD_UNIT_DIR}/anixops-relay.service"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    rm -f "${RELAY_BINARY}"
+    rm -rf "${RELAY_DIR}"
+    if id "${RELAY_USER}" >/dev/null 2>&1; then
+        userdel "${RELAY_USER}" >/dev/null 2>&1 || true
+    fi
+    if getent group "${RELAY_USER}" >/dev/null 2>&1; then
+        groupdel "${RELAY_USER}" >/dev/null 2>&1 || true
+    fi
+}
+
 # setup_forward prepares a forward-capable node (ANIXOPS_FORWARD=1):
 #   - the Agent's forwarding state ${FORWARD_STATE_DIR}, mode 0700;
 #   - /etc/sysctl.d/90-anixops-forward.conf: the kernel forwards IPv4 and
@@ -629,38 +640,9 @@ setup_forward() {
     mkdir -p "${SYSTEMD_UNIT_DIR}" "${SYSCTL_DIR}"
     "${BIN_PATH}" forward sysctl >"${SYSCTL_DIR}/90-anixops-forward.conf"
     sysctl -p "${SYSCTL_DIR}/90-anixops-forward.conf" >/dev/null 2>&1 || warn "Could not apply ${SYSCTL_DIR}/90-anixops-forward.conf now; it applies at the next boot"
-    setup_relay
-}
-
-# setup_relay prepares the experimental anixops engine (ANIXOPS_RELAY=1):
-# the relay's own account and group anixops-relay, ${RELAY_DIR} and its tls/
-# owned by root with group anixops-relay (mode 0750: only the Agent writes,
-# only the relay reads), and anixops-relay.service from the Agent itself
-# (anixops.UnitFile), enabled; it starts once the driver wrote its
-# configuration. Setting Forward.AnixOps.Enable in the Agent's configuration
-# turns the engine on.
-setup_relay() {
-    [[ "${RELAY}" == "1" ]] || return 0
-    info "Preparing the experimental anixops relay (account, directory, unit) ..."
-    getent group "${RELAY_USER}" >/dev/null 2>&1 || groupadd --system "${RELAY_USER}"
-    if ! id "${RELAY_USER}" >/dev/null 2>&1; then
-        useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin -g "${RELAY_USER}" "${RELAY_USER}"
-    fi
-    install -d -m 0750 -o root -g "${RELAY_USER}" "${RELAY_DIR}" "${RELAY_DIR}/tls"
-    mkdir -p "${SYSTEMD_UNIT_DIR}"
-    "${BIN_PATH}" forward relay-unit >"${SYSTEMD_UNIT_DIR}/anixops-relay.service"
-    systemctl daemon-reload
-    systemctl enable anixops-relay >/dev/null 2>&1 || true
-    if [[ ! -x "${RELAY_BINARY}" ]]; then
-        warn "The anixops relay is not installed at ${RELAY_BINARY}: the anixops driver stays unavailable (this release's package has none)"
-    fi
 }
 
 install_service() {
-    local supplementary_groups=""
-    if [[ "${FORWARD}" == "1" && "${RELAY}" == "1" ]] && getent group "${RELAY_USER}" >/dev/null 2>&1; then
-        supplementary_groups="SupplementaryGroups=${RELAY_USER}"
-    fi
     if [[ "${release}" == "alpine" ]]; then
         mkdir -p "${OPENRC_INIT_DIR}"
         cat >"${OPENRC_INIT_DIR}/${SERVICE_NAME}" <<EOF
@@ -694,7 +676,6 @@ Wants=network.target
 Type=simple
 User=root
 Group=root
-${supplementary_groups}
 WorkingDirectory=${INSTALL_DIR}/
 ExecStart=${BIN_PATH} server -c ${CONFIG_DIR}/config.json
 Restart=always
@@ -785,9 +766,6 @@ ${LEGACY_MANAGE_CMD_NAME} 命令继续作为兼容别名。
 环境变量（可选）:
   ANIXOPS_FORWARD=1  准备转发节点：转发状态目录、
                sysctl 转发配置（/etc/sysctl.d/90-anixops-forward.conf）
-  ANIXOPS_RELAY=1  与 ANIXOPS_FORWARD=1 一起使用：再准备实验性 anixops 引擎的
-               anixops-relay 账户与目录、anixops-relay 单元（引擎默认关闭，
-               需在 Agent 配置里设 Forward.AnixOps.Enable）
   REPO_OWNER   默认: AnixOps
   REPO_NAME    默认: anix-agent
   REPO_BRANCH  默认: main
@@ -855,6 +833,7 @@ main() {
     ensure_plugin_layout
     install_manage_script "${manager_path}"
     [[ "${release}" == "alpine" ]] || retire_gost
+    [[ "${release}" == "alpine" ]] || retire_relay
     setup_forward
     install_service
 

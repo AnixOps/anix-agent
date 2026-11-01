@@ -77,14 +77,6 @@ type Options struct {
 	AgentVersion string
 	// Host is the rest of NodeCapabilities; ProbeHost reads it.
 	Host HostInfo
-	// LinkCertificates tells whether the gost driver was built with the
-	// node's forward link certificate (H28). Without it gost carries RAW
-	// links only, and a hop with an encrypted link is reported with a hop
-	// error that says so.
-	LinkCertificates bool
-	// Links keeps the link certificate (IssueLinkCertificate,
-	// GetLinkTrustBundle); nil leaves the files to someone else.
-	Links *LinkOptions
 	// Dial probes upstreams (TCP connect, and UDP for the forward
 	// diagnostic checks); nil uses net.Dialer.
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
@@ -151,9 +143,6 @@ type Component struct {
 	reportWake    chan struct{}
 	reconcileWake chan struct{}
 	probes        chan struct{}
-
-	// Forward link certificates (linkcert.go).
-	links linkState
 }
 
 // New answers a component. Start it before the Agent connects to Control.
@@ -212,7 +201,6 @@ func New(opts Options) (*Component, error) {
 		reportWake:    make(chan struct{}, 1),
 		reconcileWake: make(chan struct{}, 1),
 		probes:        make(chan struct{}, maxProbes),
-		links:         linkState{wake: make(chan struct{}, 1)},
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	return c, nil
@@ -241,9 +229,6 @@ func (c *Component) Start(ctx context.Context) error {
 		c.mu.Lock()
 		c.desired, c.applied = state, applied
 		c.mu.Unlock()
-	}
-	if c.opts.Links != nil {
-		c.startLinks()
 	}
 	if state != nil {
 		c.logger.WithFields(log.Fields{"generation": state.GetGeneration(), "hops": len(state.GetHops())}).
@@ -285,17 +270,6 @@ func (c *Component) ForwardSession(negotiated bool) {
 	c.mu.Unlock()
 	if negotiated {
 		wake(c.reportWake)
-	}
-	if c.opts.Links != nil {
-		// A HelloAck that lists forward.v1: Control issues link
-		// certificates to the node now.
-		c.links.mu.Lock()
-		c.links.negotiated = negotiated
-		if negotiated {
-			c.links.issueAt = time.Time{}
-		}
-		c.links.mu.Unlock()
-		wake(c.links.wake)
 	}
 }
 
@@ -378,7 +352,7 @@ func (c *Component) apply(parent context.Context, state *forwardv1.NodeForwardSt
 		failed := map[driver.HopKey]bool{}
 		for _, he := range renderErrors {
 			failed[he.Key] = true
-			hopErrors = append(hopErrors, c.hopErrorProto(state, he))
+			hopErrors = append(hopErrors, he.ToProto())
 		}
 		engines := make([]forwardv1.Engine, 0, len(artifacts))
 		for engine := range artifacts {
@@ -436,49 +410,6 @@ func hopErrorsFor(state *forwardv1.NodeForwardState, skip map[driver.HopKey]bool
 		out = append(out, (&driver.HopError{Key: key, Engine: hop.GetEngine(), Err: err}).ToProto())
 	}
 	return out
-}
-
-// hopErrorProto converts a render hop error, saying why when an encrypted
-// gost or anixops link fails for want of the link certificate (H28).
-func (c *Component) hopErrorProto(state *forwardv1.NodeForwardState, he *driver.HopError) *forwardv1.HopError {
-	out := he.ToProto()
-	if c.linksAvailable() || !errors.Is(he, driver.ErrUnsupported) {
-		return out
-	}
-	var until string
-	switch he.Engine {
-	case forwardv1.Engine_ENGINE_GOST:
-		until = "encrypted gost links need the node's forward link certificate, which Control's link CA issues once the node negotiated forward.v1 (H28); until then gost carries RAW links only"
-	case forwardv1.Engine_ENGINE_ANIXOPS:
-		until = "the TLS_TCP, QUIC and AUTO carriers of the anixops engine need the node's forward link certificate, which Control's link CA issues once the node negotiated forward.v1 (H28); until then it carries RAW and PLAIN links only"
-	default:
-		return out
-	}
-	for _, hop := range state.GetHops() {
-		if driver.KeyOf(hop) == he.Key && encryptedLink(hop) {
-			out.Message = truncate(out.Message+"; "+until, wire.MaxTextBytes)
-			break
-		}
-	}
-	return out
-}
-
-// encryptedLink tells whether a hop terminates or originates a link other
-// than RAW.
-func encryptedLink(hop *forwardv1.NodeHop) bool {
-	secure := func(t *forwardv1.LinkTransport) bool {
-		s := t.GetSecurity()
-		return s != forwardv1.LinkSecurity_LINK_SECURITY_UNSPECIFIED && s != forwardv1.LinkSecurity_LINK_SECURITY_RAW
-	}
-	if secure(hop.GetIngress()) {
-		return true
-	}
-	for _, u := range hop.GetUpstreams() {
-		if secure(u.GetEgress()) {
-			return true
-		}
-	}
-	return false
 }
 
 func sortHopErrors(errs []*forwardv1.HopError) {

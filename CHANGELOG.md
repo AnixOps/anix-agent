@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Removed
+
+- The experimental anixops relay engine: `cmd/anixops-relay`, the forward
+  component's anixops driver, its link certificate handling,
+  `Forward.AnixOps` and `anix-agent forward relay-unit`. Releases no longer
+  ship `anixops-relay`; the root installer removes what an earlier
+  `ANIXOPS_RELAY=1` install set up. Routes run on the network model.
+- Leftovers of the removed Xray / sing-box cores: the `XRAY_DNS_PATH` /
+  `SING_DNS_PATH` file watching and the stale `sing-box_mod` submodule entry.
+
 ## 5.0.0-rc.26 - 2026-11-01
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.26 and

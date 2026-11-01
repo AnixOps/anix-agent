@@ -20,6 +20,7 @@ LEGACY_BIN_PATH="${LEGACY_INSTALL_DIR}/V2bX"
 VERSION_FILE="${INSTALL_DIR}/.release-version"
 STATE_ROOT="${test_root}/var/lib/anixops-agent"
 GOST_BINARY="${test_root}/usr/lib/anixops-agent/gost"
+RELAY_BINARY="${test_root}/usr/lib/anixops-agent/anixops-relay"
 PLUGIN_ROOT="${test_root}/var/lib/anixops-agent/plugins"
 PLUGIN_SOCKET_DIR="${test_root}/run/anixops-agent/plugins"
 SYSTEMD_UNIT_DIR="${test_root}/etc/systemd/system"
@@ -160,6 +161,7 @@ mkdir -p "${install_fixture}" "${tmp_dir}"
 printf '#!/bin/sh\nexit 0\n' >"${install_fixture}/anix-agent"
 chmod 0755 "${install_fixture}/anix-agent"
 printf '%s\n' stale-gost >"${install_fixture}/gost"
+printf '%s\n' stale-relay >"${install_fixture}/anixops-relay"
 printf '%s\n' production-template >"${install_fixture}/config.production.json"
 printf '%s\n' development-template >"${install_fixture}/config.json"
 touch "${test_root}/release-fixture.zip"
@@ -180,8 +182,8 @@ install_files "${test_root}/release-fixture.zip" "v9.9.9"
 [[ "$(cat "${CONFIG_DIR}/config.json")" == "production-template" ]]
 [[ "$(stat -c '%a' "${CONFIG_DIR}/config.json")" == "600" ]]
 [[ "$(cat "${VERSION_FILE}")" == "v9.9.9" ]]
-# gost was removed: a gost in an older package is not installed.
-[[ ! -e "${GOST_BINARY}" ]]
+# gost and the anixops relay were removed: an older package's are not installed.
+[[ ! -e "${GOST_BINARY}" && ! -e "${RELAY_BINARY}" ]]
 
 # retire_gost removes what an earlier install set up for gost.
 GOST_DIR="${test_root}/var/lib/anixops-gost"
@@ -194,6 +196,19 @@ userdel() { :; }
 groupdel() { :; }
 retire_gost >/dev/null
 [[ ! -e "${SYSTEMD_UNIT_DIR}/anixops-gost.service" && ! -e "${GOST_DIR}" && ! -e "${GOST_BINARY}" ]]
+unset -f systemctl userdel groupdel
+
+# retire_relay removes what an earlier ANIXOPS_RELAY=1 install set up.
+RELAY_DIR="${test_root}/var/lib/anixops-relay"
+mkdir -p "${SYSTEMD_UNIT_DIR}" "${RELAY_DIR}/tls" "$(dirname "${RELAY_BINARY}")"
+printf '[Service]\n' >"${SYSTEMD_UNIT_DIR}/anixops-relay.service"
+printf '{}\n' >"${RELAY_DIR}/relay.json"
+printf '%s\n' old-relay >"${RELAY_BINARY}"
+systemctl() { :; }
+userdel() { :; }
+groupdel() { :; }
+retire_relay >/dev/null
+[[ ! -e "${SYSTEMD_UNIT_DIR}/anixops-relay.service" && ! -e "${RELAY_DIR}" && ! -e "${RELAY_BINARY}" ]]
 unset -f systemctl userdel groupdel
 
 # A node installed by Control's O1 installer (user anixops-agent, sandboxed)

@@ -48,13 +48,9 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 
 - Agent 控制流（AG-1 至 AG-5b）：A2 协商、mTLS 身份（Control 4.2 默认 `required`）、
   配置与用户下发、流上报告与包报告、维护事件、alive 列表和插件制品；
-- 转发组件（F3b）：执行 Control 下发的 `forward.v1` 计划（nftables 与 gost 驱动）；
-- 实验性 anixops 引擎（H22 A3，**默认关闭**，线格式在 v4.3 之前可能变化）：独立的
-  `anixops-relay` 程序与 `anixops-relay.service`，随发布的 zip 一起提供；Agent 侧开关为
-  `Forward.AnixOps.Enable`，Control 侧开关为 `forward.anixops_experimental`，两边都开才生效；
-  `ANIXOPS_FORWARD=1 ANIXOPS_RELAY=1` 的安装脚本会创建它的账号、目录和单元；
+- 转发组件（F3b）：上报转发能力、为 Control 的入口高可用做 vantage 探测、执行转发诊断（nftables、gost 与 anixops relay 驱动均已删除）；
+- 实验性 anixops relay 引擎已删除（路由改由网络模型 / ANX 承载），安装脚本会清理旧的 `anixops-relay` 单元、账号和目录；
   转发的 sysctl drop-in 把 `net.core.rmem_max` 与 `wmem_max` 提到 8388608（8 MiB，anx-server 的 QUIC 用）；
-  Control 推送的升级与 Control 自带的 O1 安装器**不会**暂存或安装新的 `anixops-relay`；
 - O1 安装布局、`agent.diagnostic` 诊断与转发检查、Control 推送的分阶段升级（`upgrade.v1`）；
 - `machine-telemetry` 可选上报 systemd 服务表（H24：只报单元、状态、CPU 与内存，只保留最新）；
 - 节点重载失败时恢复原配置；仅转发计划变化时不再重载代理入站；

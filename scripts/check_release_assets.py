@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Release prerequisites of the AnixOps Agent packages (H20, O1 installer).
 
-Each linux release zip carries the Agent and the anixops relay of the
-experimental anixops engine (`anixops-relay`, a regular executable at the root
-of the zip, built from this repository's cmd/anixops-relay module), and no
-gost (removed: the network model replaced it), and the release publishes SHA256SUMS and a detached signature
+Each linux release zip carries the Agent (a regular executable at the root of
+the zip) and neither gost nor the experimental anixops relay (both removed:
+the network model replaced them), and the release publishes SHA256SUMS and a detached signature
 (`<asset>.sig`: base64 of the raw Ed25519 signature by the official AnixOps
 release key over the asset's exact bytes, as anix-control signs
 agent-install.sh) for every package and for SHA256SUMS.
@@ -53,17 +52,15 @@ def regular_member(archive: zipfile.ZipFile, name: str) -> zipfile.ZipInfo:
 def check_zip(path: Path) -> None:
     with zipfile.ZipFile(path) as archive:
         regular_member(archive, "anix-agent")
-        regular_member(archive, "anixops-relay")
-        if "gost" in archive.namelist():
-            raise CheckError("the package still holds gost, which was removed")
+        for removed in ("gost", "anixops-relay"):
+            if removed in archive.namelist():
+                raise CheckError(f"the package still holds {removed}, which was removed")
 
 
 def check_workflow(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     required = {
         f"ANIXOPS_OFFICIAL_PUBLIC_KEY: '{OFFICIAL_PUBLIC_KEY}'": "the official release key",
-        "-o ../../build_assets/anixops-relay": "the anixops relay built into the package",
-        "cd cmd/anixops-relay": "the anixops relay's own module",
         "scripts/check_release_assets.py zip": "the package check in the build",
         "secrets.ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY": "the signing key secret",
         "secrets.ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY": "the official key secret",
@@ -95,14 +92,14 @@ def self_test() -> None:
     executable = stat.S_IFREG | 0o755
     with tempfile.TemporaryDirectory() as tmp:
         good = Path(tmp) / "good.zip"
-        make_zip(good, {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable)})
+        make_zip(good, {"anix-agent": (b"agent", executable)})
         check_zip(good)
         cases = {
-            "gost": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable), "gost": (b"gost", executable)},
-            "no agent": {"anixops-relay": (b"relay", executable)},
-            "no relay": {"anix-agent": (b"agent", executable)},
-            "relay link": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", stat.S_IFLNK | 0o777)},
-            "relay not executable": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", stat.S_IFREG | 0o644)},
+            "gost": {"anix-agent": (b"agent", executable), "gost": (b"gost", executable)},
+            "relay": {"anix-agent": (b"agent", executable), "anixops-relay": (b"relay", executable)},
+            "no agent": {"README.md": (b"readme", stat.S_IFREG | 0o644)},
+            "agent link": {"anix-agent": (b"agent", stat.S_IFLNK | 0o777)},
+            "agent not executable": {"anix-agent": (b"agent", stat.S_IFREG | 0o644)},
         }
         for name, members in cases.items():
             bad = Path(tmp) / "bad.zip"
@@ -138,7 +135,7 @@ def main(argv: list[str]) -> int:
             self_test()
         elif args.command == "zip":
             check_zip(args.zip)
-            print(f"{args.zip.name}: anix-agent and anixops-relay are in the package")
+            print(f"{args.zip.name}: anix-agent is in the package")
         elif args.command == "workflow":
             check_workflow(args.file)
             print(f"{args.file.name}: the package build, SHA256SUMS and signatures are in place")
