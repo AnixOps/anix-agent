@@ -166,7 +166,37 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 	if err := n.applyEgress(snapshot); err != nil {
 		errs = append(errs, err)
 	}
+	if err := n.applyQoS(snapshot); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// applyQoS runs the snapshot's traffic priorities and per-user class caps
+// (the member "qos") on the node's core; a snapshot without them turns
+// them off. A core that cannot run them is skipped: traffic still flows.
+func (n *nodeDataPlane) applyQoS(snapshot *agentv1pb.ConfigSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	qos, err := panel.ParseQoS(snapshot.GetConfigJson())
+	if err != nil {
+		return err
+	}
+	for _, controller := range n.controllers {
+		if controller.server == nil {
+			continue
+		}
+		applier, ok := controller.server.(vCore.QoSApplier)
+		if !ok {
+			return nil
+		}
+		if err := applier.ApplyQoS(qos); err != nil {
+			return fmt.Errorf("traffic priorities: %w", err)
+		}
+		return nil
+	}
+	return nil
 }
 
 // applyEgress runs the snapshot's egress routes and relays (the member

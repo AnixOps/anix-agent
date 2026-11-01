@@ -76,6 +76,8 @@ type client struct {
 	blockRules atomic.Bool
 	// reverseProxy is whether the kernel runs reverse_proxy inbounds.
 	reverseProxy atomic.Bool
+	// qos is whether the kernel takes traffic priorities (PUT /v1/qos).
+	qos atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -139,6 +141,7 @@ func (c *client) status(ctx context.Context) error {
 	c.userLimits.Store(slices.Contains(status.Features, "user_limits"))
 	c.blockRules.Store(slices.Contains(status.Features, "block_rules"))
 	c.reverseProxy.Store(slices.Contains(status.Features, reverseProxyFeature))
+	c.qos.Store(slices.Contains(status.Features, qosFeature))
 	return nil
 }
 
@@ -213,6 +216,10 @@ func (c *client) putRules(ctx context.Context, rules rulesConfig) error {
 
 func (c *client) putEgress(ctx context.Context, config *panel.EgressConfig) error {
 	return c.do(ctx, http.MethodPut, "/v1/egress", config, nil)
+}
+
+func (c *client) putQoS(ctx context.Context, config json.RawMessage) error {
+	return c.do(ctx, http.MethodPut, "/v1/qos", config, nil)
 }
 
 func (c *client) putNetwork(ctx context.Context, plan json.RawMessage, out any) error {

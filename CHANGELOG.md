@@ -4,6 +4,12 @@
 
 ### Added
 
+- Traffic priorities and per-user class caps: the member "qos" of a
+  node's configuration (Control's QoS settings: category priorities, the
+  node's download capacity, caps such as Steam downloads at 5 Mbit/s per
+  user) goes to anixcore as `PUT /v1/qos` and again after anixcore
+  restarts; a configuration without it turns them off. An anixcore without
+  the `qos` feature is told nothing and a warning is logged.
 - mTLS on the anx-server / anx-node management APIs (anx spec §7, F-24).
   When the installed release supports it, every anx-server the Agent
   starts and every anx-node with AnxLine gets a one-off CA, a server

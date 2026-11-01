@@ -24,6 +24,7 @@ type fakeAPI struct {
 	egress   []map[string]any
 	network  []map[string]any
 	rules    []rulesConfig
+	qos      []string
 	features []string
 }
 
@@ -62,6 +63,9 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &rules)
 		f.rules = append(f.rules, rules)
 		reply(200, rules)
+	case r.Method == "PUT" && r.URL.Path == "/v1/qos":
+		f.qos = append(f.qos, string(body))
+		reply(200, map[string]any{"active": true})
 	case r.Method == "PUT" && r.URL.Path == "/v1/network":
 		var plan map[string]any
 		_ = json.Unmarshal(body, &plan)
@@ -470,5 +474,49 @@ func TestBlockRulesOfAllNodesGoToKernelsThatTakeThem(t *testing.T) {
 	}
 	if len(old.rules) != 0 {
 		t.Fatalf("rules sent to an old anixcore: %v", old.rules)
+	}
+}
+
+func TestQoSGoesToKernelsThatTakeIt(t *testing.T) {
+	config := json.RawMessage(`{"egress_mbps":100,"classes":[{"name":"steam","priority":"low","limit_mbps":5,"domains":["steamcontent.com"]}]}`)
+
+	// Without the feature nothing is sent, and nothing fails.
+	api, server := newFakeAPI(t)
+	core := externalCore(t, server)
+	defer core.Close()
+	if err := core.ApplyQoS(config); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.qos) != 0 {
+		t.Fatalf("qos sent to a kernel without it: %v", api.qos)
+	}
+
+	api, server = newFakeAPI(t)
+	api.features = []string{"qos"}
+	core = externalCore(t, server)
+	defer core.Close()
+	// Off before anything was set sends nothing.
+	if err := core.ApplyQoS(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.ApplyQoS(config); err != nil {
+		t.Fatal(err)
+	}
+	// The same configuration again is not resent.
+	if err := core.ApplyQoS(config); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.qos) != 1 || api.qos[0] != string(config) {
+		t.Fatalf("qos = %v", api.qos)
+	}
+	// A restarted anixcore gets it again; nil turns it off.
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.ApplyQoS(nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.qos) != 3 || api.qos[1] != string(config) || api.qos[2] != "{}" {
+		t.Fatalf("qos = %v", api.qos)
 	}
 }

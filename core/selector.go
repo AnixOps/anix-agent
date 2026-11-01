@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -281,6 +282,18 @@ func (s *Selector) ApplyEgress(config *panel.EgressConfig) error {
 		return nil
 	}
 	return ErrEgressUnsupported
+}
+
+// ApplyQoS implements QoSApplier: the first core in configuration order
+// that runs traffic priorities runs them; without one, they are left out
+// (a warning, not an error: traffic still flows).
+func (s *Selector) ApplyQoS(config json.RawMessage) error {
+	for _, key := range s.order {
+		if applier, ok := s.cores[key].(QoSApplier); ok {
+			return applier.ApplyQoS(config)
+		}
+	}
+	return nil
 }
 
 // networkApplier is the first core in configuration order that runs the
