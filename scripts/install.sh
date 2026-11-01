@@ -217,12 +217,12 @@ fetch_latest_release() {
 
 validate_version() {
     local version="$1"
-    if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+(\.dev\.[0-9]+)?)?)?$ ]]; then
+    if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+(\.(dev|hf)\.[0-9]+)?)?)?$ ]]; then
         error "版本号格式无效：${version}"
         exit 1
     fi
-    # 内部测试 (dev) 包与同号 Control 一起发布在 anix-control 的预发布里。
-    if [[ "${version}" == *.dev.* ]]; then
+    # 内部测试 (dev) 包和热修复 (hf) 包与同号 Control 一起发布在 anix-control 的预发布里。
+    if [[ "${version}" == *.dev.* || "${version}" == *.hf.* ]]; then
         RELEASE_BASE="https://github.com/${REPO_OWNER}/anix-control/releases/download"
     fi
 }

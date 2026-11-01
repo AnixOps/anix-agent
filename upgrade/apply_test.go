@@ -307,6 +307,9 @@ func TestCompareVersions(t *testing.T) {
 		{"v5.0.0-rc.15.dev.1", "v5.0.0-rc.15", 1}, {"v5.0.0-rc.15.dev.0", "v5.0.0-rc.15", 1},
 		{"v5.0.0-rc.15.dev.42", "v5.0.0-rc.15.dev.9", 1}, {"v5.0.0-rc.15.dev.42", "v5.0.0-rc.16", -1},
 		{"v5.0.0-rc.15.dev.42", "v5.0.0", -1}, {"v5.0.1-alpha.0.dev.3", "v5.0.0", 1},
+		{"v5.0.0-rc.25.hf.1", "v5.0.0-rc.25", 1}, {"v5.0.0-rc.25.hf.2", "v5.0.0-rc.25.hf.1", 1},
+		{"v5.0.0-rc.25.hf.1", "v5.0.0-rc.25.dev.99", 1}, {"v5.0.0-rc.25.hf.9", "v5.0.0-rc.26", -1},
+		{"v5.0.0-rc.25.hf.1", "v5.0.0-rc.25.hf.1", 0},
 	} {
 		if got, ok := CompareVersions(c.a, c.b); !ok || got != c.want {
 			t.Errorf("CompareVersions(%s, %s) = %d %v, want %d", c.a, c.b, got, ok, c.want)
@@ -315,7 +318,8 @@ func TestCompareVersions(t *testing.T) {
 	if _, ok := CompareVersions("abc123", "v4.1.0"); ok {
 		t.Error("a commit is not a release")
 	}
-	for _, bad := range []string{"v5.0.0.dev.1", "v5.0.0-rc.dev.1", "v5.0.0-rc.15.dev", "v5.0.0-rc.15-dev.1"} {
+	for _, bad := range []string{"v5.0.0.dev.1", "v5.0.0-rc.dev.1", "v5.0.0-rc.15.dev", "v5.0.0-rc.15-dev.1",
+		"v5.0.0.hf.1", "v5.0.0-rc.25.hf", "v5.0.0-rc.25.hf.1.dev.2"} {
 		if _, ok := CompareVersions(bad, "v5.0.0"); ok {
 			t.Errorf("%s is not a release or dev build tag", bad)
 		}
