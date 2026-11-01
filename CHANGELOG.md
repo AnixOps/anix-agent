@@ -4,6 +4,9 @@
 
 ### Removed
 
+- The frozen `sdk/` module (`github.com/AnixOps/anix-agent/sdk`, last tag
+  `sdk/v1.1.0`, which stays fetchable) and its workflow. The Agent contract
+  lives in `github.com/AnixOps/anix-control/sdk`.
 - Every legacy transport: the UniProxy REST client (`api/panel` keeps only
   the configuration and user types), the v2board gRPC client (`api/grpc`,
   its proto and generated code), the WebSocket sync manager, node
