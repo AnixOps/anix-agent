@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Security
+
+- Go toolchain 1.26.9 → 1.26.10 (the release Control already builds with),
+  and CI runs govulncheck on the agent, the SDK and anixops-relay on every
+  pull request and nightly on main.
+- The deprecated `sdk` module moves from grpc v1.77.0 / x/net v0.53.0 to
+  grpc v1.83.2 / x/net v0.60.0 (the versions the agent itself uses):
+  govulncheck found six reachable advisories in the old versions, among
+  them GO-2026-6348 (HTTP/2 DATA fragmentation OOM) and GO-2026-6061.
+
 ### Added
 
 - Traffic priorities and per-user class caps: the member "qos" of a
