@@ -17,12 +17,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Reports on the stream (AG-5): traffic with online IPs, logs and status
-// replace UniProxy push/alive, v2board ReportTraffic/ReportOnline,
-// NodeLogService and ReportStatus, and the node runtime-health and
-// heartbeat routes. Traffic and logs go through the data plane's spool
-// while the stream carries reports.v1 or is down for less than the grace
-// period; after that, new data goes to the legacy transports.
+// Reports on the stream (AG-5): traffic with online IPs, logs and status.
+// Traffic and logs go through the data plane's spool, which keeps them
+// while the stream is down.
 
 const (
 	// trafficUsersPerBatch bounds the users of one TrafficReport, so a
@@ -39,12 +36,6 @@ const (
 // at most this often (each batch is a row Control remembers for 7 days); a
 // variable for tests.
 var logBatchInterval = 30 * time.Second
-
-// streamReports reports whether reports go to the stream (or its spool)
-// now.
-func (n *nodeDataPlane) streamReports() bool {
-	return n.mode(agentcontrol.CapabilityReports) != agentapi.DataPlaneLegacy
-}
 
 // submitTraffic hands a controller's traffic window to the spool as a
 // TrafficReport (in batches of trafficUsersPerBatch users). online is the
@@ -95,9 +86,8 @@ func (n *nodeDataPlane) submitTraffic(controller *Controller, traffic []panel.Us
 
 // reportDestinations reads the controller's destination statistics of the
 // window (destinations.v1) and spools them while the stream carries
-// destinations.v1 or is briefly down. Otherwise the window is dropped: no
-// legacy transport carries them. The core's counters are read either way,
-// so they never pile up.
+// destinations.v1 or is briefly down. Otherwise the window is dropped. The
+// core's counters are read either way, so they never pile up.
 func (c *Controller) reportDestinations() {
 	provider, ok := c.server.(vCore.DestinationProvider)
 	if !ok {
@@ -108,7 +98,7 @@ func (c *Controller) reportDestinations() {
 		log.WithFields(log.Fields{"tag": c.tag, "err": err}).Warn("Could not read the destination statistics")
 		return
 	}
-	if len(traffic) == 0 || c.stream.mode(agentcontrol.CapabilityDestinations) == agentapi.DataPlaneLegacy {
+	if len(traffic) == 0 || c.stream.mode(agentcontrol.CapabilityDestinations) == agentapi.DataPlaneOff {
 		return
 	}
 	c.stream.submitDestinations(c.tag, traffic)
@@ -204,21 +194,6 @@ func (n *nodeDataPlane) flushLogs() error {
 	n.logBuffer = nil
 	n.reportMu.Unlock()
 	if len(entries) == 0 || n.client == nil || n.client.DataPlane() == nil {
-		return nil
-	}
-	if !n.streamReports() {
-		// The stream went away for good while the entries waited: they
-		// go to the legacy transport as new data.
-		var legacy []panel.NodeLogEntry
-		for _, entry := range entries {
-			legacy = append(legacy, panel.NodeLogEntry{
-				Level: entry.Level, Source: entry.Source, Message: entry.Message,
-				Timestamp: time.UnixMilli(entry.LoggedAtUnixMs), TraceID: entry.TraceId, FieldsJSON: string(entry.FieldsJson),
-			})
-		}
-		if len(n.controllers) > 0 {
-			return n.controllers[0].apiClient.ReportNodeLogs(legacy)
-		}
 		return nil
 	}
 	return n.client.DataPlane().SubmitLogs(&agentv1pb.LogBatch{Entries: entries})

@@ -14,35 +14,21 @@ func TestConf_LoadFromPath(t *testing.T) {
 	if len(c.NodeConfig) == 0 {
 		t.Fatal("LoadFromPath() loaded no nodes")
 	}
-	if !c.NodeConfig[0].ApiConfig.AgentControlEnabled {
-		t.Fatal("example config must explicitly enable the v3 Agent control stream")
+	if c.NodeConfig[0].ApiConfig.NodeID != 33 {
+		t.Fatalf("NodeID = %d, want 33", c.NodeConfig[0].ApiConfig.NodeID)
 	}
 }
 
-func TestApiConfigAgentControlRequiresExplicitOptIn(t *testing.T) {
-	var legacy ApiConfig
-	if err := json.Unmarshal([]byte(`{"ApiHost":"http://127.0.0.1","NodeID":1,"ApiKey":"key"}`), &legacy); err != nil {
-		t.Fatalf("unmarshal legacy API config: %v", err)
+func TestApiConfigDefaultsAreSafe(t *testing.T) {
+	var api ApiConfig
+	if err := json.Unmarshal([]byte(`{"ApiHost":"https://control.company.net","NodeID":1}`), &api); err != nil {
+		t.Fatalf("unmarshal API config: %v", err)
 	}
-	if legacy.AgentControlEnabled {
-		t.Fatal("legacy config without AgentControlEnabled unexpectedly enabled the control stream")
+	if api.PluginSupervisorEnabled {
+		t.Fatal("a config without PluginSupervisorEnabled unexpectedly enabled the plugin runtime")
 	}
-	if legacy.PluginSupervisorEnabled {
-		t.Fatal("legacy config without PluginSupervisorEnabled unexpectedly enabled the plugin runtime")
-	}
-
-	var current ApiConfig
-	if err := json.Unmarshal([]byte(`{"AgentControlEnabled":true}`), &current); err != nil {
-		t.Fatalf("unmarshal current API config: %v", err)
-	}
-	if !current.AgentControlEnabled {
-		t.Fatal("AgentControlEnabled=true was not preserved")
-	}
-	if current.AgentControlAllowInsecure {
+	if api.AgentControlAllowInsecure {
 		t.Fatal("AgentControlAllowInsecure unexpectedly defaults to true")
-	}
-	if current.PluginSupervisorEnabled {
-		t.Fatal("AgentControlEnabled must not implicitly enable the plugin Supervisor")
 	}
 
 	var insecure ApiConfig

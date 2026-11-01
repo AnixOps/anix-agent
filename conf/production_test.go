@@ -1,7 +1,6 @@
 package conf
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,17 +12,14 @@ func readyProductionAgentConfig() *Conf {
 		CoresConfig: []CoreConfig{{Type: "anixcore"}},
 		NodeConfig: []NodeConfig{{
 			ApiConfig: ApiConfig{
-				APIHost: "https://control.company.net", Transport: "grpc",
+				APIHost:  "https://control.company.net",
 				GRPCHost: "control.company.net:443", GRPCUseTLS: true, GRPCServerName: "control.company.net",
-				AgentControlEnabled: true, MaintenanceEnvironment: "production", PluginSupervisorEnabled: true,
+				MaintenanceEnvironment: "production", PluginSupervisorEnabled: true,
 				PluginRoot: "/var/lib/anixops-agent/plugins", PluginSocketDir: "/run/anixops-agent/plugins",
 				PluginOfficialPublicKey: "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
-				NodeID:                  7, Key: strings.Repeat("k", 32), Timeout: 30, EnableSign: true, GRPCKeepalive: 30,
+				NodeID:                  7, GRPCKeepalive: 30,
 			},
-			Options: Options{Core: "anixcore", SyncConfig: &SyncConfig{
-				EnableWebSocket: true, WSEndpoint: "/api/v2/agent/ws", ReconnectInterval: 5,
-				PingInterval: 30, PongTimeout: 10, AckTimeout: 5, AckRetries: 2, BufferSize: 100,
-			}},
+			Options: Options{Core: "anixcore"},
 		}},
 	}
 }
@@ -35,12 +31,12 @@ func TestValidateForProductionAcceptsCompleteAgentConfig(t *testing.T) {
 func TestValidateForProductionRejectsDisabledOrPlaceholderRuntime(t *testing.T) {
 	cfg := readyProductionAgentConfig()
 	cfg.NodeConfig[0].ApiConfig.APIHost = "https://control.example.com"
-	cfg.NodeConfig[0].ApiConfig.PluginSupervisorEnabled = false
-	cfg.NodeConfig[0].Options.SyncConfig.EnableWebSocket = false
+	cfg.NodeConfig[0].ApiConfig.PluginOfficialPublicKey = ""
+	cfg.NodeConfig[0].ApiConfig.GRPCUseTLS = false
 
 	err := cfg.ValidateForProduction()
 	require.Error(t, err)
-	for _, expected := range []string{"ApiHost", "PluginSupervisorEnabled", "EnableWebSocket"} {
+	for _, expected := range []string{"ApiHost", "PluginOfficialPublicKey", "GRPCUseTLS"} {
 		require.ErrorContains(t, err, expected)
 	}
 }

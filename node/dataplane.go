@@ -24,25 +24,24 @@ import (
 )
 
 // The node side of the control stream's data plane (AG-3): one per Agent
-// control stream, serving every controller of that node. Configuration
-// snapshots (config.v1) replace UniProxy's config pull, v2board GetConfig,
-// the WebSocket config_update and the node.reload re-pull; they go through
-// the same restart path as a legacy configuration change.
+// control stream, serving every controller of that node: configuration
+// snapshots (config.v1), user deltas (users.v1), alive lists (alive.v1) and
+// the reports.
 
 // Startup waits of a node whose data plane is on (Node.Start).
 var (
-	// streamStartupWait bounds the wait for the first session when the
-	// node has no stored configuration. Without a session by then the
-	// node starts on the legacy transports.
+	// streamStartupWait bounds the wait for the first session in the
+	// foreground. Without a session by then the node starts in the
+	// background once the stream comes up (nodeDataPlane.awaitStream).
 	streamStartupWait = 20 * time.Second
 	// streamConfigWait bounds the wait for the first snapshot once a
 	// session negotiated config.v1. Control sends one right after the
-	// HelloAck; without it the start fails (systemd restarts the Agent)
-	// rather than falling back to a transport Control has moved away from.
+	// HelloAck; without it the start fails (systemd restarts the Agent).
 	streamConfigWait = 60 * time.Second
-	// streamLegacyGrace is how long after the stream went down the legacy
-	// transports stay off (0: agentapi.DefaultLegacyGrace); tests lower it.
-	streamLegacyGrace time.Duration
+	// streamPendingGrace is how long after the stream went down a
+	// capability it carried counts as pending (0:
+	// agentapi.DefaultPendingGrace); tests lower it.
+	streamPendingGrace time.Duration
 )
 
 // nodeDataPlane applies what the stream delivers to a node's controllers.
@@ -62,19 +61,20 @@ type nodeDataPlane struct {
 	// network runs the device's network plan (network.v1), nil when the
 	// node does not drive the core's network model.
 	network *networkComponent
-	// streamOnly marks a node without an API key (the O1 installer's
-	// credential-only configuration): it has no legacy transport, so it
-	// waits for the stream (enrollment, then Control's snapshot) instead
-	// of falling back. awaiting is set while it waits in the background.
-	streamOnly bool
+	// awaiting is set while the node waits in the background for its
+	// stream (enrollment, then Control's snapshot).
 	awaiting   atomic.Bool
 	background sync.WaitGroup
 
 	// startupUsers are the users the controllers start with during a
-	// stream start (startupUsersSet), nil otherwise: they then pull them.
+	// stream start (startupUsersSet); lastUsers the node's latest set
+	// (lastUsersSet), for a controller that starts later. Guarded by
+	// startupMu.
 	startupMu       sync.Mutex
 	startupUsers    []panel.UserInfo
 	startupUsersSet bool
+	lastUsers       []panel.UserInfo
+	lastUsersSet    bool
 
 	// Reports (AG-5), guarded by reportMu: each controller's latest online
 	// IPs, whether the last traffic report had any, the log buffer.
@@ -109,16 +109,6 @@ func (n *nodeDataPlane) supervisor() *plugin.Supervisor {
 	return nil
 }
 
-// detach returns the controllers to the legacy transports, after the
-// stream could not be created.
-func (n *nodeDataPlane) detach() {
-	for _, controller := range n.controllers {
-		if controller.stream == n {
-			controller.stream = nil
-		}
-	}
-}
-
 func (n *nodeDataPlane) logger() *log.Entry {
 	// Never the controllers' tag field: RemoteLogHook forwards entries
 	// carrying it, and these are about the transport itself.
@@ -128,14 +118,13 @@ func (n *nodeDataPlane) logger() *log.Entry {
 // mode says which transport carries capability's data for this node.
 func (n *nodeDataPlane) mode(capability string) agentapi.DataPlaneMode {
 	if n == nil || n.client == nil || n.client.DataPlane() == nil {
-		return agentapi.DataPlaneLegacy
+		return agentapi.DataPlaneOff
 	}
 	return n.client.DataPlane().Mode(capability)
 }
 
 // ApplyConfig implements agentapi.ConfigApplier: each controller runs its
-// entry of the snapshot, started or reloaded through the legacy restart
-// path.
+// entry of the snapshot, started or reloaded.
 func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
 	if n.forward != nil {
 		// The forwarding member first: a malformed one refuses the
@@ -338,7 +327,7 @@ func (n *nodeDataPlane) reconcileExtras(ctx context.Context, snapshot *agentv1pb
 // startExtra starts extra from snapshot with the users the node runs: the
 // stream start's, else the first controller's.
 func (n *nodeDataPlane) startExtra(base, extra *Controller, snapshot *agentv1pb.ConfigSnapshot) error {
-	info, err := nodeInfoFromSnapshot(snapshot, "", extra.protocolID, base.apiClient.GetNodeID())
+	info, err := nodeInfoFromSnapshot(snapshot, "", extra.protocolID, base.nodeID)
 	if err != nil {
 		return agentapi.InvalidConfig(err)
 	}
@@ -371,32 +360,11 @@ func (n *nodeDataPlane) forgetController(controller *Controller) {
 	n.reportMu.Unlock()
 }
 
-// shareLegacyPull hands the users and alive list the node's first
-// controller pulled over the legacy transports (nil: unchanged) to the
-// extras, which pull nothing themselves.
-func (n *nodeDataPlane) shareLegacyPull(from *Controller, users []panel.UserInfo, alive map[int]int) {
-	if n == nil || (users == nil && alive == nil) || from != n.expandingController() {
-		return
-	}
-	for _, extra := range n.allControllers()[len(n.controllers):] {
-		var copied []panel.UserInfo
-		if users != nil {
-			copied = append([]panel.UserInfo{}, users...)
-		}
-		extra.reconcileMu.Lock()
-		err := extra.reconcileLocked(nil, copied, alive)
-		extra.reconcileMu.Unlock()
-		if err != nil {
-			log.WithField("tag", extra.tag).WithError(err).Error("Could not apply the node's users")
-		}
-	}
-}
-
 // snapshotExtraProtocols lists the protocols of snapshot past the first, in
-// the document's order, that legacy_pull.protocols answers. The first is
-// the one legacy_pull.default answers. None when Control sends no
-// per-protocol answers (an older Control, or a raw configuration, which the
-// node runs instead of its protocols).
+// the document's order, that runtime.protocols answers. The first is the
+// one runtime.default answers. None when Control sends no per-protocol
+// answers (a raw configuration, which the node runs instead of its
+// protocols).
 func snapshotExtraProtocols(snapshot *agentv1pb.ConfigSnapshot) ([]uint64, error) {
 	if snapshot == nil {
 		return nil, nil
@@ -405,15 +373,16 @@ func snapshotExtraProtocols(snapshot *agentv1pb.ConfigSnapshot) ([]uint64, error
 	if err := json.Unmarshal(snapshot.GetConfigJson(), &document); err != nil {
 		return nil, fmt.Errorf("decode the configuration document: %w", err)
 	}
-	if document.LegacyPull == nil || len(document.LegacyPull.Protocols) == 0 || len(document.Protocols) == 0 {
+	runtime := document.runtimeAnswers()
+	if runtime == nil || len(runtime.Protocols) == 0 || len(document.Protocols) == 0 {
 		return nil, nil
 	}
-	if _, ok := document.LegacyPull.Protocols[strconv.FormatUint(document.Protocols[0].ID, 10)]; !ok {
+	if _, ok := runtime.Protocols[strconv.FormatUint(document.Protocols[0].ID, 10)]; !ok {
 		return nil, nil
 	}
 	var ids []uint64
 	for _, protocol := range document.Protocols[1:] {
-		if body := document.LegacyPull.Protocols[strconv.FormatUint(protocol.ID, 10)]; len(body) > 0 && string(body) != "null" {
+		if body := runtime.Protocols[strconv.FormatUint(protocol.ID, 10)]; len(body) > 0 && string(body) != "null" {
 			ids = append(ids, protocol.ID)
 		}
 	}
@@ -424,6 +393,9 @@ func snapshotExtraProtocols(snapshot *agentv1pb.ConfigSnapshot) ([]uint64, error
 // adds and removes the users that changed, without restarting the core.
 func (n *nodeDataPlane) ApplyUsers(ctx context.Context, set agentapi.UserSet) error {
 	users := panelUsers(set.Users)
+	n.startupMu.Lock()
+	n.lastUsers, n.lastUsersSet = append([]panel.UserInfo(nil), users...), true
+	n.startupMu.Unlock()
 	var errs []error
 	for _, controller := range n.allControllers() {
 		if err := ctx.Err(); err != nil {
@@ -468,8 +440,8 @@ func aliveMap(alive map[uint64]uint32) map[int]int {
 	return converted
 }
 
-// startupUserList returns a copy of the users to start with, ok false when
-// the controller pulls them over the legacy transport.
+// startupUserList returns a copy of the users to start with during a
+// stream start, ok false outside one.
 func (n *nodeDataPlane) startupUserList() ([]panel.UserInfo, bool) {
 	if n == nil {
 		return nil, false
@@ -482,10 +454,29 @@ func (n *nodeDataPlane) startupUserList() ([]panel.UserInfo, bool) {
 	return append([]panel.UserInfo(nil), n.startupUsers...), true
 }
 
+// currentUserList returns a copy of the users a controller starts with:
+// the stream start's, else the node's latest set; ok false before the
+// stream delivered one.
+func (n *nodeDataPlane) currentUserList() ([]panel.UserInfo, bool) {
+	if users, ok := n.startupUserList(); ok {
+		return users, true
+	}
+	if n == nil {
+		return nil, false
+	}
+	n.startupMu.Lock()
+	defer n.startupMu.Unlock()
+	if !n.lastUsersSet {
+		return nil, false
+	}
+	return append([]panel.UserInfo(nil), n.lastUsers...), true
+}
+
 func (n *nodeDataPlane) setStartupUsers(users []*agentv1pb.NodeUser) {
 	converted := panelUsers(users)
 	n.startupMu.Lock()
 	n.startupUsers, n.startupUsersSet = converted, true
+	n.lastUsers, n.lastUsersSet = append([]panel.UserInfo(nil), converted...), true
 	n.startupMu.Unlock()
 }
 
@@ -495,10 +486,9 @@ func (n *nodeDataPlane) clearStartupUsers() {
 	n.startupMu.Unlock()
 }
 
-// start brings the node's controllers up from the stream, or from the
-// legacy transports for what the stream does not serve, and then lets
-// later snapshots and user deltas through (Activate). The client is
-// started here.
+// start brings the node's controllers up from the stream (or from the
+// stored state), and then lets later snapshots and user deltas through
+// (Activate). The client is started here.
 func (n *nodeDataPlane) start(ctx context.Context) error {
 	plane := n.client.DataPlane()
 	n.stop, n.stopped = make(chan struct{}), make(chan struct{})
@@ -520,6 +510,9 @@ func (n *nodeDataPlane) start(ctx context.Context) error {
 			plane.DiscardPersistedUsers()
 			persistedConfig, persistedUsers = nil, nil
 			n.clearStartupUsers()
+			n.startupMu.Lock()
+			n.lastUsers, n.lastUsersSet = nil, false
+			n.startupMu.Unlock()
 		} else {
 			plane.RestoreConfig(persistedConfig)
 			plane.RestoreUsers(*persistedUsers)
@@ -540,29 +533,25 @@ func (n *nodeDataPlane) start(ctx context.Context) error {
 	waitCtx, cancel := context.WithTimeout(ctx, streamStartupWait)
 	_, waitErr := plane.WaitSession(waitCtx)
 	cancel()
-	if waitErr != nil && n.streamOnly && persistedConfig == nil {
-		// No legacy transport to fall back to: the node starts when the
-		// stream comes up (after enrollment, which may wait for the
-		// one-time credential), in the background.
-		n.logger().WithError(waitErr).Warn("The Agent control stream did not connect in time; this node has no ApiKey for the legacy transports, so it starts once the stream delivers its configuration (enrollment may still be pending)")
+	if waitErr != nil {
+		// The node starts when the stream comes up (after enrollment,
+		// which may wait for the one-time credential), in the background.
+		n.logger().WithError(waitErr).Warn("The Agent control stream did not connect in time; the node starts once the stream delivers its configuration (enrollment may still be pending)")
 		n.awaitStream(persistedUsers)
 		return nil
 	}
-	if waitErr != nil {
-		n.logger().WithError(waitErr).Warn("The Agent control stream did not connect in time; starting the node on the stored state or the legacy transports")
-	}
-	return n.finishStart(ctx, waitErr, persistedConfig, persistedUsers)
+	return n.finishStart(ctx, persistedConfig, persistedUsers)
 }
 
-// streamStartFailed ends the Agent when a stream-only node could not start
-// from the stream in the background: systemd starts it again, as after a
+// streamStartFailed ends the Agent when a node could not start from the
+// stream in the background: systemd starts it again, as after a
 // failed start in the foreground. Tests replace it.
 var streamStartFailed = func(nodeID int, err error) {
 	log.WithFields(log.Fields{"component": "agent-dataplane", "node_id": nodeID}).WithError(err).
 		Fatal("Could not start the node from the Agent control stream")
 }
 
-// awaitStream starts a stream-only node once its stream has a session.
+// awaitStream starts the node once its stream has a session.
 func (n *nodeDataPlane) awaitStream(persistedUsers *agentapi.UserSet) {
 	n.awaiting.Store(true)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -584,7 +573,7 @@ func (n *nodeDataPlane) awaitStream(persistedUsers *agentapi.UserSet) {
 			return
 		}
 		n.logger().Info("The Agent control stream is up; starting the node from it")
-		if err := n.finishStart(ctx, nil, nil, persistedUsers); err != nil {
+		if err := n.finishStart(ctx, nil, persistedUsers); err != nil {
 			if ctx.Err() != nil {
 				return
 			}
@@ -593,16 +582,15 @@ func (n *nodeDataPlane) awaitStream(persistedUsers *agentapi.UserSet) {
 	}()
 }
 
-// waitingForStream tells whether a stream-only node is still waiting for
-// its stream: its controllers must not start on the legacy transports.
+// waitingForStream tells whether the node is still waiting for its stream
+// in the background.
 func (n *nodeDataPlane) waitingForStream() bool {
 	return n != nil && n.awaiting.Load()
 }
 
 // finishStart starts the node's controllers once the stream had its
-// chance: from the stream, from the stored state, or on the legacy
-// transports.
-func (n *nodeDataPlane) finishStart(ctx context.Context, waitErr error, persistedConfig *agentv1pb.ConfigSnapshot, persistedUsers *agentapi.UserSet) error {
+// chance: from the stream, or from the stored state.
+func (n *nodeDataPlane) finishStart(ctx context.Context, persistedConfig *agentv1pb.ConfigSnapshot, persistedUsers *agentapi.UserSet) error {
 	plane := n.client.DataPlane()
 	defer n.clearStartupUsers()
 	configMode := plane.Mode(agentcontrol.CapabilityConfig)
@@ -624,10 +612,7 @@ func (n *nodeDataPlane) finishStart(ctx context.Context, waitErr error, persiste
 		plane.RestoreUsers(*persistedUsers)
 		n.setStartupUsers(persistedUsers.Users)
 	default:
-		if n.streamOnly && configMode == agentapi.DataPlaneStream {
-			return fmt.Errorf("node %d: Control serves configuration but not users (users.v1) on the Agent control stream, and this node has no ApiKey for the legacy transports", n.nodeID)
-		}
-		n.clearStartupUsers()
+		return fmt.Errorf("node %d: Control does not serve the node's users (users.v1) on the Agent control stream: upgrade Control", n.nodeID)
 	}
 
 	switch {
@@ -649,20 +634,7 @@ func (n *nodeDataPlane) finishStart(ctx context.Context, waitErr error, persiste
 		}
 		plane.RestoreConfig(persistedConfig)
 	default:
-		if n.streamOnly {
-			return fmt.Errorf("node %d: Control does not serve configuration on the Agent control stream (config.v1), and this node has no ApiKey for the legacy transports: upgrade Control, or configure the node's ApiKey", n.nodeID)
-		}
-		if waitErr == nil {
-			n.logger().Info("Control does not serve configuration on the Agent control stream (config.v1); starting the node on the legacy transports")
-		}
-		for _, controller := range n.controllers {
-			if controller.isStarted() {
-				continue
-			}
-			if err := controller.Start(); err != nil {
-				return fmt.Errorf("start node controller %s: %w", controller.label(), err)
-			}
-		}
+		return fmt.Errorf("node %d: Control does not serve configuration on the Agent control stream (config.v1): upgrade Control", n.nodeID)
 	}
 	if taken != nil {
 		plane.UsersResult(*taken, nil)
@@ -681,27 +653,38 @@ func (n *nodeDataPlane) allStarted() bool {
 }
 
 // snapshotDocument is the part of an anixops.nodeconfig/v1 document a proxy
-// Agent runs: the UniProxy configuration answers (legacy_pull), byte for
-// byte what the legacy pull would give the node.
+// Agent runs: the node's runtime configuration answers (runtime).
 type snapshotDocument struct {
 	Kind string `json:"kind"`
 	// Protocols are the node's enabled protocols, in order.
 	Protocols []struct {
 		ID uint64 `json:"id"`
 	} `json:"protocols"`
-	LegacyPull *struct {
-		Default json.RawMessage            `json:"default"`
-		Types   map[string]json.RawMessage `json:"types"`
-		// Protocols holds each enabled protocol's answer, by protocol id
-		// (UniProxy's protocol_id); Control sends it since v5.0.0-rc.2.
-		Protocols map[string]json.RawMessage `json:"protocols"`
-	} `json:"legacy_pull"`
+	Runtime *snapshotRuntime `json:"runtime"`
+	// LegacyPull is runtime's earlier name, which Control still sends
+	// alongside it; read when runtime is missing.
+	LegacyPull *snapshotRuntime `json:"legacy_pull"`
+}
+
+// snapshotRuntime holds the node's configuration answers: the default, by
+// node type, and by protocol id.
+type snapshotRuntime struct {
+	Default   json.RawMessage            `json:"default"`
+	Types     map[string]json.RawMessage `json:"types"`
+	Protocols map[string]json.RawMessage `json:"protocols"`
+}
+
+func (d snapshotDocument) runtimeAnswers() *snapshotRuntime {
+	if d.Runtime != nil {
+		return d.Runtime
+	}
+	return d.LegacyPull
 }
 
 // nodeInfoFromSnapshot returns the node configuration a controller with
 // nodeType (its configured NodeType, empty for the node's default) runs
-// from snapshot: legacy_pull.types[nodeType], or legacy_pull.default. An
-// extra controller (protocolID set) runs legacy_pull.protocols[protocolID].
+// from snapshot: runtime.types[nodeType], or runtime.default. An extra
+// controller (protocolID set) runs runtime.protocols[protocolID].
 func nodeInfoFromSnapshot(snapshot *agentv1pb.ConfigSnapshot, nodeType string, protocolID uint64, nodeID int) (*panel.NodeInfo, error) {
 	if snapshot == nil {
 		return nil, errors.New("no configuration snapshot")
@@ -713,38 +696,38 @@ func nodeInfoFromSnapshot(snapshot *agentv1pb.ConfigSnapshot, nodeType string, p
 	if document.Kind != "" && document.Kind != agentcontrol.NodeKindProxy {
 		return nil, fmt.Errorf("the configuration is of a %s node; this Agent runs proxy nodes", document.Kind)
 	}
-	if document.LegacyPull == nil {
-		return nil, errors.New("the configuration document has no legacy_pull")
+	runtime := document.runtimeAnswers()
+	if runtime == nil {
+		return nil, errors.New("the configuration document has no runtime answers")
 	}
 	var body json.RawMessage
 	if protocolID != 0 {
-		body = document.LegacyPull.Protocols[strconv.FormatUint(protocolID, 10)]
+		body = runtime.Protocols[strconv.FormatUint(protocolID, 10)]
 		if len(body) == 0 || string(body) == "null" {
-			return nil, fmt.Errorf("the node serves no protocol %d (legacy_pull.protocols)", protocolID)
+			return nil, fmt.Errorf("the node serves no protocol %d (runtime.protocols)", protocolID)
 		}
 	} else if normalized := normalizeNodeType(nodeType); normalized != "" {
-		body = document.LegacyPull.Types[normalized]
+		body = runtime.Types[normalized]
 		if len(body) == 0 || string(body) == "null" {
-			return nil, fmt.Errorf("the node serves no %q configuration (legacy_pull.types)", normalized)
+			return nil, fmt.Errorf("the node serves no %q configuration (runtime.types)", normalized)
 		}
 	} else {
-		body = document.LegacyPull.Default
+		body = runtime.Default
 		if len(body) == 0 || string(body) == "null" {
-			return nil, errors.New("the configuration has no default answer (legacy_pull.default)")
+			return nil, errors.New("the configuration has no default answer (runtime.default)")
 		}
 	}
 	info, _, err := panel.ParseNodeInfo(body, nodeID)
 	return info, err
 }
 
-// panelUsers converts the stream's users to the node's user list, as the
-// legacy user pulls give it (UniProxy user, v2board GetUsers): extra_json
-// carries the WireGuard peer fields.
+// panelUsers converts the stream's users to the node's user list:
+// extra_json carries the WireGuard peer fields.
 func panelUsers(users []*agentv1pb.NodeUser) []panel.UserInfo {
 	converted := make([]panel.UserInfo, 0, len(users))
 	for _, user := range users {
 		info := panel.UserInfo{
-			Id: int(user.GetUserId()), Uuid: user.GetUuid(), // #nosec G115 -- user ids fit the legacy int field.
+			Id: int(user.GetUserId()), Uuid: user.GetUuid(), // #nosec G115 -- user ids fit the int field.
 			SpeedLimit: int(user.GetSpeedLimitMbps()), DeviceLimit: int(user.GetDeviceLimit()),
 		}
 		if len(user.GetExtraJson()) > 0 {
@@ -765,7 +748,7 @@ func panelUsers(users []*agentv1pb.NodeUser) []panel.UserInfo {
 }
 
 // normalizeNodeType is Control's service.NormalizeNodeType: the key of
-// legacy_pull.types.
+// runtime.types.
 func normalizeNodeType(nodeType string) string {
 	normalized := strings.ToLower(strings.TrimSpace(nodeType))
 	switch normalized {

@@ -127,6 +127,6 @@ jobs:
       - name: Proto codegen check
         shell: bash
         run: |
-          bash api/grpc/gen.sh
-          git diff --exit-code -- api/grpc/v2boardpb api/anxmgmt
-          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb api/anxmgmt)"
+          bash api/anxmgmt/gen.sh
+          git diff --exit-code -- api/anxmgmt
+          test -z "$(git ls-files --others --exclude-standard -- api/anxmgmt)"

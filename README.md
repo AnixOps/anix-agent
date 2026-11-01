@@ -4,8 +4,8 @@
 
 Agent 分批交付与验收状态：[docs/P4_EXECUTION_STATUS.md](docs/P4_EXECUTION_STATUS.md)；维护事件契约：[docs/contracts/maintenance-event.schema.json](docs/contracts/maintenance-event.schema.json)
 
-AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，用于连接 AnixOps
-Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、用户认证、
+AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，只通过 mTLS 的
+`anix.agent.v1` 控制流连接 AnixOps Control；它执行节点配置同步、用户认证、
 流量统计、在线状态上报和证书管理。
 项目源自 V2bX，迁移期间继续保留必要的旧命令和发行资产兼容入口。
 
@@ -18,9 +18,9 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 - AnixOps 自研内核 anixcore（anx-node）与 WireGuard 内核
 - VMess、VLESS、Trojan、Shadowsocks、Hysteria2 等协议
 - 用户流量、在线 IP、设备数量与动态限速上报
-- 节点自动注册、签名鉴权与凭证加密存储
+- 节点组接入令牌（`anix-agent join`）与一次性注册凭证，mTLS 客户端证书自动续期
 - ACME 证书申请、续期和自定义证书
-- REST、WebSocket、旧版 gRPC API 与 `anix.agent.v1` 双向 gRPC 控制流
+- `anix.agent.v1` 双向 gRPC 控制流：配置、用户、上报、维护事件与插件制品
 - 可选的官方签名插件 Supervisor（官方插件现只剩 `machine-telemetry`）
 - Linux、Windows 和 macOS 构建
 
@@ -175,52 +175,46 @@ Windows：
 .\anix-agent.exe server -c .\config.json
 ```
 
-`Transport` 选择现有配置/用户/流量数据面；`AgentControlEnabled` 独立开启 v3
-双向控制流。以下示例保留 REST 数据面作为回退，同时启用 Agent-first 预览：
+节点配置只描述如何连接 Control 与本机身份；节点的协议、端口、用户都由 Control
+通过控制流下发（与 Control 安装脚本写入的配置一致）：
 
 ```json
 {
-  "ApiHost": "https://panel.example.com",
-  "Transport": "http",
-  "GRPCHost": "panel.example.com:443",
+  "ApiHost": "https://control.example.com",
+  "GRPCHost": "control.example.com:50051",
   "GRPCUseTLS": true,
-  "GRPCServerName": "panel.example.com",
-  "GRPCKeepalive": 30,
-  "AgentControlEnabled": true,
-  "AgentControlAllowInsecure": false,
-  "PluginSupervisorEnabled": true,
-  "PluginRoot": "/var/lib/anixops-agent/plugins",
-  "PluginSocketDir": "/run/anixops-agent/plugins",
-  "PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
+  "AgentNode": "proxy-1",
   "NodeID": 1,
-  "ApiKey": "your-api-key"
+  "AgentIdentity": {
+    "Enroll": "auto",
+    "CertDir": "/var/lib/anixops-agent/pki",
+    "EnrollCredentialFile": "/var/lib/anixops-agent/enroll.credential"
+  },
+  "AgentStream": {"StateDir": "/var/lib/anixops-agent/stream"}
 }
 ```
 
-若不显式设置 `AgentControlEnabled: true`，旧配置不会自动建立新控制流。公网或
-非回环地址必须使用 TLS；不要通过放宽明文开关来绕过生产证书配置。
-若不显式设置 `PluginSupervisorEnabled: true`，Agent 仍只运行旧数据面，不会
-接受官方软件包生命周期操作。上面的 Base64 值是 AnixOps 官方 Ed25519 公钥，
-不是私钥；Control 与 Agent 必须使用同一个信任根。安装向导会生成这些字段，
-并以 `Transport: "http"` 保留旧数据面回退。
+控制流必须使用 TLS：客户端证书是节点唯一的凭证，没有节点 API key。
+`PluginSupervisorEnabled: true`（配合 `PluginRoot`、`PluginSocketDir` 与
+`PluginOfficialPublicKey`，后者是 AnixOps 官方 Ed25519 公钥，不是私钥）开启官方插件
+Supervisor。旧版本配置中的 `ApiKey`、`Transport`、`AgentControlEnabled`、
+`SyncConfig`、`AutoRegister` 等字段已删除，加载时被忽略。
 
 ### 控制流 mTLS 身份（AgentIdentity）
 
-开启 `AgentControlEnabled` 且控制流使用 TLS 时，Agent 会向 Control 的
-`AgentEnrollment` 申请客户端证书（SAN `spiffe://anixops/<cluster>/agent/proxy-<NodeID>`）：
+Agent 向 Control 的 `AgentEnrollment` 申请客户端证书（SAN
+`spiffe://anixops/<cluster>/agent/proxy-<NodeID>`）：
 
-- 首次使用节点 API key 注册一次；若配置了 `EnrollCredentialFile`，优先使用其中的
-  一次性 `anixagt_` 凭证（`anix-control agent token create -node proxy-<id>`）。
-  Control 4.2 默认 `agent_control.mtls: required`，此时只接受一次性凭证。
+- 首次注册使用 `EnrollCredentialFile` 中的一次性 `anixagt_` 凭证
+  （`anix-control agent token create -node proxy-<id>`），或 `anix-agent join`
+  的节点组接入令牌。
 - 私钥在本机生成（ECDSA P-256），与证书一起保存在
   `CertDir/proxy-<NodeID>/identity.pem`，CA 包在 `ca.pem`，元数据在
   `identity.json`；目录 0700、文件 0600，属主为运行 Agent 的用户（root）。
   权限过宽或属主不符的文件会被拒绝并重新注册。私钥不做“派生密钥加密”。
 - 在 Control 给出的续期时间（证书寿命的三分之二，7 天证书约第 4.7 天）自动续期；
   证书被吊销、过期或不属于本集群时丢弃并重新注册。
-- 注册成功后，控制流只出示证书，不再发送 `x-api-key`。仅当 Control 未请求客户端
-  证书（`agent_control.mtls: off`，或 Control 未启用内置 CA）时才回退到 API key。
-  REST/UniProxy、旧版 gRPC 与 WebSocket 链路在 AG-3 至 AG-5 之前仍使用 API key。
+- 控制流只出示证书。
 
 ```json
 "AgentIdentity": {
@@ -246,35 +240,28 @@ Windows：
 
 ### 控制流数据面：节点配置（AgentStream）
 
-开启 `AgentControlEnabled` 后，Agent 在 Hello 中声明 `config.v1`。Control 支持时
-（`HelloAck.server_capabilities` 含 `config.v1`），节点配置改由控制流的
-`ConfigSnapshot` 下发，不再拉取 UniProxy `config`、v2board `GetConfig`，也不再处理
-WebSocket `config_update` 或 `node.reload` 的重新拉取：
+Agent 在 Hello 中声明 `config.v1`，节点配置由控制流的 `ConfigSnapshot` 下发：
 
 - 只应用格式为 `anixops.nodeconfig/v1`、`config_hash` 与内容 SHA-256 一致的快照；
-  每个节点控制器取 `legacy_pull.types[<NodeType>]`（未配置 `NodeType` 时取
-  `default`），解析逻辑与 UniProxy 应答完全相同，内核按原有方式重启。
+  每个节点控制器取 `runtime.types[<NodeType>]`（未配置 `NodeType` 时取
+  `default`，其余协议取 `runtime.protocols`），配置变化时重启内核。
 - 每个快照都会以 `ConfigStatus` 回复（成功或失败原因）。
 - 成功应用的快照保存在 `AgentStream.StateDir/proxy-<NodeID>/config.pb`
   （默认 `/var/lib/anixops-agent/stream`，目录 0700、文件 0600）。重启时即使 Control
   不可达也直接运行该配置，并在 Hello 中上报其 revision，Control 只在配置变化时下发。
-- 无本地快照时最多等待 20 秒建立控制流；协商到 `config.v1` 后最多等待 60 秒的快照，
-  超时则启动失败（由 systemd 重启），不会退回旧链路。控制流不可用或 Control
-  不支持 `config.v1` 时按原方式经旧链路启动。
-- 控制流断开 5 分钟内不使用旧链路拉取配置；超过后恢复旧链路拉取。
-- `AgentStream.DataPlane: "off"` 可回退到旧链路（控制流只承载操作）。
+- 无本地快照时最多等待 20 秒建立控制流，之后在后台等待（如等待一次性注册凭证）；
+  协商到 `config.v1` 后最多等待 60 秒的快照，超时则启动失败（由 systemd 重启）。
+  Control 不支持 `config.v1` 或 `users.v1` 时启动失败：需要升级 Control。
 
 ```json
 "AgentStream": {
-  "DataPlane": "auto",
   "StateDir": "/var/lib/anixops-agent/stream"
 }
 ```
 
 ### 控制流数据面：用户（users.v1）
 
-Control 支持 `users.v1` 时，用户列表改由控制流的 `UserDelta` 下发，不再拉取
-UniProxy `user`、v2board `GetUsers`，也不处理 WebSocket `user_update` / `user_ban`：
+用户列表由控制流的 `UserDelta` 下发：
 
 - 分页的变更在收到 `last_page` 后一次应用；连接在最后一页之前断开时不做任何改动，
   游标保持不变。`full` 为整体替换，其余为按顺序应用的增量。
@@ -283,26 +270,24 @@ UniProxy `user`、v2board `GetUsers`，也不处理 WebSocket `user_update` / `u
 - 用户集合与游标保存在 `AgentStream.StateDir/proxy-<NodeID>/users.pb`（0600，
   最多每 2 秒写一次，退出时写入），并作为 `Hello.users_cursor` 上报；重连或重启后从
   游标继续。游标为 0、早于 Control 变更日志的保留范围或超前时，Control 分页全量重发。
-- 控制流同时承载配置与用户时不再启动旧的 WebSocket；插件维护 outbox 在协商
-  `maintenance.v1` 时也走控制流，不再需要仅维护模式的 WebSocket。
+- 插件维护 outbox 在协商 `maintenance.v1` 时走控制流。
 - Control 支持 `alive.v1` 时，设备数限制使用控制流下发的 `AliveList`（所有节点的
-  在线设备数，分页，收到 `last_page` 后整体替换，未列出的用户为 0），取代 UniProxy
-  `alivelist`；断线时未收完的列表被丢弃。没有 `alive.v1` 时只统计本节点的连接。
+  在线设备数，分页，收到 `last_page` 后整体替换，未列出的用户为 0）；断线时未收完的
+  列表被丢弃。没有 `alive.v1` 时只统计本节点的连接。
 
 ### 控制流数据面：上报与 spool（reports.v1、package-reports.v1）
 
-Control 支持 `reports.v1` 时，流量、在线 IP、日志与节点状态改由控制流上报，不再使用
-UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
+流量、在线 IP、日志与节点状态由控制流上报（`reports.v1`）：
 
 - 每个流量窗口（用户流量与本节点在线 IP）和日志批次带批次号
   `node:proxy-<id>:<boot id>:<序号>`，先持久化到
   `AgentStream.StateDir/proxy-<NodeID>/spool/{traffic,logs}/`（目录 0700、文件
   0600），再按顺序发送；收到 `ReportAck` 后删除，未确认的批次 30 秒后在控制流上重发，
-  从不改走旧链路，因此流量只计一次。
+  因此流量只计一次。
 - 上限：`SpoolMaxMB`（流量，默认 64）、`LogSpoolMaxMB`（日志，默认 16）、
   `SpoolMaxAgeHours`（默认 72，最大 144，低于 Control 7 天的批次记忆）；超出时先丢弃
   最旧批次并计数。重启后 spool 仍会继续发送。
-- 控制流断开 5 分钟内的新数据进入 spool；超过后新数据走旧链路。
+- 控制流断开期间的新数据进入 spool，重连后补发。
 - 节点状态（CPU、内存、磁盘、运行时间、内核健康）每分钟通过 `NodeStatus` 上报。
 - `package-reports.v1`：Supervisor 为插件进程设置 `ANIXOPS_NODE_ID`，
   `machine-telemetry` 采集本节点的 systemd 服务表；Agent 每 5 分钟（以及每次连接时）
@@ -313,11 +298,10 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
   `bittorrent` 等）；每个用户每个窗口最多 200 个目标，超出的合并为一条“其他”。
   每个流量窗口以 `DestinationReport` 上报，批次号 `node:proxy-<id>:<boot id>:destinations-<序号>`，
   单独的 spool `spool/destinations/`（16 MB）。是否记录、保留多久由 Control 管理员在
-  “流量与监控 → 访问统计”中设置；Control 不支持 `destinations.v1` 时不上报，也没有旧链路。
+  “流量与监控 → 访问统计”中设置；Control 不支持 `destinations.v1` 时不上报。
 
 ```json
 "AgentStream": {
-  "DataPlane": "auto",
   "StateDir": "/var/lib/anixops-agent/stream",
   "SpoolMaxMB": 64,
   "LogSpoolMaxMB": 16,
@@ -331,12 +315,9 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
   在控制流上发送；`persisted` 删除，带错误（或未知错误码）的拒绝直接丢弃并记录
   `error_code`，`maintenance_unavailable` 保留并在 `retry_after_ms` 之后重发。
 - `alive.v1`：见上文“用户”。
-- `artifacts.v1`（已注册、以客户端证书连接时）：插件包与清单通过 `AgentArtifacts`
-  按内容地址下载，校验与 HTTP 下载相同（大小、SHA-256、Ed25519 签名、清单中的包摘要），
-  并核对 `PluginRelease`；`plugin_release_download_busy` 与 `Unavailable` 会重试。
-  未协商 `artifacts.v1` 时（尚未注册，或 Control 4.1.x 尚无 AgentArtifacts；v4.2 升级
-  先升级 Agent）仍使用带 `X-API-Key` 的 HTTP 下载；若被 `agent_mtls_required` 拒绝，
-  安装错误中会明确说明。
+- `artifacts.v1`：插件包与清单通过 `AgentArtifacts` 按内容地址下载，校验大小、
+  SHA-256、Ed25519 签名与清单中的包摘要，并核对 `PluginRelease`；
+  `plugin_release_download_busy` 与 `Unavailable` 会重试。
 - 等待一次性注册凭据时每 5 秒检查一次凭据文件，写入后很快完成注册。
 - 错误码：`ConfigStatus.error_code`（`config_format_unsupported`、`config_hash_mismatch`、
   `config_invalid`、`config_apply_failed`）；`reports.v1` 携带 `transient_ack: "v1"`，
@@ -346,11 +327,7 @@ UniProxy `push` / `alive`、v2board 上报接口和 `runtime-health` 路由：
   `agent_enrollment_rejected` 后不再重试同一凭据。
 - 内核健康变化时立即发送带当前系统用量的 `NodeStatus`。
 
-Control 4.2 默认 `agent_control.mtls: required`：已注册的 Agent 在 Control 支持上述能力时
-完全不访问旧的 REST、gRPC 与 WebSocket 通道（包括维护 WebSocket 与 HTTP 插件下载）；
-首次注册仍需一次性注册凭据（`anix-control agent token create`）。
-
-面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
+注册凭证与接入令牌属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 
 ## Docker
 
@@ -386,7 +363,7 @@ $env:ALLOW_LOCAL_BUILD="1"
 ```bash
 GOEXPERIMENT=jsonv2 GOWORK=off go test ./...
 cd sdk && bash api/grpc/gen.sh && git diff --exit-code -- api/grpc/agent/v1
-cd .. && bash api/grpc/gen.sh && git diff --exit-code -- api/grpc/v2boardpb
+cd .. && bash api/anxmgmt/gen.sh && git diff --exit-code -- api/anxmgmt
 ```
 
 ## 文档
@@ -395,7 +372,6 @@ cd .. && bash api/grpc/gen.sh && git diff --exit-code -- api/grpc/v2boardpb
 - [AnixOps Agent 迁移指南](docs/ANIX_AGENT_MIGRATION.md)
 - [运行时与协议迁移](docs/MIGRATION.md)
 - [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)
-- [API 文档](API_DOCUMENTATION.md)
 - [WireGuard 运行时测试](docs/WIREGUARD_RUNTIME_TESTS.md)
 
 ## 致谢

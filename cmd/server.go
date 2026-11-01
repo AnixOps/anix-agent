@@ -21,9 +21,8 @@ import (
 )
 
 var (
-	config     string
-	watch      bool
-	reRegister bool
+	config string
+	watch  bool
 )
 
 var serverCommand = cobra.Command{
@@ -40,9 +39,6 @@ func init() {
 	serverCommand.PersistentFlags().
 		BoolVarP(&watch, "watch", "w",
 			true, "watch file path change")
-	serverCommand.PersistentFlags().
-		BoolVarP(&reRegister, "re-register", "r",
-			false, "force re-register node (delete existing credentials)")
 	command.AddCommand(&serverCommand)
 }
 
@@ -162,14 +158,6 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	}
 	defer vc.Close()
 	log.Info("Core ", vc.Type(), " started")
-
-	// 如果指定了重新注册，设置所有节点的 ForceReRegister 标志
-	if reRegister {
-		log.Info("Force re-register mode enabled")
-		for i := range c.NodeConfig {
-			c.NodeConfig[i].ApiConfig.ForceReRegister = true
-		}
-	}
 
 	nodes := node.New()
 	if forwardComponent != nil && !c.Forward.ForwardNodeOnly() {

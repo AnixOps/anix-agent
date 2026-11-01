@@ -26,15 +26,14 @@ Agent as the unprivileged user `anixops-agent` (owner decision H13): ambient
 /var/lib/anixops-gost`; root is used by the installer only. The unit runs
 `/usr/lib/anixops-agent/anix-agent server -c /etc/anixops/agent/config.json`.
 
-The configuration it writes holds credentials only (no `ApiKey`, no `Cores`):
+The configuration it writes holds the connection and identity only (no `Cores`):
 
 ```json
 {
   "Cores": [],
   "Nodes": [{
-    "ApiHost": "https://<control>", "Transport": "grpc",
+    "ApiHost": "https://<control>",
     "GRPCHost": "<grpc host:port>", "GRPCUseTLS": true,
-    "AgentControlEnabled": true, "AgentControlAllowInsecure": false,
     "AgentNode": "proxy-12", "NodeID": 12,
     "AgentIdentity": {"Enroll": "auto", "CertDir": "/var/lib/anixops-agent/pki",
                       "EnrollCredentialFile": "/var/lib/anixops-agent/enroll.credential"},
@@ -43,21 +42,20 @@ The configuration it writes holds credentials only (no `ApiKey`, no `Cores`):
 }
 ```
 
-- A **proxy node** (`proxy-<id>`) without `ApiKey` enrolls with the one-time
-  credential (the file is removed after use), then authenticates with its
-  client certificate only. Its configuration, users and reports go over the
-  control stream's data plane; it never falls back to the legacy transports.
-  Until the stream is up (enrollment may wait for the credential, or Control
+- A **proxy node** (`proxy-<id>`) enrolls with the one-time credential (the
+  file is removed after use), then authenticates with its client certificate
+  only. Its configuration, users and reports go over the control stream's
+  data plane. Until the stream is up (enrollment may wait for the credential, or Control
   may be unreachable) the node waits instead of failing. With `"Cores": []`
   every compiled-in core runs behind the selector (xray, sing, hysteria2,
   wireguard, in that order of preference) and each node of the stream's
   configuration runs on the first core that serves its protocol.
 - A **forward node** (`forward-<id>`) runs the forward component only.
-- A node without `ApiKey` that speaks to Control (`AgentNode` set or
-  `AgentControlEnabled`) must have the stream data plane (`AgentStream.DataPlane`
-  `auto`), TLS, and an enrollment credential or an enrolled identity
-  (`CertDir/proxy-<id>/identity.pem`); `validate-config` refuses it
-  otherwise. Configurations with an `ApiKey` work as before.
+- Every proxy node needs a `NodeID` (or `AgentNode`), TLS, and an enrollment
+  credential or an enrolled identity (`CertDir/proxy-<id>/identity.pem`);
+  `validate-config` refuses it otherwise. The settings of earlier releases
+  (`ApiKey`, `Transport`, `AgentControlEnabled`, `SyncConfig`,
+  `AutoRegister`, ...) are ignored.
 
 ### Joining a node group (`anix-agent join`)
 
@@ -494,13 +492,11 @@ production node.
 Use the matching panel release. Create or rotate the node API key in the panel,
 then set it in `/etc/anixops/agent/config.json`. Verify after startup:
 
-1. Node configuration pull succeeds.
-2. User synchronization succeeds.
-3. Traffic and online reports arrive at the panel.
-4. The data-plane transport and optional Agent Control TLS settings match the
-   Control endpoint.
-5. `validate-config` passes and the authenticated maintenance WebSocket remains
-   connected through a forced reconnect and Agent restart.
+1. The control stream connects with the client certificate.
+2. The node applies Control's configuration snapshot and user set.
+3. Traffic and online reports arrive at Control.
+4. `validate-config` passes, and the node comes back through a forced
+   reconnect and an Agent restart.
 
 ## WireGuard Relay Nodes
 

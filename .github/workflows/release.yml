@@ -80,9 +80,9 @@ jobs:
         shell: bash
         run: |
           export PATH="$(go env GOPATH)/bin:${PATH}"
-          bash api/grpc/gen.sh
-          git diff --exit-code -- api/grpc/v2boardpb
-          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb)"
+          bash api/anxmgmt/gen.sh
+          git diff --exit-code -- api/anxmgmt
+          test -z "$(git ls-files --others --exclude-standard -- api/anxmgmt)"
 
       - name: Download dependencies
         run: go mod download

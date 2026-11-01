@@ -23,11 +23,10 @@ const DefaultAgentIdentityCertDir = "/var/lib/anixops-agent/pki"
 
 var agentIdentityClusterPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// AgentIdentityConfig is the mTLS identity of the Agent control stream
-// (AgentControlEnabled). Control issues the certificate; the Agent keeps
-// its key and certificate in CertDir/proxy-<NodeID>, mode 0600, renews at
-// two thirds of the lifetime, and stops sending the node API key on the
-// stream once enrolled. Identities need TLS to Control.
+// AgentIdentityConfig is the mTLS identity of the Agent control stream.
+// Control issues the certificate; the Agent keeps its key and certificate
+// in CertDir/proxy-<NodeID>, mode 0600, and renews at two thirds of the
+// lifetime. Identities need TLS to Control.
 type AgentIdentityConfig struct {
 	// Enroll is "auto" (default) or "off".
 	Enroll string `json:"Enroll"`

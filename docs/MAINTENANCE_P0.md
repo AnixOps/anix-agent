@@ -12,14 +12,12 @@
 anix-agent validate-config -c /etc/anixops/agent/config.json
 ```
 
-生产配置校验要求 HTTPS ApiHost、TLS gRPC、认证维护 WebSocket、官方签名根、插件目录、节点凭据和明确的 `Environment` / `MaintenanceEnvironment`。失败会返回非零退出码，systemd 不会把配置错误当成成功退出。
+生产配置校验要求 HTTPS ApiHost、TLS gRPC、官方签名根（启用 Supervisor 时）、插件目录、节点 ID 和明确的 `Environment` / `MaintenanceEnvironment`。失败会返回非零退出码，systemd 不会把配置错误当成成功退出。
 
 节点 `ApiConfig` 需启用 `PluginSupervisorEnabled`，填写 `PluginRoot`、`PluginOfficialPublicKey`，推荐独立 `PluginSocketDir`。完整插件签名与安装约定见 [Supervisor](PLUGIN_SUPERVISOR.md)。
 
 ```json
 {
-  "Transport": "http",
-  "AgentControlEnabled": true,
   "PluginSupervisorEnabled": true,
   "PluginRoot": "/var/lib/anixops-agent/plugins",
   "PluginSocketDir": "/run/anixops-agent/plugins",
@@ -28,11 +26,9 @@ anix-agent validate-config -c /etc/anixops/agent/config.json
 }
 ```
 
-`ApiHost`、`NodeID`、`ApiKey` 复用现有节点配置和注册后凭据；不另配 HTTP 工单地址。`MaintenanceEnvironment` 支持 development/staging/production，省略为 development。正式环境必须显式填写 production。队列绑定节点和环境，变更环境时不得覆盖原队列；先交付积压事件再人工迁移。
+`ApiHost`、`NodeID` 与控制流身份复用现有节点配置；不另配 HTTP 工单地址。`MaintenanceEnvironment` 支持 development/staging/production，省略为 development。正式环境必须显式填写 production。队列绑定节点和环境，变更环境时不得覆盖原队列；先交付积压事件再人工迁移。
 
-首批运维事件只通过已认证 WebSocket `/api/v2/agent/ws`（兼容 `/api/v2/node/ws`）发送，HTTP/REST 节点复用已有连接；gRPC 节点另开仅发送运维事件的认证 WebSocket，`ApiHost` 必须为 HTTP(S)，`GRPCHost` 单独填写 gRPC 目标。gRPC 主控制流继续执行插件命令；关闭 WebSocket 或缺少 HTTP(S) ApiHost 的配置启用插件运维会启动失败。生产地址使用 HTTPS/WSS。
-
-需要显式配置同步选项时，在 `Options.SyncConfig` 中设置 `EnableWebSocket: true`。默认每 30 秒执行真实 gRPC 健康探针，进程退出同时触发记录。启用 Supervisor 时启动监测，退出时先停止监测，再关闭插件和节点通信。
+运维事件经 Agent 控制流（`maintenance.v1`，mTLS）发送，插件命令也走同一控制流。默认每 30 秒执行真实 gRPC 健康探针，进程退出同时触发记录。启用 Supervisor 时启动监测，退出时先停止监测，再关闭插件和节点通信。
 
 ## 故障与自动动作
 

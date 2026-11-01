@@ -57,7 +57,7 @@ func (c *reloadCore) runningPort(t *testing.T, tag string) int {
 }
 
 func vlessNode(port int) *panel.NodeInfo {
-	body, _ := json.Marshal(uniProxyAnswer(port))
+	body, _ := json.Marshal(runtimeAnswer(port))
 	info, _, err := panel.ParseNodeInfo(body, 1)
 	if err != nil {
 		panic(err)
@@ -86,12 +86,12 @@ func runningController(t *testing.T, core vCore.Core, info *panel.NodeInfo) *Con
 	nodeAddRetryDelays = []time.Duration{0, 0}
 	t.Cleanup(func() { nodeAddRetryDelays = previous })
 	controller := &Controller{
-		apiClient: &errorTestNodeAPI{alive: map[int]int{}},
-		server:    core,
-		tag:       "fixed-tag",
-		Options:   &conf.Options{Name: "fixed-tag"},
-		userList:  []panel.UserInfo{{Id: 1, Uuid: "user-1"}},
-		aliveMap:  map[int]int{},
+		nodeID: 1, apiHost: "https://control.test",
+		server:   core,
+		tag:      "fixed-tag",
+		Options:  &conf.Options{Name: "fixed-tag"},
+		userList: []panel.UserInfo{{Id: 1, Uuid: "user-1"}},
+		aliveMap: map[int]int{},
 	}
 	controller.limiter = limiter.AddLimiter(controller.tag, &controller.LimitConfig, controller.userList, controller.aliveMap)
 	controller.limiterAdded = true

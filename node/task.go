@@ -4,30 +4,18 @@ import (
 	"fmt"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
-	apiclient "github.com/AnixOps/anix-agent/v5/api/client"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
-	"github.com/AnixOps/anix-agent/v5/common/monitor"
 	"github.com/AnixOps/anix-agent/v5/common/task"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
-	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	log "github.com/sirupsen/logrus"
 )
 
 func (c *Controller) startTasks(node *panel.NodeInfo) {
-	// fetch node info task
-	c.nodeInfoMonitorPeriodic = &task.Task{
-		Interval: node.PullInterval,
-		Execute:  c.nodeInfoMonitor,
-	}
-	// fetch user list task
+	// The traffic report task.
 	c.userReportPeriodic = &task.Task{
 		Interval: node.PushInterval,
 		Execute:  c.reportUserTrafficTask,
 	}
-	log.WithField("tag", c.tag).Info("Start monitor node status")
-	// delay to start nodeInfoMonitor
-	_ = c.nodeInfoMonitorPeriodic.Start(false)
 	log.WithField("tag", c.tag).Info("Start report node status")
 	_ = c.userReportPeriodic.Start(false)
 	c.reportRuntimeHealth()
@@ -55,93 +43,8 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 			Execute:  c.SpeedChecker,
 		}
 		_ = c.dynamicSpeedLimitPeriodic.Start(false)
-		log.Printf("[NodeID: %d] Start dynamic speed limit", c.apiClient.GetNodeID())
+		log.Printf("[NodeID: %d] Start dynamic speed limit", c.nodeID)
 	}
-}
-
-func (c *Controller) nodeInfoMonitor() (err error) {
-	c.reconcileMu.Lock()
-	defer c.reconcileMu.Unlock()
-	if c.protocolID != 0 {
-		// An extra controller pulls nothing: its configuration comes only
-		// from the stream's snapshots (a legacy pull answers the node's
-		// first protocol), and its users from the node's first controller
-		// (shareLegacyPull).
-		return nil
-	}
-
-	// The configuration comes from the control stream's snapshots while
-	// it carries config.v1, and through the legacy pull otherwise.
-	var newN *panel.NodeInfo
-	configMode := c.stream.mode(agentcontrol.CapabilityConfig)
-	if configMode == agentapi.DataPlaneLegacy {
-		if c.lastConfigMode != agentapi.DataPlaneLegacy {
-			// Back on the legacy pull after the stream: the next answer
-			// is taken in full, not compared with the one before.
-			if resetter, ok := c.apiClient.(pullCacheResetter); ok {
-				resetter.ResetPullCache()
-			}
-		}
-		newN, err = c.apiClient.GetNodeInfo()
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Get node info failed")
-			return fmt.Errorf("get node info: %w", err)
-		}
-		if newN != nil && newN.Type != "" {
-			c.apiClient.SetNodeType(newN.Type)
-		}
-	}
-	c.lastConfigMode = configMode
-	// The users come from the stream's deltas while it carries users.v1,
-	// and the alive list from its AliveList (alive.v1); the UniProxy
-	// alivelist is pulled only with the legacy user pull.
-	var newU []panel.UserInfo
-	var newA map[int]int
-	usersMode := c.stream.mode(agentcontrol.CapabilityUsers)
-	aliveMode := c.stream.mode(agentcontrol.CapabilityAlive)
-	if usersMode == agentapi.DataPlaneLegacy {
-		if c.lastUsersMode != agentapi.DataPlaneLegacy {
-			if resetter, ok := c.apiClient.(pullCacheResetter); ok {
-				resetter.ResetPullCache()
-			}
-		}
-		newU, err = c.apiClient.GetUserList()
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Get user list failed")
-			return fmt.Errorf("get user list: %w", err)
-		}
-		if aliveMode == agentapi.DataPlaneLegacy {
-			newA, err = c.apiClient.GetUserAlive()
-			if err != nil {
-				log.WithFields(log.Fields{
-					"tag": c.tag,
-					"err": err,
-				}).Error("Get alive list failed")
-				return fmt.Errorf("get alive list: %w", err)
-			}
-		}
-	}
-	c.lastUsersMode = usersMode
-	if c.streamCarriesNodeData() || c.streamCarriesMaintenance() {
-		c.retireLegacySync()
-	}
-	if err := c.reconcileLocked(newN, newU, newA); err != nil {
-		return err
-	}
-	c.stream.shareLegacyPull(c, newU, newA)
-	return nil
-}
-
-// pullCacheResetter is a legacy transport that remembers its last answers
-// (ETag, body hash) to skip unchanged ones.
-type pullCacheResetter interface {
-	ResetPullCache()
 }
 
 // reconcileLocked brings the node to newN (a changed configuration: the
@@ -169,12 +72,6 @@ func (c *Controller) reconcileLocked(newN *panel.NodeInfo, newU []panel.UserInfo
 		}
 		c.traffic = make(map[string]int64)
 		// Check interval
-		if c.nodeInfoMonitorPeriodic != nil && c.nodeInfoMonitorPeriodic.Interval != newN.PullInterval &&
-			newN.PullInterval != 0 {
-			c.nodeInfoMonitorPeriodic.Interval = newN.PullInterval
-			c.nodeInfoMonitorPeriodic.Close()
-			_ = c.nodeInfoMonitorPeriodic.Start(false)
-		}
 		if c.userReportPeriodic != nil && c.userReportPeriodic.Interval != newN.PushInterval &&
 			newN.PushInterval != 0 {
 			c.userReportPeriodic.Interval = newN.PushInterval
@@ -188,21 +85,6 @@ func (c *Controller) reconcileLocked(newN *panel.NodeInfo, newU []panel.UserInfo
 	// update alive list
 	if newA != nil {
 		c.limiter.AliveList = newA
-	}
-	// The status goes on the control stream (NodeStatus, sent by the data
-	// plane) while it carries reports.v1, else over the legacy transport.
-	if !c.stream.streamReports() {
-		if stats, statsErr := monitor.GetSystemInfo(); statsErr != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": statsErr,
-			}).Warn("Get system info failed")
-		} else if err = c.apiClient.ReportNodeStatus(stats, 0, 0, 0); err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Warn("Report node status failed")
-		}
 	}
 	c.reportRuntimeHealth()
 	// node no changed, check users
@@ -260,29 +142,10 @@ func (c *Controller) applyUserDiffLocked(newU []panel.UserInfo) (err error) {
 	return nil
 }
 
+// reportRuntimeHealth sends the runtime health with the next NodeStatus on
+// the stream, at once.
 func (c *Controller) reportRuntimeHealth() {
-	if c.stream.streamReports() {
-		// NodeStatus carries the runtime health on the stream, with the
-		// system usage; a change goes out at once.
-		c.stream.runtimeHealthChanged()
-		return
-	}
-	provider, ok := c.server.(vCore.RuntimeHealthProvider)
-	if !ok {
-		return
-	}
-	reporter, ok := c.apiClient.(apiclient.RuntimeHealthReporter)
-	if !ok {
-		return
-	}
-	healthy, message := provider.RuntimeHealth(c.tag)
-	if err := reporter.ReportNodeRuntimeHealth(healthy, message); err != nil {
-		log.WithFields(log.Fields{
-			"tag":     c.tag,
-			"healthy": healthy,
-			"err":     err,
-		}).Warn("Report runtime health failed")
-	}
+	c.stream.runtimeHealthChanged()
 }
 
 func (c *Controller) SpeedChecker() error {

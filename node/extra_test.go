@@ -22,10 +22,10 @@ func multiProtocolDocument(ports ...int) map[string]any {
 	for i, port := range ports {
 		id := 100 + i
 		protocols = append(protocols, map[string]any{"id": id, "type": "vless", "port": port})
-		answers[strconv.Itoa(id)] = uniProxyAnswer(port)
+		answers[strconv.Itoa(id)] = runtimeAnswer(port)
 	}
 	document["protocols"] = protocols
-	document["legacy_pull"].(map[string]any)["protocols"] = answers
+	document["runtime"].(map[string]any)["protocols"] = answers
 	return document
 }
 
@@ -81,9 +81,9 @@ func TestStreamConfigurationRunsEveryProtocolOfTheNode(t *testing.T) {
 	// The middle protocol goes away; the last one changes its port.
 	document := multiProtocolDocument(11111, 11112, 11113)
 	document["protocols"] = []any{document["protocols"].([]any)[0], map[string]any{"id": 102, "type": "vless", "port": 11114}}
-	answers := document["legacy_pull"].(map[string]any)["protocols"].(map[string]any)
+	answers := document["runtime"].(map[string]any)["protocols"].(map[string]any)
 	delete(answers, "101")
-	answers["102"] = uniProxyAnswer(11114)
+	answers["102"] = runtimeAnswer(11114)
 	fixture.control.SetDesiredConfig(agenttest.Snapshot(4, document), true)
 	require.Eventually(t, func() bool {
 		status := lastStatus(fixture.control)
@@ -114,7 +114,7 @@ func TestSnapshotExtraProtocols(t *testing.T) {
 
 	// A raw configuration: Control answers no protocol.
 	raw := multiProtocolDocument(1, 2)
-	delete(raw["legacy_pull"].(map[string]any), "protocols")
+	delete(raw["runtime"].(map[string]any), "protocols")
 	ids, err = snapshotExtraProtocols(agenttest.Snapshot(1, raw))
 	require.NoError(t, err)
 	assert.Empty(t, ids)
@@ -123,5 +123,5 @@ func TestSnapshotExtraProtocols(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, info.VAllss.ServerPort)
 	_, err = nodeInfoFromSnapshot(agenttest.Snapshot(1, multiProtocolDocument(1, 2)), "", 105, 12)
-	assert.ErrorContains(t, err, "legacy_pull.protocols")
+	assert.ErrorContains(t, err, "runtime.protocols")
 }

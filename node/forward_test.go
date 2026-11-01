@@ -18,7 +18,7 @@ import (
 )
 
 func TestProxyNodeStreamCarriesForwarding(t *testing.T) {
-	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
 	proxy := agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: fixture.control.NodeID}
 	host := fake.NewHost(nil)
 	registry := driver.NewRegistry()
@@ -63,7 +63,7 @@ func TestProxyNodeStreamCarriesForwarding(t *testing.T) {
 
 func TestForwardNodeSelection(t *testing.T) {
 	stream := func(id int) conf.NodeConfig {
-		return conf.NodeConfig{ApiConfig: conf.ApiConfig{NodeID: id, AgentControlEnabled: true}}
+		return conf.NodeConfig{ApiConfig: conf.ApiConfig{NodeID: id}}
 	}
 	node, proxyID, err := forwardNode(&conf.ForwardConfig{Enable: true}, []conf.NodeConfig{stream(7)})
 	require.NoError(t, err)

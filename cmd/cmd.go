@@ -50,7 +50,6 @@ func init() {
 	// 添加全局 config 参数到根命令
 	command.PersistentFlags().StringVarP(&config, "config", "c", getDefaultConfigPath(), "config file path")
 	command.PersistentFlags().BoolVarP(&watch, "watch", "w", true, "watch file path change")
-	command.PersistentFlags().BoolVarP(&reRegister, "re-register", "r", false, "force re-register node (delete existing credentials)")
 }
 
 func Run() error {

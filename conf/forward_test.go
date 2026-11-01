@@ -17,15 +17,15 @@ func TestForwardConfigValidate(t *testing.T) {
 		t.Fatalf("proxy forwarding: %v", err)
 	}
 	forward := &ForwardConfig{Enable: true, NodeKind: "forward", ForwardNode: &ApiConfig{
-		GRPCHost: "control.example.com:50051", GRPCUseTLS: true, NodeID: 41, Key: "token",
+		GRPCHost: "control.example.com:50051", GRPCUseTLS: true, NodeID: 41,
 	}}
 	if err := forward.Validate(); err != nil || !forward.ForwardNodeOnly() {
 		t.Fatalf("forward node: %v", err)
 	}
 	for name, c := range map[string]*ForwardConfig{
 		"no forward node":    {Enable: true, NodeKind: "forward"},
-		"no node id":         {Enable: true, NodeKind: "forward", ForwardNode: &ApiConfig{GRPCHost: "c:1", Key: "t"}},
-		"no enrollment":      {Enable: true, NodeKind: "forward", ForwardNode: &ApiConfig{GRPCHost: "c:1", NodeID: 41, Key: "t", AgentIdentity: AgentIdentityConfig{Enroll: "off"}}},
+		"no node id":         {Enable: true, NodeKind: "forward", ForwardNode: &ApiConfig{GRPCHost: "c:1"}},
+		"no enrollment":      {Enable: true, NodeKind: "forward", ForwardNode: &ApiConfig{GRPCHost: "c:1", NodeID: 41, AgentIdentity: AgentIdentityConfig{Enroll: "off"}}},
 		"forward node proxy": {Enable: true, ForwardNode: &ApiConfig{}},
 		"unknown kind":       {Enable: true, NodeKind: "relay"},
 		"relative dir":       {Enable: true, StateDir: "forward"},
@@ -38,7 +38,7 @@ func TestForwardConfigValidate(t *testing.T) {
 
 func TestForwardNodeOnlyProduction(t *testing.T) {
 	c := &Conf{Environment: "production", Forward: &ForwardConfig{Enable: true, NodeKind: "forward", ForwardNode: &ApiConfig{
-		GRPCHost: "control.anixops.net:50051", GRPCServerName: "control.anixops.net", GRPCUseTLS: true, NodeID: 41, Key: "f0rward-n0de-t0ken-value",
+		GRPCHost: "control.anixops.net:50051", GRPCServerName: "control.anixops.net", GRPCUseTLS: true, NodeID: 41,
 	}}}
 	if err := c.ValidateForProduction(); err != nil {
 		t.Fatalf("a forward node needs no proxy node or core: %v", err)
@@ -59,10 +59,8 @@ func TestO1ForwardNodeConfiguration(t *testing.T) {
   "Nodes": [
     {
       "ApiHost": "https://control.anixops.net",
-      "Transport": "grpc",
       "GRPCHost": "control.anixops.net:50051",
       "GRPCUseTLS": true,
-      "AgentControlEnabled": true,
       "AgentControlAllowInsecure": false,
       "AgentNode": "forward-41",
       "NodeID": 41,

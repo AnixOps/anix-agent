@@ -224,9 +224,7 @@ printf '[Service]\nUser=root\n' >"${o1_units}/${SERVICE_NAME}.service"
 (SYSTEMD_UNIT_DIR="${o1_units}" refuse_o1_install)
 grep -Fq 'RuntimeDirectory=anixops-agent' "${repo_root}/scripts/install.sh"
 
-for example in \
-    config.json config.grpc.json config.production.json config_auto_register.json config_realtime_sync.json \
-    config_test_local.json config.wireguard.json; do
+for example in config.json config.production.json config.wireguard.json; do
     example_path="${repo_root}/example/${example}"
     grep -Fq '"PluginSupervisorEnabled": true' "${example_path}"
     grep -Fq '"PluginRoot": "/var/lib/anixops-agent/plugins"' "${example_path}"
@@ -239,48 +237,34 @@ done
     CONFIG_DIR="${test_root}/wizard/etc/anixops/agent"
     BIN_PATH="${test_root}/wizard/usr/local/anixops-agent/anix-agent"
 
-    prompt_text() {
-        case "$1" in
-            "节点类型"*) printf '%s' vless ;;
-            "监听 IP"*) printf '%s' 0.0.0.0 ;;
-            "发送 IP"*) printf '%s' 0.0.0.0 ;;
-            "证书模式"*) printf '%s' self ;;
-            "传输方式"*) printf '%s' http ;;
-            "Agent Control / gRPC 目标"*) printf '%s' control.company.net:443 ;;
-            "GRPCServerName"*) printf '%s' control.company.net ;;
-            *) printf '%s' "${2:-}" ;;
-        esac
-    }
+    prompt_text() { printf '%s' "${2:-}"; }
     prompt_required_text() {
         case "$1" in
-            "面板地址"*) printf '%s' https://control.company.net ;;
-            *) printf '%s' 0123456789abcdef0123456789abcdef ;;
+            "Control 地址"*) printf '%s' https://control.company.net ;;
+            "Agent 控制流"*) printf '%s' control.company.net:443 ;;
+            *) printf '%s' unexpected ;;
         esac
     }
     prompt_int() { printf '%s' "${2:-1}"; }
     confirm() {
         case "$1" in
-            "是否启用 Agent Control gRPC 长连接？"*|"是否启用 AnixOps 官方插件 Supervisor？"*|"是否启用 Agent Control / gRPC TLS？"*) return 0 ;;
+            "是否启用 AnixOps 官方插件 Supervisor？"*) return 0 ;;
             *) return 1 ;;
         esac
     }
 
     init_config_wizard
     wizard_config="${CONFIG_DIR}/config.json"
-    grep -Fq '"Transport": "http"' "${wizard_config}"
-    grep -Fq '"AgentControlEnabled": true' "${wizard_config}"
     grep -Fq '"GRPCUseTLS": true' "${wizard_config}"
-    grep -Fq '"AgentControlAllowInsecure": false' "${wizard_config}"
+    grep -Fq '"GRPCHost": "control.company.net:443"' "${wizard_config}"
+    grep -Fq '"AgentNode": "proxy-1"' "${wizard_config}"
     grep -Fq '"Environment": "production"' "${wizard_config}"
     grep -Fq '"MaintenanceEnvironment": "production"' "${wizard_config}"
-    grep -Fq '"WSEndpoint": "/api/v2/agent/ws"' "${wizard_config}"
     grep -Fq '"PluginSupervisorEnabled": true' "${wizard_config}"
     grep -Fq '"PluginRoot": "/var/lib/anixops-agent/plugins"' "${wizard_config}"
     grep -Fq '"PluginSocketDir": "/run/anixops-agent/plugins"' "${wizard_config}"
     grep -Fq '"PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="' "${wizard_config}"
-    grep -Fq '"Transport": "http"' "${wizard_config}"
-    agent_control_host_is_loopback "[::1]:50051" "http://example.com"
-    ! agent_control_host_is_loopback "control.example.com:50051" "http://127.0.0.1"
+    ! grep -Fq 'ApiKey' "${wizard_config}"
 )
 
 GOEXPERIMENT=jsonv2 GOWORK=off go run . validate-config \

@@ -26,7 +26,7 @@ def check_release_version(repo_root: Path, tag: str) -> str:
         raise ValueError(f"unsupported release tag: {tag}")
     version = match.group("version")
     require_pattern(repo_root / "cmd/version.go", r'^\s*(?:var\s+)?version\s*=\s*"v([^"]+)"', version, "CLI")
-    require_pattern(repo_root / "api/panel/register.go", r'^var Version = "([^"]+)"', version, "panel registration")
+    require_pattern(repo_root / "api/panel/version.go", r'^var Version = "([^"]+)"', version, "panel")
     require_pattern(repo_root / "Dockerfile", r'^ARG VERSION=v([^\s]+)', version, "Docker build")
     require_pattern(repo_root / "README.md", r'^`v([^`]+)` 提供 AnixOps 官方签名软件包', version, "README preview")
     require_pattern(repo_root / "docs/INSTALL.md", r'^export VERSION=v([^\s]+)', version, "install guide")
@@ -38,7 +38,7 @@ def check_release_version(repo_root: Path, tag: str) -> str:
 def write_fixture(root: Path, version: str) -> None:
     files = {
         "cmd/version.go": f'package cmd\nvar version = "v{version}"\n',
-        "api/panel/register.go": f'package panel\nvar Version = "{version}"\n',
+        "api/panel/version.go": f'package panel\nvar Version = "{version}"\n',
         "Dockerfile": f"ARG VERSION=v{version}\n",
         "README.md": f"`v{version}` 提供 AnixOps 官方签名软件包\n",
         "docs/INSTALL.md": f"export VERSION=v{version}\n",

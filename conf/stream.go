@@ -7,29 +7,14 @@ import (
 	"time"
 )
 
-// Agent stream data-plane modes (AgentStream.DataPlane).
-const (
-	// AgentStreamDataPlaneAuto moves the node's data onto the Agent control
-	// stream when Control serves it (HelloAck.server_capabilities), and
-	// keeps the legacy transports otherwise. The default.
-	AgentStreamDataPlaneAuto = "auto"
-	// AgentStreamDataPlaneOff keeps the data on the legacy transports; the
-	// stream carries operations only. A rollback switch: Control 4.2
-	// (agent_control.mtls: required) refuses the legacy Agent channels.
-	AgentStreamDataPlaneOff = "off"
-)
-
 // DefaultAgentStreamStateDir is where the data-plane state lives.
 const DefaultAgentStreamStateDir = "/var/lib/anixops-agent/stream"
 
-// AgentStreamConfig is the data plane of the Agent control stream
-// (AgentControlEnabled): the node's configuration (config.v1) and users
-// (users.v1) from Control, and its traffic, online IPs, logs and status
-// (reports.v1) and plugin package reports (package-reports.v1) to Control,
-// instead of UniProxy, the v2board gRPC services and the WebSocket.
+// AgentStreamConfig is the data plane of the Agent control stream: the
+// node's configuration (config.v1) and users (users.v1) from Control, and
+// its traffic, online IPs, logs and status (reports.v1) and plugin package
+// reports (package-reports.v1) to Control.
 type AgentStreamConfig struct {
-	// DataPlane is "auto" (default) or "off".
-	DataPlane string `json:"DataPlane"`
 	// StateDir keeps what the stream delivered and the report spool, per
 	// node (StateDir/proxy-<NodeID>), so a restart while Control is
 	// unreachable runs the last applied configuration and users and still
@@ -79,14 +64,6 @@ func (c AgentStreamConfig) SpoolMaxAge() time.Duration {
 	return DefaultAgentStreamSpoolMaxAge * time.Hour
 }
 
-// DataPlaneMode is DataPlane, defaulted and lowercased.
-func (c AgentStreamConfig) DataPlaneMode() string {
-	if mode := strings.ToLower(strings.TrimSpace(c.DataPlane)); mode != "" {
-		return mode
-	}
-	return AgentStreamDataPlaneAuto
-}
-
 // Dir is StateDir, defaulted.
 func (c AgentStreamConfig) Dir() string {
 	if dir := strings.TrimSpace(c.StateDir); dir != "" {
@@ -97,11 +74,6 @@ func (c AgentStreamConfig) Dir() string {
 
 // Validate checks the settings.
 func (c AgentStreamConfig) Validate() error {
-	switch c.DataPlaneMode() {
-	case AgentStreamDataPlaneAuto, AgentStreamDataPlaneOff:
-	default:
-		return fmt.Errorf("AgentStream.DataPlane must be %q or %q, not %q", AgentStreamDataPlaneAuto, AgentStreamDataPlaneOff, c.DataPlane)
-	}
 	if dir := strings.TrimSpace(c.StateDir); dir != "" && !filepath.IsAbs(dir) {
 		return fmt.Errorf("AgentStream.StateDir %q must be an absolute path", c.StateDir)
 	}

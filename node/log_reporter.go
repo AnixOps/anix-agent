@@ -9,14 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	apiclient "github.com/AnixOps/anix-agent/v5/api/client"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	log "github.com/sirupsen/logrus"
 )
 
 type RemoteLogHook struct {
-	// report sends a batch: the control stream's LogBatch while it carries
-	// reports.v1, else the legacy transport (Controller.reportNodeLogs).
+	// report sends a batch to the control stream's LogBatch
+	// (Controller.reportNodeLogs).
 	report func([]panel.NodeLogEntry) error
 	tag    string
 
@@ -25,14 +24,6 @@ type RemoteLogHook struct {
 	done   chan struct{}
 	once   sync.Once
 	queue  chan panel.NodeLogEntry
-}
-
-func NewRemoteLogHook(client apiclient.NodeAPI, tag string) *RemoteLogHook {
-	var report func([]panel.NodeLogEntry) error
-	if client != nil {
-		report = client.ReportNodeLogs
-	}
-	return newRemoteLogHook(report, tag)
 }
 
 func newRemoteLogHook(report func([]panel.NodeLogEntry) error, tag string) *RemoteLogHook {

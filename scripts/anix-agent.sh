@@ -317,35 +317,14 @@ prompt_int() {
     done
 }
 
-agent_control_host_is_loopback() {
-    local grpc_host="$1"
-    local api_host="$2"
-    local endpoint="${grpc_host:-${api_host}}"
-    local host=""
-
-    endpoint="${endpoint#*://}"
-    endpoint="${endpoint%%/*}"
-    if [[ "${endpoint}" =~ ^\[([^]]+)\](:[0-9]+)?$ ]]; then
-        host="${BASH_REMATCH[1]}"
-    elif [[ "${endpoint}" == *:* ]]; then
-        host="${endpoint%%:*}"
-    else
-        host="${endpoint}"
-    fi
-
-    [[ "${host,,}" == "localhost" || "${host}" == "::1" || "${host}" == 127.* ]]
-}
-
 init_config_wizard() {
     local cfg="${CONFIG_DIR}/config.json"
     local backup=""
-    local core_type api_host api_key node_id node_type timeout listen_ip send_ip cert_mode
-    local transport grpc_host grpc_use_tls grpc_server_name grpc_keepalive
-    local agent_control_enabled agent_control_allow_insecure grpc_tls_default
-    local plugin_supervisor_enabled plugin_supervisor_default
-    local core_json
+    local api_host grpc_host node_id node_type
+    local plugin_supervisor_enabled
 
     info "进入初始化配置向导（将写入 ${cfg}）"
+    info "节点只通过 Agent 控制流（mTLS）连接 Control；推荐直接使用 Control 后台给出的安装命令"
     mkdir -p "${CONFIG_DIR}"
 
     if [[ -f "${cfg}" ]]; then
@@ -358,76 +337,22 @@ init_config_wizard() {
         info "已备份旧配置到 ${backup}"
     fi
 
-    core_type="anixcore"
-
-    api_host="$(prompt_required_text "面板地址 ApiHost（生产环境必须使用 HTTPS）")"
-    api_key="$(prompt_required_text "面板 API Key")"
-    node_id="$(prompt_int "节点 ID NodeID" "1")"
-    node_type="$(prompt_text "节点类型 NodeType(面板分类)" "v2ray")"
-    timeout="$(prompt_int "接口超时(秒)" "30")"
-    listen_ip="$(prompt_text "监听 IP ListenIP" "0.0.0.0")"
-    send_ip="$(prompt_text "发送 IP SendIP" "0.0.0.0")"
-    cert_mode="$(prompt_text "证书模式 CertMode(self/file/dns)" "self")"
     while true; do
-        transport="$(prompt_text "传输方式 Transport(http/grpc)" "http")"
-        transport="$(echo "${transport}" | tr '[:upper:]' '[:lower:]')"
-        if [[ "${transport}" == "http" || "${transport}" == "grpc" ]]; then
+        api_host="$(prompt_required_text "Control 地址 ApiHost（必须使用 HTTPS）")"
+        if [[ "${api_host,,}" == https://* ]]; then
             break
         fi
-        warn "仅支持 http / grpc"
+        warn "ApiHost 必须以 https:// 开头"
     done
+    grpc_host="$(prompt_required_text "Agent 控制流 GRPCHost(host:port)")"
+    node_id="$(prompt_int "节点 ID NodeID" "1")"
+    node_type="$(prompt_text "节点类型 NodeType(留空运行节点的全部协议)" "")"
 
-    if confirm "是否启用 Agent Control gRPC 长连接？" "y"; then
-        agent_control_enabled=true
-        plugin_supervisor_default="y"
-    else
-        agent_control_enabled=false
-        plugin_supervisor_default="n"
-    fi
-
-    if confirm "是否启用 AnixOps 官方插件 Supervisor？" "${plugin_supervisor_default}"; then
+    if confirm "是否启用 AnixOps 官方插件 Supervisor？" "y"; then
         plugin_supervisor_enabled=true
     else
         plugin_supervisor_enabled=false
     fi
-    if [[ "${plugin_supervisor_enabled}" == "true" && "${agent_control_enabled}" != "true" ]]; then
-        warn "插件 Supervisor 已启用，但远程生命周期操作需要 Agent Control 长连接"
-    fi
-
-    grpc_host=""
-    grpc_use_tls=false
-    grpc_server_name=""
-    grpc_keepalive=30
-    agent_control_allow_insecure=false
-    if [[ "${transport}" == "grpc" || "${agent_control_enabled}" == "true" ]]; then
-        grpc_host="$(prompt_text "Agent Control / gRPC 目标 GRPCHost(host:port，留空从 ApiHost 推导)" "")"
-        grpc_tls_default="n"
-        if [[ "${api_host,,}" == https://* ]]; then
-            grpc_tls_default="y"
-        fi
-        while true; do
-            if confirm "是否启用 Agent Control / gRPC TLS？" "${grpc_tls_default}"; then
-                grpc_use_tls=true
-            else
-                grpc_use_tls=false
-            fi
-            if [[ "${agent_control_enabled}" != "true" || "${grpc_use_tls}" == "true" ]] || \
-                agent_control_host_is_loopback "${grpc_host}" "${api_host}"; then
-                break
-            fi
-            if confirm "远程明文会暴露节点凭证，是否显式设置 AgentControlAllowInsecure=true？" "n"; then
-                agent_control_allow_insecure=true
-                break
-            fi
-            warn "非本地 Agent Control 必须启用 TLS，或显式允许不安全明文连接"
-        done
-        grpc_server_name="$(prompt_text "GRPCServerName(可为空，默认取主机名)" "")"
-        grpc_keepalive="$(prompt_int "GRPCKeepalive(秒)" "30")"
-    fi
-
-    core_json='{
-      "Type": "anixcore"
-    }'
 
     cat >"${cfg}" <<EOF
 {
@@ -436,53 +361,27 @@ init_config_wizard() {
     "Level": "info",
     "Output": ""
   },
-  "Cores": [
-    ${core_json}
-  ],
+  "Cores": [],
   "Nodes": [
     {
-      "Core": "$(json_escape "${core_type}")",
       "ApiHost": "$(json_escape "${api_host}")",
-      "Transport": "$(json_escape "${transport}")",
       "GRPCHost": "$(json_escape "${grpc_host}")",
-      "GRPCUseTLS": ${grpc_use_tls},
-      "GRPCServerName": "$(json_escape "${grpc_server_name}")",
-      "GRPCKeepalive": ${grpc_keepalive},
-      "AgentControlEnabled": ${agent_control_enabled},
-      "AgentControlAllowInsecure": ${agent_control_allow_insecure},
+      "GRPCUseTLS": true,
+      "GRPCKeepalive": 30,
       "MaintenanceEnvironment": "production",
       "PluginSupervisorEnabled": ${plugin_supervisor_enabled},
       "PluginRoot": "${DEFAULT_PLUGIN_ROOT}",
       "PluginSocketDir": "${DEFAULT_PLUGIN_SOCKET_DIR}",
       "PluginOfficialPublicKey": "${OFFICIAL_PLUGIN_PUBLIC_KEY}",
-      "ApiKey": "$(json_escape "${api_key}")",
+      "AgentNode": "proxy-${node_id}",
       "NodeID": ${node_id},
       "NodeType": "$(json_escape "${node_type}")",
-      "Timeout": ${timeout},
-      "EnableSign": true,
-      "EncryptCredential": true,
-      "CredentialFile": "/var/lib/anixops-agent/credential.json.enc",
-      "SyncConfig": {
-        "EnableWebSocket": true,
-        "WSEndpoint": "/api/v2/agent/ws",
-        "WSEndpointFallbacks": ["/api/v2/node/ws"],
-        "ReconnectInterval": 5,
-        "MaxReconnectTries": 0,
-        "PingInterval": 30,
-        "PongTimeout": 10,
-        "AckTimeout": 5,
-        "AckRetries": 2,
-        "BufferSize": 100,
-        "EnableFallback": true,
-        "FallbackInterval": 60
+      "AgentIdentity": {
+        "Enroll": "auto",
+        "CertDir": "/var/lib/anixops-agent/pki",
+        "EnrollCredentialFile": "/var/lib/anixops-agent/enroll.credential"
       },
-      "ListenIP": "$(json_escape "${listen_ip}")",
-      "SendIP": "$(json_escape "${send_ip}")",
-      "DeviceOnlineMinTraffic": 200,
-      "MinReportTraffic": 0,
-      "CertConfig": {
-        "CertMode": "$(json_escape "${cert_mode}")"
-      }
+      "AgentStream": {"StateDir": "/var/lib/anixops-agent/stream"}
     }
   ]
 }
@@ -494,7 +393,7 @@ EOF
         return 1
     fi
     info "配置初始化完成: ${cfg}"
-    info "启动前运行: ${BIN_PATH} validate-config -c ${cfg}"
+    info "首次启动前把 Control 签发的一次性注册凭证写入 /var/lib/anixops-agent/enroll.credential（权限 0600，属主 anixops-agent），或运行 ${BIN_PATH} join"
     info "默认仍使用: ${BIN_PATH} server -c ${cfg}"
 }
 

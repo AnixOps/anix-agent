@@ -10,7 +10,7 @@ import (
 
 func TestAgentIdentityDefaultsToAutoEnrollmentUnderVarLib(t *testing.T) {
 	var api ApiConfig
-	if err := json.Unmarshal([]byte(`{"AgentControlEnabled":true}`), &api); err != nil {
+	if err := json.Unmarshal([]byte(`{}`), &api); err != nil {
 		t.Fatal(err)
 	}
 	if got := api.AgentIdentity.EnrollMode(); got != AgentIdentityEnrollAuto {

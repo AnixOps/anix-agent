@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
-	apiclient "github.com/AnixOps/anix-agent/v5/api/client"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/task"
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -17,37 +15,33 @@ import (
 	"github.com/AnixOps/anix-agent/v5/limiter"
 	"github.com/AnixOps/anix-agent/v5/plugin"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
-	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
 )
 
 type Controller struct {
-	server                    vCore.Core
-	apiClient                 apiclient.NodeAPI
+	server vCore.Core
+	// nodeID is the node the controller runs; apiHost is Control's base
+	// URL, which names the node's core tag.
+	nodeID                    int
+	apiHost                   string
 	tag                       string
 	limiter                   *limiter.Limiter
 	traffic                   map[string]int64
 	userList                  []panel.UserInfo
 	aliveMap                  map[int]int
 	info                      *panel.NodeInfo
-	nodeInfoMonitorPeriodic   *task.Task
 	userReportPeriodic        *task.Task
 	renewCertPeriodic         *task.Task
 	dynamicSpeedLimitPeriodic *task.Task
 	onlineIpReportPeriodic    *task.Task
-	syncManager               *SyncManager
-	// syncMu guards syncManager and closed: a retired WebSocket is
-	// replaced from another goroutine.
-	syncMu           sync.Mutex
-	closed           bool
-	logHook          *RemoteLogHook
-	reconcileMu      sync.Mutex
-	pluginSupervisor *plugin.Supervisor
-	limiterAdded     bool
-	nodeAdded        bool
-	// stream is the node's control-stream data plane, nil when it is off:
-	// the legacy transports then carry everything.
+	logHook                   *RemoteLogHook
+	reconcileMu               sync.Mutex
+	pluginSupervisor          *plugin.Supervisor
+	limiterAdded              bool
+	nodeAdded                 bool
+	// stream is the node's control-stream data plane: it carries the
+	// node's configuration, users and reports.
 	stream *nodeDataPlane
 	// agentClient is the node's Agent control client, nil without one.
 	agentClient *agentapi.Client
@@ -57,20 +51,15 @@ type Controller struct {
 	// upgrader runs agent.upgrade (upgrade.v1); nil without one.
 	upgrader *upgrade.Agent
 	// nodeType is the configured NodeType; it picks the controller's entry
-	// of a configuration snapshot (legacy_pull.types), empty for the node's
+	// of a configuration snapshot (runtime.types), empty for the node's
 	// default answer.
 	nodeType string
 	// protocolID is the protocol an extra controller of the node runs
-	// (legacy_pull.protocols, nodeDataPlane.reconcileExtras), 0 for a
+	// (runtime.protocols, nodeDataPlane.reconcileExtras), 0 for a
 	// controller of the configuration file.
 	protocolID uint64
 	// started is set once the node runs in the core.
 	started atomic.Bool
-	// lastConfigMode and lastUsersMode are the transports the last
-	// reconciliation took the configuration and the users from, guarded by
-	// reconcileMu.
-	lastConfigMode agentapi.DataPlaneMode
-	lastUsersMode  agentapi.DataPlaneMode
 	// aliveFromStream is set once the control stream delivered an alive
 	// list: a node that starts after it keeps that list instead of the one
 	// its caller read before. aliveMap, limiter and aliveFromStream are
@@ -84,72 +73,29 @@ func (c *Controller) SetPluginSupervisor(supervisor *plugin.Supervisor) {
 	c.pluginSupervisor = supervisor
 }
 
-// NewController return a Node controller with default parameters.
-func NewController(server vCore.Core, api apiclient.NodeAPI, config *conf.Options) *Controller {
-	controller := &Controller{
-		server:    server,
-		Options:   config,
-		apiClient: api,
-	}
-	return controller
+// NewController returns the controller of node nodeID.
+func NewController(server vCore.Core, nodeID int, apiHost string, config *conf.Options) *Controller {
+	return &Controller{server: server, nodeID: nodeID, apiHost: apiHost, Options: config}
 }
 
-// Start fetches the node's configuration and users over the legacy
-// transports (UniProxy, v2board gRPC) and starts the node.
-func (c *Controller) Start() error {
-	node, err := c.apiClient.GetNodeInfo()
-	if err != nil {
-		return fmt.Errorf("get node info error: %s", err)
-	}
-	if node == nil {
-		return errors.New("get node info error: the panel answered no configuration")
-	}
-	if node.Type != "" {
-		c.apiClient.SetNodeType(node.Type)
-	}
-	users, alive, err := c.startUsers()
-	if err != nil {
-		return err
-	}
-	return c.startWith(node, users, alive)
-}
-
-// startUsers are the users the node starts with: the stream's set during a
-// stream start (users.v1), else the legacy pull.
+// startUsers are the users the node starts with: the stream's set
+// (users.v1) and alive list (alive.v1; without one, device limits count
+// this node's own connections).
 func (c *Controller) startUsers() ([]panel.UserInfo, map[int]int, error) {
-	if users, ok := c.stream.startupUserList(); ok {
-		// The alive list comes from the stream too (alive.v1); without
-		// one, device limits count this node's own connections.
-		return users, c.stream.startupAliveList(), nil
+	users, ok := c.stream.currentUserList()
+	if !ok {
+		return nil, nil, errors.New("the Agent control stream has delivered no user set yet")
 	}
-	return c.fetchLegacyUsers()
-}
-
-// fetchLegacyUsers pulls the user list and the alive list over the legacy
-// transports.
-func (c *Controller) fetchLegacyUsers() ([]panel.UserInfo, map[int]int, error) {
-	users, err := c.apiClient.GetUserList()
-	if err != nil {
-		return nil, nil, fmt.Errorf("get user list error: %s", err)
-	}
-	alive, err := c.apiClient.GetUserAlive()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get user alive list: %s", err)
-	}
-	return users, alive, nil
+	return users, c.stream.startupAliveList(), nil
 }
 
 // applySnapshot runs the controller's entry of a configuration snapshot
-// from the control stream: it starts the node, or reloads it through the
-// same restart path as a legacy configuration change.
+// from the control stream: it starts the node, or reloads it.
 func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
-	node, err := nodeInfoFromSnapshot(snapshot, c.nodeType, c.protocolID, c.apiClient.GetNodeID())
+	node, err := nodeInfoFromSnapshot(snapshot, c.nodeType, c.protocolID, c.nodeID)
 	if err != nil {
 		// The document itself is wrong: config_invalid.
 		return agentapi.InvalidConfig(err)
-	}
-	if node.Type != "" {
-		c.apiClient.SetNodeType(node.Type)
 	}
 	if !c.isStarted() {
 		users, alive, err := c.startUsers()
@@ -160,7 +106,6 @@ func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 	}
 	c.reconcileMu.Lock()
 	defer c.reconcileMu.Unlock()
-	c.lastConfigMode = agentapi.DataPlaneStream
 	return c.reconcileLocked(node, nil, nil)
 }
 
@@ -189,65 +134,20 @@ func (c *Controller) applyStreamUsers(users []panel.UserInfo) error {
 	if !c.isStarted() {
 		return nil
 	}
-	c.lastUsersMode = agentapi.DataPlaneStream
 	return c.applyUserDiffLocked(users)
 }
 
-// streamCarriesNodeData tells whether the control stream carries both the
-// configuration and the users now (or within its grace period): the
-// WebSocket then has nothing to push.
-func (c *Controller) streamCarriesNodeData() bool {
-	return c.stream.mode(agentcontrol.CapabilityConfig) != agentapi.DataPlaneLegacy &&
-		c.stream.mode(agentcontrol.CapabilityUsers) != agentapi.DataPlaneLegacy
-}
-
-// retireLegacySync stops the WebSocket once the control stream carries the
-// node's configuration and users. A plugin maintenance outbox keeps a
-// maintenance-only WebSocket only while the stream does not carry it
-// (maintenance.v1); a maintenance-only WebSocket stops once it does. The
-// WebSocket's own goroutines may call here, so the work is done in the
-// background.
-func (c *Controller) retireLegacySync() {
-	c.syncMu.Lock()
-	syncManager := c.syncManager
-	maintenanceOnStream := c.streamCarriesMaintenance()
-	if syncManager == nil || c.closed || (syncManager.config.MaintenanceOnly && !maintenanceOnStream) {
-		c.syncMu.Unlock()
-		return
-	}
-	c.syncManager = nil
-	c.syncMu.Unlock()
-	go func() {
-		_ = syncManager.Close()
-		if syncManager.config.MaintenanceOnly {
-			log.WithField("tag", c.tag).Info("The Agent control stream carries the plugin maintenance outbox (maintenance.v1); stopped the maintenance WebSocket")
-			return
-		}
-		log.WithField("tag", c.tag).Info("The Agent control stream carries the node's configuration and users; stopped the legacy WebSocket")
-		if c.pluginSupervisor == nil {
-			return
-		}
-		if err := c.attachMaintenanceTransport(c.pluginSupervisor); err != nil {
-			log.WithError(err).WithField("tag", c.tag).Error("Could not restart the plugin maintenance WebSocket")
-		}
-	}()
-}
-
-// streamCarriesMaintenance tells whether the control stream carries the
-// plugin maintenance outbox now (or within its grace period).
-func (c *Controller) streamCarriesMaintenance() bool {
-	return c.stream.mode(agentcontrol.CapabilityMaintenance) != agentapi.DataPlaneLegacy
-}
-
-// reportNodeLogs sends the controller's log entries: to the node's LogBatch
-// on the control stream while it carries reports.v1 (or is briefly down),
-// else over the legacy transport.
+// reportNodeLogs sends the controller's log entries to the node's LogBatch
+// on the control stream.
 func (c *Controller) reportNodeLogs(entries []panel.NodeLogEntry) error {
-	if c.stream.streamReports() {
-		return c.stream.submitLogs(entries)
+	if c.stream == nil {
+		return errNoStream
 	}
-	return c.apiClient.ReportNodeLogs(entries)
+	return c.stream.submitLogs(entries)
 }
+
+// errNoStream: the controller is not bound to a control stream.
+var errNoStream = errors.New("the node has no Agent control stream")
 
 func (c *Controller) isStarted() bool {
 	return c.started.Load()
@@ -265,7 +165,7 @@ func (c *Controller) label() string {
 	if c.protocolID != 0 {
 		nodeType = fmt.Sprintf("protocol %d", c.protocolID)
 	}
-	return fmt.Sprintf("node %d (%s)", c.apiClient.GetNodeID(), nodeType)
+	return fmt.Sprintf("node %d (%s)", c.nodeID, nodeType)
 }
 
 // addLimiter sets the node's users and alive list and adds its limiter,
@@ -332,18 +232,6 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 	log.WithField("tag", c.tag).Infof("Added %d new users", added)
 	c.info = node
 	c.startTasks(node)
-
-	// The WebSocket pushes configuration and user changes; it is not
-	// started while the control stream carries both.
-	if c.apiClient.SupportsSync() && !c.streamCarriesNodeData() {
-		syncManager := NewSyncManager(c.apiClient, c, c.buildSyncConfig())
-		if err := syncManager.Start(); err != nil {
-			return fmt.Errorf("start sync manager error: %w", err)
-		}
-		c.syncMu.Lock()
-		c.syncManager = syncManager
-		c.syncMu.Unlock()
-	}
 	c.started.Store(true)
 
 	return nil
@@ -352,22 +240,10 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 // Close implement the Close() function of the service interface
 func (c *Controller) Close() error {
 	var closeErr error
-	c.syncMu.Lock()
-	syncManager := c.syncManager
-	c.syncManager, c.closed = nil, true
-	c.syncMu.Unlock()
-	if syncManager != nil {
-		if err := syncManager.Close(); err != nil {
-			closeErr = errors.Join(closeErr, fmt.Errorf("close sync manager error: %w", err))
-		}
-	}
 
 	if c.limiterAdded {
 		limiter.DeleteLimiter(c.tag)
 		c.limiterAdded = false
-	}
-	if c.nodeInfoMonitorPeriodic != nil {
-		c.nodeInfoMonitorPeriodic.Close()
 	}
 	if c.userReportPeriodic != nil {
 		c.userReportPeriodic.Close()
@@ -391,14 +267,11 @@ func (c *Controller) Close() error {
 		}
 		c.nodeAdded = false
 	}
-	if err := c.apiClient.Close(); err != nil {
-		closeErr = errors.Join(closeErr, fmt.Errorf("close api client error: %w", err))
-	}
 	return closeErr
 }
 
 func (c *Controller) buildNodeTag(node *panel.NodeInfo) string {
-	return fmt.Sprintf("[%s]-%s:%d", c.apiClient.GetAPIHost(), node.Type, node.Id) + c.protocolTagSuffix()
+	return fmt.Sprintf("[%s]-%s:%d", c.apiHost, node.Type, node.Id) + c.protocolTagSuffix()
 }
 
 // protocolTagSuffix keeps an extra controller's core tag apart from the
@@ -408,55 +281,4 @@ func (c *Controller) protocolTagSuffix() string {
 		return ""
 	}
 	return fmt.Sprintf("#%d", c.protocolID)
-}
-
-func (c *Controller) buildSyncConfig() *SyncConfig {
-	if c.Options == nil || c.Options.SyncConfig == nil {
-		return DefaultSyncConfig()
-	}
-
-	config := DefaultSyncConfig()
-	syncConfig := c.Options.SyncConfig
-
-	config.EnableWebSocket = syncConfig.EnableWebSocket
-	if syncConfig.WSEndpoint != "" {
-		config.WSEndpoint = syncConfig.WSEndpoint
-	}
-	if len(syncConfig.WSEndpointFallbacks) > 0 {
-		config.WSEndpointFallbacks = syncConfig.WSEndpointFallbacks
-	}
-	if syncConfig.ReconnectInterval > 0 {
-		config.ReconnectInterval = time.Duration(syncConfig.ReconnectInterval) * time.Second
-	}
-	config.MaxReconnectTries = syncConfig.MaxReconnectTries
-
-	if syncConfig.PingInterval > 0 {
-		config.PingInterval = time.Duration(syncConfig.PingInterval) * time.Second
-	}
-	if syncConfig.PongTimeout > 0 {
-		config.PongTimeout = time.Duration(syncConfig.PongTimeout) * time.Second
-	}
-	if syncConfig.AckTimeout > 0 {
-		config.AckTimeout = time.Duration(syncConfig.AckTimeout) * time.Second
-	}
-	if syncConfig.BufferSize > 0 {
-		config.BufferSize = syncConfig.BufferSize
-	}
-	config.AckRetries = syncConfig.AckRetries
-
-	config.EnableFallback = syncConfig.EnableFallback
-	if syncConfig.FallbackInterval > 0 {
-		config.FallbackInterval = time.Duration(syncConfig.FallbackInterval) * time.Second
-	}
-
-	return config
-}
-
-// reloadNode reloads the node with newNode, a full configuration pushed by
-// the legacy WebSocket (sync manager): the same reconciliation as the
-// other transports, with the previous configuration restored on failure.
-func (c *Controller) reloadNode(newNode *panel.NodeInfo) error {
-	c.reconcileMu.Lock()
-	defer c.reconcileMu.Unlock()
-	return c.reconcileLocked(newNode, nil, nil)
 }

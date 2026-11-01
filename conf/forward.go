@@ -23,13 +23,12 @@ type ForwardConfig struct {
 	Enable   bool   `json:"Enable"`
 	NodeKind string `json:"NodeKind"`
 	// ProxyNodeID is the proxy node whose stream carries forwarding; 0 is
-	// the only node with AgentControlEnabled and the stream data plane.
+	// the only proxy node configured.
 	ProxyNodeID int `json:"ProxyNodeID"`
 	// ForwardNode is a forward node's connection to Control: ApiHost or
 	// GRPCHost, GRPCUseTLS, GRPCServerName, NodeID (the forward node's id),
-	// ApiKey (its token, used only to enroll), AgentIdentity (required:
-	// Control authenticates forward nodes by client certificate),
-	// AgentStream.
+	// AgentIdentity (required: Control authenticates forward nodes by
+	// client certificate), AgentStream.
 	ForwardNode *ApiConfig `json:"ForwardNode"`
 	// StateDir keeps the applied forwarding state (DefaultForwardStateDir).
 	StateDir string                `json:"StateDir"`

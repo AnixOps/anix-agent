@@ -277,20 +277,23 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 }
 
 // fixtureConfigApplier records each applied snapshot: the revision, the
-// hash and the node configuration the Agent's UniProxy parser reads from
-// legacy_pull.default, as the node controller runs it.
+// hash and the node configuration the Agent's parser reads from
+// runtime.default, as the node controller runs it.
 type fixtureConfigApplier struct {
 	record string
 	nodeID int
 }
 
 func (a fixtureConfigApplier) ApplyConfig(_ context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
+	type answers struct {
+		Default json.RawMessage            `json:"default"`
+		Types   map[string]json.RawMessage `json:"types"`
+	}
 	var document struct {
-		Kind       string `json:"kind"`
-		LegacyPull struct {
-			Default json.RawMessage            `json:"default"`
-			Types   map[string]json.RawMessage `json:"types"`
-		} `json:"legacy_pull"`
+		Kind    string   `json:"kind"`
+		Runtime *answers `json:"runtime"`
+		// LegacyPull is runtime's earlier name.
+		LegacyPull *answers `json:"legacy_pull"`
 	}
 	if err := json.Unmarshal(snapshot.GetConfigJson(), &document); err != nil {
 		return fmt.Errorf("decode the configuration document: %w", err)
@@ -300,12 +303,19 @@ func (a fixtureConfigApplier) ApplyConfig(_ context.Context, snapshot *agentv1pb
 		"format": snapshot.GetFormat(), "kind": document.Kind,
 	}
 	if document.Kind == "proxy" {
-		info, nodeType, err := panel.ParseNodeInfo(document.LegacyPull.Default, a.nodeID)
-		if err != nil {
-			return fmt.Errorf("parse legacy_pull.default: %w", err)
+		runtime := document.Runtime
+		if runtime == nil {
+			runtime = document.LegacyPull
 		}
-		types := make([]string, 0, len(document.LegacyPull.Types))
-		for name := range document.LegacyPull.Types {
+		if runtime == nil {
+			return fmt.Errorf("the configuration document has no runtime answers")
+		}
+		info, nodeType, err := panel.ParseNodeInfo(runtime.Default, a.nodeID)
+		if err != nil {
+			return fmt.Errorf("parse runtime.default: %w", err)
+		}
+		types := make([]string, 0, len(runtime.Types))
+		for name := range runtime.Types {
 			types = append(types, name)
 		}
 		result["node_type"], result["protocol"], result["types"] = nodeType, info.Type, types

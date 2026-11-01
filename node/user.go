@@ -30,50 +30,17 @@ func (c *Controller) reportUserTrafficTask() (err error) {
 	online, onlineTotal := c.onlineToReport(userTraffic)
 
 	c.reportDestinations()
-	if c.stream.streamReports() {
-		// The stream (or its spool, while it is briefly down) carries the
-		// window as one batch: once spooled it never goes to a legacy
-		// transport, which could count it twice.
-		if err := c.stream.submitTraffic(c, userTraffic, online); err != nil {
-			c.rollbackTraffic(userTraffic)
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Could not spool the user traffic report")
-		} else if len(userTraffic) > 0 || len(online) > 0 {
-			log.WithField("tag", c.tag).Infof("Report %d users traffic, %d of %d online users on the control stream", len(userTraffic), len(online), onlineTotal)
-		}
-		c.syncCoreUserRateLimits()
-		return nil
+	// The stream (or its spool, while it is down) carries the window as
+	// one batch.
+	if err := c.submitTraffic(userTraffic, online); err != nil {
+		c.rollbackTraffic(userTraffic)
+		log.WithFields(log.Fields{
+			"tag": c.tag,
+			"err": err,
+		}).Error("Could not spool the user traffic report")
+	} else if len(userTraffic) > 0 || len(online) > 0 {
+		log.WithField("tag", c.tag).Infof("Report %d users traffic, %d of %d online users on the control stream", len(userTraffic), len(online), onlineTotal)
 	}
-
-	if len(userTraffic) > 0 {
-		err = c.apiClient.ReportUserTraffic(userTraffic)
-		if err != nil {
-			c.rollbackTraffic(userTraffic)
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Info("Report user traffic failed")
-		} else {
-			log.WithField("tag", c.tag).Infof("Report %d users traffic", len(userTraffic))
-			log.WithField("tag", c.tag).Debugf("User traffic: %+v", userTraffic)
-		}
-	}
-
-	if onlineTotal > 0 {
-		if err = c.apiClient.ReportNodeOnlineUsers(&online); err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Info("Report online users failed")
-		} else {
-			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", onlineTotal, len(online))
-			log.WithField("tag", c.tag).Debugf("Online users: %+v", online)
-		}
-	}
-
-	userTraffic = nil
 	c.syncCoreUserRateLimits()
 	return nil
 }
@@ -210,4 +177,12 @@ func userSyncKey(user panel.UserInfo) string {
 	return user.Uuid + "\x00" + strconv.Itoa(user.SpeedLimit) + "\x00" +
 		strconv.Itoa(user.DeviceLimit) + "\x00" + user.WireGuardPeerIP + "\x00" +
 		user.WireGuardPublicKey + "\x00" + user.WireGuardPresharedKey
+}
+
+// submitTraffic hands the window to the node's control stream.
+func (c *Controller) submitTraffic(userTraffic []panel.UserTraffic, online map[int][]string) error {
+	if c.stream == nil {
+		return errNoStream
+	}
+	return c.stream.submitTraffic(c, userTraffic, online)
 }
