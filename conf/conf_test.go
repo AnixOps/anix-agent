@@ -73,7 +73,7 @@ func TestConf_LoadWireGuardConfigPreservesExplicitCore(t *testing.T) {
 
 func TestConf_WatchMissingFile(t *testing.T) {
 	c := New()
-	err := c.Watch(filepath.Join(t.TempDir(), "missing.json"), "", "", func() {})
+	err := c.Watch(filepath.Join(t.TempDir(), "missing.json"), func() {})
 	if err == nil {
 		t.Fatal("Watch() missing file error = nil")
 	}

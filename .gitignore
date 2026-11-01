@@ -1,13 +1,8 @@
 example/config.yml
 example/main
-example/XrayR
-example/XrayR*
 example/mytest
 example/access.logo
 example/error.log
-api/chooseparser.go.bak
-app/Inboundbuilder/.lego/
-app/legocmd/.lego/
 .vscode/launch.json
 example/.lego
 example/cert
@@ -15,7 +10,6 @@ example/cert
 output/*
 .idea/*
 newV2bX.sh
-quic_singbox.sh
 V2bX_windows_amd64.exe
 V2bX
 V2bX.exe
