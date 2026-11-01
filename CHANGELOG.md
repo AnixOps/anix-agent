@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.0-rc.26 - 2026-11-01
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.26 and
+anx-node 0.1.0-alpha.9.
+
 ### Security
 
 - Go toolchain 1.26.9 → 1.26.10 (the release Control already builds with),
