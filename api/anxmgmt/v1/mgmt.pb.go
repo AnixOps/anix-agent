@@ -2114,12 +2114,13 @@ type Link struct {
 	Policy *LinePolicy `protobuf:"bytes,8,opt,name=policy,proto3" json:"policy,omitempty"`
 	// This node's default egress link.
 	DefaultRoute bool `protobuf:"varint,9,opt,name=default_route,json=defaultRoute,proto3" json:"default_route,omitempty"`
-	// Required for l2: SNI, one of the egress node's server_names.
+	// Required for l2 (except reverse links): SNI, one of the egress node's server_names.
 	ServerName string `protobuf:"bytes,10,opt,name=server_name,json=serverName,proto3" json:"server_name,omitempty"`
 	// 0 = UDP shares the link's connection with TCP; 1 = UDP uses a separate connection. >1 rejected.
 	UdpLanes uint32 `protobuf:"varint,11,opt,name=udp_lanes,json=udpLanes,proto3" json:"udp_lanes,omitempty"`
 	// Take connections dialed in by the egress instead of dialing out. quic_addr / faketcp_addr / tcp_addr
-	// must be empty, egress must be l1, and the node must run a reverse listener. policy.order containing
+	// must be empty and the node must run a reverse listener. With egress l2 the node must run
+	// --reverse-a2-listen, server_name may be empty and policy.order must be c1 only. policy.order containing
 	// quic / faketcp also takes dialed-in connections on those carriers (the node must run --reverse-quic /
 	// --reverse-faketcp); an empty order uses whichever reverse carriers the node runs.
 	Reverse       bool `protobuf:"varint,12,opt,name=reverse,proto3" json:"reverse,omitempty"`
@@ -2771,7 +2772,8 @@ type LinkStat struct {
 	// State of the separate UDP connection when udp_lanes = 1; false / empty otherwise.
 	UdpLaneConnected bool   `protobuf:"varint,17,opt,name=udp_lane_connected,json=udpLaneConnected,proto3" json:"udp_lane_connected,omitempty"`
 	UdpLaneCarrier   string `protobuf:"bytes,18,opt,name=udp_lane_carrier,json=udpLaneCarrier,proto3" json:"udp_lane_carrier,omitempty"`
-	// Reverse links: idle dialed-in connections waiting in the pool, and total accepted; zero otherwise.
+	// Reverse links: idle dialed-in connections waiting in the pool, and total accepted (the reality-jacket pool
+	// for l2 reverse links); zero otherwise.
 	ReverseIdle     uint32 `protobuf:"varint,19,opt,name=reverse_idle,json=reverseIdle,proto3" json:"reverse_idle,omitempty"`
 	ReverseAccepted uint64 `protobuf:"varint,20,opt,name=reverse_accepted,json=reverseAccepted,proto3" json:"reverse_accepted,omitempty"`
 	// Reverse links: idle dialed-in quic / faketcp connections in the pool; zero otherwise.
@@ -3022,7 +3024,12 @@ type ReverseDial struct {
 	// Also keep quic connections to the same port number of addr (UDP).
 	Quic bool `protobuf:"varint,5,opt,name=quic,proto3" json:"quic,omitempty"`
 	// Also keep faketcp connections to addr's port + 1. addr must be IPv4; Linux only, needs CAP_NET_RAW.
-	Faketcp       bool `protobuf:"varint,6,opt,name=faketcp,proto3" json:"faketcp,omitempty"`
+	Faketcp bool `protobuf:"varint,6,opt,name=faketcp,proto3" json:"faketcp,omitempty"`
+	// Set both to dial addr (the hub's --reverse-a2-listen) with the reality jacket instead of bare.
+	// quic / faketcp must then be false; idle 0 means 1. a2_server_name is the SNI (one of the hub's
+	// --reverse-a2-sni); hub_public is the hub node's public key text (anx-server keygen output).
+	A2ServerName  string `protobuf:"bytes,7,opt,name=a2_server_name,json=a2ServerName,proto3" json:"a2_server_name,omitempty"`
+	HubPublic     string `protobuf:"bytes,8,opt,name=hub_public,json=hubPublic,proto3" json:"hub_public,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3097,6 +3104,20 @@ func (x *ReverseDial) GetFaketcp() bool {
 		return x.Faketcp
 	}
 	return false
+}
+
+func (x *ReverseDial) GetA2ServerName() string {
+	if x != nil {
+		return x.A2ServerName
+	}
+	return ""
+}
+
+func (x *ReverseDial) GetHubPublic() string {
+	if x != nil {
+		return x.HubPublic
+	}
+	return ""
 }
 
 // Replaces the whole dial table (not persisted; re-send after reconnect). Empty = stop all.
@@ -3387,14 +3408,17 @@ const file_anx_mgmt_v1_mgmt_proto_rawDesc = "" +
 	"\x11reverse_quic_idle\x18\x15 \x01(\rR\x0freverseQuicIdle\x120\n" +
 	"\x14reverse_faketcp_idle\x18\x16 \x01(\rR\x12reverseFaketcpIdle\"@\n" +
 	"\x11LinkStatsResponse\x12+\n" +
-	"\x05links\x18\x01 \x03(\v2\x15.anx.mgmt.v1.LinkStatR\x05links\"\x97\x01\n" +
+	"\x05links\x18\x01 \x03(\v2\x15.anx.mgmt.v1.LinkStatR\x05links\"\xdc\x01\n" +
 	"\vReverseDial\x12\x17\n" +
 	"\adial_id\x18\x01 \x01(\tR\x06dialId\x12\x12\n" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x19\n" +
 	"\blink_key\x18\x03 \x01(\fR\alinkKey\x12\x12\n" +
 	"\x04idle\x18\x04 \x01(\rR\x04idle\x12\x12\n" +
 	"\x04quic\x18\x05 \x01(\bR\x04quic\x12\x18\n" +
-	"\afaketcp\x18\x06 \x01(\bR\afaketcp\"H\n" +
+	"\afaketcp\x18\x06 \x01(\bR\afaketcp\x12$\n" +
+	"\x0ea2_server_name\x18\a \x01(\tR\fa2ServerName\x12\x1d\n" +
+	"\n" +
+	"hub_public\x18\b \x01(\tR\thubPublic\"H\n" +
 	"\x16SetReverseDialsRequest\x12.\n" +
 	"\x05dials\x18\x01 \x03(\v2\x18.anx.mgmt.v1.ReverseDialR\x05dials\"/\n" +
 	"\x17SetReverseDialsResponse\x12\x14\n" +

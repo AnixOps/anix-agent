@@ -18,7 +18,9 @@ anx-node 的配置文件与公开内核 anixcore 同构（`inbounds`、`manageme
 | `device_limit` | u32 | 0 | 每用户设备数上限，0 = 不限 |
 | `shape_plain` | bool | false | 只用于互通调试 |
 | `state_file` | string | 无 | 设备 / CA 状态落盘路径（含密钥，0600） |
-| `mgmt_listen` | `ip:port` | 无 | 本入站的 gRPC 管理面地址；不填不开放 |
+| `mgmt_listen` | `ip:port` | 无 | 本入站的 gRPC 管理面地址；不填不开放。默认只许回环地址，非回环须配 `mgmt_tls` 或 `mgmt_insecure_public` |
+| `mgmt_tls` | `{cert_file, key_file, client_ca_file}` | 无 | 管理面 mTLS：服务端证书链、私钥、签发客户端证书的 CA（PEM，三项必填）；TLS 1.3，ALPN `h2`，客户端须出示链到该 CA 的证书 |
+| `mgmt_insecure_public` | bool | false | 允许明文非回环管理面（过渡用，启动时警告） |
 | `users` | `{name, password}`[] | `[]` | `password` 为 64 位 hex 用户密钥 |
 
 anx-node 形态下，用户 / 流量 / 在线（`AddUsers`、`RemoveUsers`、`GetTraffic`、`GetOnline`）走 node-runtime 管理接口，ANX-Line 链路 RPC 只在 anx-server 形态可用；这些在 anx-node 的 gRPC 上返回 `UNIMPLEMENTED`。
@@ -33,14 +35,15 @@ anx-node version
 anx-server keygen [--x25519-only] <key-file>
 anx-server userkey
 anx-server run --key <file> --sni <name>[,<name>…] [--listen <addr>] [--mgmt <addr>]
-               [--bare-listen <addr>] [--reverse-listen <addr> [--reverse-quic] [--reverse-faketcp]] [--quic-listen <addr>] [--quic-sockbuf <bytes>] [--quic-dgram-buf <bytes>]
+               [--mgmt-tls-cert <pem> --mgmt-tls-key <pem> --mgmt-client-ca <pem>] [--mgmt-insecure-public]
+               [--bare-listen <addr>] [--reverse-listen <addr> [--reverse-quic] [--reverse-faketcp]] [--reverse-a2-listen <addr> --reverse-a2-sni <name>[,…] --reverse-a2-dest <host:port>] [--quic-listen <addr>] [--quic-sockbuf <bytes>] [--quic-dgram-buf <bytes>]
                [--faketcp-listen <ipv4:port>] [--mptcp]
                [--dest <host:port>] [--users <file>] [--user <hex>[:<name>]]…
                [--alpn h2,http/1.1] [--max-streams N] [--require-device] [--no-enroll] [--shape-plain]
                [--state <file>]
 ```
 
-`--key` 与 `--sni` 必填，`--listen` 默认 `0.0.0.0:443`，不给 `--mgmt` 就不开管理接口。`--quic-sockbuf` 是 `--quic-listen` 那个 UDP socket 的收发缓冲字节数（受主机 `net.core.rmem_max` / `wmem_max` 截断，启动时 stderr 打出实际值），`--quic-dgram-buf` 是每连接的 UDP 数据报接收缓冲字节数；都是 0 / 不给 = 默认。`--reverse-listen` 开反向监听：出口节点主动连进来，`reverse = true` 的链路使用这些连接，出口节点因此不需要监听端口；出口节点经 `SetReverseDials` 下发要连的地址。`--reverse-quic` 让反向监听的 UDP 同号端口也接受 quic 回连（收发缓冲用 `--quic-sockbuf`），`--reverse-faketcp` 在反向监听端口 + 1 接受 faketcp 回连（只支持 IPv4 与 Linux，需要 `CAP_NET_RAW`）；两者都要求 `--reverse-listen`。`reverse` 链路按 `policy.order` 使用这些承载，`order` 为空时只用本节点开了的。`ReverseDial` 的 `quic` / `faketcp` 让出口节点也保持这两种回连（`faketcp` 要求 `addr` 是 IPv4）。anx-node 配置的 `anx_line` 段对应 `reverse_listen`、`reverse_quic`、`reverse_faketcp`、`reverse_quic_sockbuf`（字节，0 = 默认）与链路的 `reverse`。退出码：0 成功；1 运行失败；`anx-server` 未知子命令为 2。
+`--key` 与 `--sni` 必填，`--listen` 默认 `0.0.0.0:443`，不给 `--mgmt` 就不开管理接口；`--mgmt` 默认只许回环地址，非回环地址须同时给 `--mgmt-tls-cert` / `--mgmt-tls-key` / `--mgmt-client-ca`（mTLS，规则同入站 `mgmt_tls`）或 `--mgmt-insecure-public`，否则启动失败（退出码 1）。anx-node 配置的 `anx_line.mgmt_listen` 同样适用这条规则，对应字段 `anx_line.mgmt_tls` 与 `anx_line.mgmt_insecure_public`。`--quic-sockbuf` 是 `--quic-listen` 那个 UDP socket 的收发缓冲字节数（受主机 `net.core.rmem_max` / `wmem_max` 截断，启动时 stderr 打出实际值），`--quic-dgram-buf` 是每连接的 UDP 数据报接收缓冲字节数；都是 0 / 不给 = 默认。`--reverse-listen` 开反向监听：出口节点主动连进来，`reverse = true` 的链路使用这些连接，出口节点因此不需要监听端口；出口节点经 `SetReverseDials` 下发要连的地址。`--reverse-quic` 让反向监听的 UDP 同号端口也接受 quic 回连（收发缓冲用 `--quic-sockbuf`），`--reverse-faketcp` 在反向监听端口 + 1 接受 faketcp 回连（只支持 IPv4 与 Linux，需要 `CAP_NET_RAW`）；两者都要求 `--reverse-listen`。`reverse` 链路按 `policy.order` 使用这些承载，`order` 为空时只用本节点开了的。`ReverseDial` 的 `quic` / `faketcp` 让出口节点也保持这两种回连（`faketcp` 要求 `addr` 是 IPv4）。`--reverse-a2-listen` 开 `reality` 外衣的反向监听，给 `egress = "l2"` 的 `reverse` 链路用，必须同时给 `--reverse-a2-sni`（回连可用的 SNI）与 `--reverse-a2-dest`（伪装目标）；端口为 80 / 443 时启动打警告（国内云会拦未备案 SNI，建议高位端口）。`l2` 的 `reverse` 链路 `server_name` 可为空、`policy.order` 只能是 `c1`。`ReverseDial` 同时给 `a2_server_name` 与 `hub_public`（汇聚点公钥文本）时出口节点改用 `reality` 外衣回连，此时 `quic` / `faketcp` 必须为假、`idle` 为 0 时取 1；`l2` 反向链路的 `reverse_idle` / `reverse_accepted` 报这类回连。anx-node 配置的 `anx_line` 段对应 `reverse_listen`、`reverse_quic`、`reverse_faketcp`、`reverse_quic_sockbuf`（字节，0 = 默认）、`reverse_a2_listen`、`reverse_a2_sni`、`reverse_a2_dest` 与链路的 `reverse`，回连项对应 `a2_server_name`、`hub_public`。退出码：0 成功；1 运行失败；`anx-server` 未知子命令为 2。
 
 ## 3. 指标
 
@@ -56,7 +59,7 @@ anx-server run --key <file> --sni <name>[,<name>…] [--listen <addr>] [--mgmt <
 | --- | --- |
 | `INVALID_ARGUMENT` | 字段格式或取值不合法（密钥长度、地址、`egress` 与承载地址组合等） |
 | `NOT_FOUND` | 未知用户 / 设备 / 链路；`SetLinkRoutes` 引用未添加的 `link_id`（整批拒绝） |
-| `FAILED_PRECONDITION` | 本节点没开反向监听却添加 `reverse` 链路；`reverse` 链路的 `policy.order` 写了 `quic` / `faketcp` 而本节点没开 `--reverse-quic` / `--reverse-faketcp`；本节点不能处理回连却调用 `SetReverseDials`；`ReverseDial.faketcp` 在非 Linux 节点上 |
+| `FAILED_PRECONDITION` | 本节点没开反向监听却添加 `reverse` 链路；`reverse` 链路的 `policy.order` 写了 `quic` / `faketcp` 而本节点没开 `--reverse-quic` / `--reverse-faketcp`；本节点不能处理回连却调用 `SetReverseDials`；`ReverseDial.faketcp` 在非 Linux 节点上；本节点没开 `--reverse-a2-listen` 却添加 `l2` 的 `reverse` 链路 |
 | `PERMISSION_DENIED` | 设备申领被拒 |
 | `RESOURCE_EXHAUSTED` | 达到设备数上限 |
 | `UNIMPLEMENTED` | 当前形态不提供该 RPC（见第 1 节） |

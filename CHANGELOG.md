@@ -19,6 +19,18 @@
   management API. Older releases keep the loopback plaintext API. An
   anx-node that runs on its own takes `AnxLineApiTLS` (CertFile, KeyFile,
   CAFile, ServerName) for its `anx_line.mgmt_tls`.
+- L2 cross-border reverse dial-back (anx ANX-LINE-REVERSE §6.4): a reverse
+  anx_line transport with egress `l2` has the overseas egress dial back as
+  the A2 jacket's client, keeping `ReverseDial.a2_server_name` (the first
+  server name) and `hub_public` (the plan's `server_public`, the
+  rendezvous's key) and opening no port. The rendezvous opens the A2
+  listener instead of the bare one: a relay hop runs anx-server
+  `--reverse-a2-listen / --reverse-a2-sni / --reverse-a2-dest` (the first
+  name's site on 443, as on the forward A2 listener), anx-node gets
+  `anx_line.reverse_a2_listen / reverse_a2_key` (the Agent's anx-server
+  key) `/ reverse_a2_sni / reverse_a2_dest`. c1 only. contracts/anx
+  resynced from anx public/ (anx #126) and the management client
+  regenerated. Needs an anx-node release with anx #124 / #126.
 
 ## 5.0.0-rc.25 - 2026-10-31
 

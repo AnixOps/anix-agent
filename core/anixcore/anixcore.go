@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -215,7 +216,24 @@ func (c *Core) launch() error {
 				line["reverse_faketcp"] = true
 			}
 		}
+		a2Listen, a2SNI := c.reverse.A2Listen, c.reverse.A2SNI
 		c.mu.Unlock()
+		if a2Listen != "" {
+			// The A2 rendezvous of reverse l2 links (anx ANX-LINE-REVERSE
+			// §6.4): its short auth is to the Agent's anx-server key, the
+			// server_public Control hands the egress; what does not
+			// authenticate goes to the first name's site, as on the forward
+			// A2 listener.
+			key, err := anxKeyFile()
+			if err != nil {
+				return err
+			}
+			names := strings.Split(a2SNI, ",")
+			line["reverse_a2_listen"] = a2Listen
+			line["reverse_a2_key"] = key
+			line["reverse_a2_sni"] = names
+			line["reverse_a2_dest"] = net.JoinHostPort(names[0], "443")
+		}
 		config["anx_line"] = line
 	}
 	document, err := json.Marshal(config)

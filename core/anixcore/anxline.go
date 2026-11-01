@@ -51,9 +51,13 @@ var connectLine = func(addr string, creds credentials.TransportCredentials) (anx
 // reverseListener is anx-node's rendezvous listener (anx ANX-Line §4.6):
 // Listen ("" for none) and whether it also accepts the C2 / C3 dial-backs
 // (`anx_line.reverse_quic` / `reverse_faketcp`, anx ANX-LINE-REVERSE §6.3).
+// A2Listen is the A2 rendezvous of reverse l2 links (anx
+// ANX-LINE-REVERSE §6.4, `anx_line.reverse_a2_listen`), A2SNI its server
+// names (comma-separated), "" for none.
 type reverseListener struct {
-	Listen        string
-	QUIC, FakeTCP bool
+	Listen          string
+	QUIC, FakeTCP   bool
+	A2Listen, A2SNI string
 }
 
 // dialLinks answers the links of plan's dialing anx_line ends, by id, and
@@ -72,10 +76,25 @@ func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, reverse
 		if err != nil {
 			return nil, reverseListener{}, err
 		}
-		if link.GetReverse() {
+		if link.GetReverse() && link.GetEgress() == "l2" {
+			// One A2 rendezvous for all reverse l2 links, which dial back
+			// as the jacket's client on c1 (anx ANX-LINE-REVERSE §6.4).
+			listen, names := transport.GetAnxLine().GetReverseListen(), link.GetServerName()
+			if listen == "" || names == "" || (reverse.A2Listen != "" && (listen != reverse.A2Listen || names != reverse.A2SNI)) {
+				return nil, reverseListener{}, fmt.Errorf("transport %s: reverse l2 links need one A2 reverse listener and server name, have %q %q and %q %q",
+					transport.GetId(), reverse.A2Listen, reverse.A2SNI, listen, names)
+			}
+			if listen == reverse.Listen {
+				return nil, reverseListener{}, fmt.Errorf("transport %s: the A2 reverse listener %q is the bare one", transport.GetId(), listen)
+			}
+			reverse.A2Listen, reverse.A2SNI = listen, names
+		} else if link.GetReverse() {
 			// anx-node opens one rendezvous listener for all its reverse
 			// links (`anx_line.reverse_listen`).
 			listen := transport.GetAnxLine().GetReverseListen()
+			if listen != "" && listen == reverse.A2Listen {
+				return nil, reverseListener{}, fmt.Errorf("transport %s: the reverse listener %q is the A2 one", transport.GetId(), listen)
+			}
 			if listen == "" || (reverse.Listen != "" && listen != reverse.Listen) {
 				return nil, reverseListener{}, fmt.Errorf("transport %s: reverse links need one reverse listener, have %q and %q", transport.GetId(), reverse.Listen, listen)
 			}

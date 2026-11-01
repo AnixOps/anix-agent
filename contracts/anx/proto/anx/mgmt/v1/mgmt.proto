@@ -216,12 +216,13 @@ message Link {
   LinePolicy policy = 8;
   // This node's default egress link.
   bool default_route = 9;
-  // Required for l2: SNI, one of the egress node's server_names.
+  // Required for l2 (except reverse links): SNI, one of the egress node's server_names.
   string server_name = 10;
   // 0 = UDP shares the link's connection with TCP; 1 = UDP uses a separate connection. >1 rejected.
   uint32 udp_lanes = 11;
   // Take connections dialed in by the egress instead of dialing out. quic_addr / faketcp_addr / tcp_addr
-  // must be empty, egress must be l1, and the node must run a reverse listener. policy.order containing
+  // must be empty and the node must run a reverse listener. With egress l2 the node must run
+  // --reverse-a2-listen, server_name may be empty and policy.order must be c1 only. policy.order containing
   // quic / faketcp also takes dialed-in connections on those carriers (the node must run --reverse-quic /
   // --reverse-faketcp); an empty order uses whichever reverse carriers the node runs.
   bool reverse = 12;
@@ -282,7 +283,8 @@ message LinkStat {
   // State of the separate UDP connection when udp_lanes = 1; false / empty otherwise.
   bool udp_lane_connected = 17;
   string udp_lane_carrier = 18;
-  // Reverse links: idle dialed-in connections waiting in the pool, and total accepted; zero otherwise.
+  // Reverse links: idle dialed-in connections waiting in the pool, and total accepted (the reality-jacket pool
+  // for l2 reverse links); zero otherwise.
   uint32 reverse_idle = 19;
   uint64 reverse_accepted = 20;
   // Reverse links: idle dialed-in quic / faketcp connections in the pool; zero otherwise.
@@ -304,6 +306,11 @@ message ReverseDial {
   bool quic = 5;
   // Also keep faketcp connections to addr's port + 1. addr must be IPv4; Linux only, needs CAP_NET_RAW.
   bool faketcp = 6;
+  // Set both to dial addr (the hub's --reverse-a2-listen) with the reality jacket instead of bare.
+  // quic / faketcp must then be false; idle 0 means 1. a2_server_name is the SNI (one of the hub's
+  // --reverse-a2-sni); hub_public is the hub node's public key text (anx-server keygen output).
+  string a2_server_name = 7;
+  string hub_public = 8;
 }
 // Replaces the whole dial table (not persisted; re-send after reconnect). Empty = stop all.
 // Sessions already being served are not affected. dial_id must be unique.
