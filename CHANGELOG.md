@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 5.0.0-rc.28 - 2026-11-01
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.28 and
+anx-node 0.1.0-alpha.9. No Agent code changes since rc.27; the version moves
+in lockstep with Control, which removes UniProxy and the v2board gRPC
+services in this release. Agents keep reading `legacy_pull` from the config
+snapshot, which Control still sends for one more release.
+
 ## 5.0.0-rc.27 - 2026-11-01
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.27 and
