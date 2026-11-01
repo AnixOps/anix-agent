@@ -28,7 +28,7 @@ import (
 // (node-ops-service.md, section 5.3): the Agent enrolls with Control's
 // AgentEnrollment, keeps its key and certificate under Dir, renews the
 // certificate at Control's renewal time (two thirds of its lifetime), and
-// presents it instead of the node API key.
+// presents it on every control stream session.
 type IdentityConfig struct {
 	// Dir is the identity root; pki.DefaultRoot when empty. The node's files
 	// live in Dir/proxy-<id>.
@@ -37,10 +37,8 @@ type IdentityConfig struct {
 	// it, a stored identity is still used and renewed, but never created.
 	Enroll bool
 	// EnrollCredentialFile holds a one-time anixagt_ enrollment credential
-	// (`anix-control agent token create`). It is used before the node API
-	// key, and is the only bootstrap Control accepts under
-	// agent_control.mtls: required. It is removed after a successful
-	// enrollment.
+	// (`anix-control agent token create`), the bootstrap of an enrollment.
+	// It is removed after a successful enrollment.
 	EnrollCredentialFile string
 	// Cluster pins the SPIFFE cluster of issued certificates; empty accepts
 	// Control's.
@@ -54,8 +52,8 @@ var (
 	enrollRetryMax         = 30 * time.Minute
 	enrollUnsupportedRetry = 30 * time.Minute
 	// enrollWaitingRetry is short: while waiting for a one-time credential
-	// an attempt only reads the credential file (the API key bootstrap was
-	// refused), so a credential written after a refusal is used promptly.
+	// an attempt only reads the credential file, so a credential written
+	// later is used promptly.
 	enrollWaitingRetry = 5 * time.Second
 	renewRetryMin      = time.Minute
 	renewRetryMax      = 30 * time.Minute
@@ -67,7 +65,6 @@ var (
 const (
 	enrollFailureTransient   = "transient"
 	enrollFailureUnsupported = "unsupported"
-	enrollFailureRejected    = "rejected"
 	enrollFailureWaiting     = "waiting"
 )
 
@@ -105,14 +102,10 @@ type identityManager struct {
 	nextEnrollAt  time.Time
 	enrollFails   int
 	failureClass  string
-	// apiKeyRefused: Control answered agent_mtls_required to the API key
-	// bootstrap; only an enrollment credential can enroll now.
-	apiKeyRefused bool
 	// refusedCredential is the SHA-256 of an enrollment credential Control
 	// rejected, so the Agent does not retry it.
 	refusedCredential string
 	lastError         string
-	certNotRequested  bool
 	// wrongNodeLoggedAt and wrongNodeRefusals track agent_cert_wrong_node
 	// refusals (a configuration error).
 	wrongNodeLoggedAt time.Time
@@ -121,8 +114,6 @@ type identityManager struct {
 	// never enroll twice at once.
 	enrolling bool
 	changed   chan struct{}
-	// onEnrolled runs after an enrollment installed a new identity.
-	onEnrolled func()
 	// onRejected runs after Control refused the certificate and it was
 	// discarded, with Control's code (agent_cert_revoked, ...).
 	onRejected func(code string)
@@ -173,8 +164,8 @@ func (m *identityManager) certificate() *pki.Identity {
 
 // prepare runs before each stream session: it loads the stored identity,
 // drops an expired one, and enrolls when the node has none and the retry
-// time has come. It never fails the session: without an identity the
-// stream authenticates with the node API key.
+// time has come. Without an identity the session waits for the
+// enrollment.
 func (m *identityManager) prepare(ctx context.Context) {
 	m.mu.Lock()
 	first := !m.loaded
@@ -211,7 +202,7 @@ func (m *identityManager) loadLocked() {
 		if m.enroll {
 			log.WithFields(m.fields()).WithField("dir", m.store.Dir()).Info("Agent identity is not enrolled yet; enrolling with Control's AgentEnrollment")
 		} else {
-			log.WithFields(m.fields()).WithField("dir", m.store.Dir()).Info("Agent identity is not enrolled and AgentIdentity.Enroll is off; the control stream authenticates with the node API key")
+			log.WithFields(m.fields()).WithField("dir", m.store.Dir()).Warn("Agent identity is not enrolled and AgentIdentity.Enroll is off; the control stream stays down until an identity is stored (anix-agent join)")
 		}
 		return
 	case err != nil:
@@ -258,8 +249,7 @@ func (m *identityManager) discardLocked() {
 
 // rejected handles Control refusing the certificate identity presented:
 // revoked, expired, or not of this cluster. The identity is dropped and the
-// next session enrolls again (with the API key when Control still allows
-// it).
+// next session enrolls again.
 func (m *identityManager) rejected(identity *pki.Identity, reason, code string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -290,47 +280,6 @@ func (m *identityManager) wrongNode(err error) {
 	m.mu.Unlock()
 	if due {
 		log.WithFields(m.fields()).WithError(err).Error("Control refused the agent certificate as another node's (agent_cert_wrong_node): this Agent's NodeID does not match its certificate. This is a configuration error; the Agent keeps the certificate and retries slowly. Fix NodeID, or remove the identity directory to enroll again")
-	}
-}
-
-// enrollSoon brings the next enrollment forward after a signal that Control
-// can enroll now (a deprecation notice, an agent_mtls_required refusal),
-// unless the last attempt found enrollment unavailable.
-func (m *identityManager) enrollSoon() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.current == nil && m.failureClass != enrollFailureUnsupported && m.failureClass != enrollFailureRejected {
-		m.nextEnrollAt = time.Time{}
-		m.signalChanged()
-	}
-}
-
-// apiKeyAccepted records that Control served a session authenticated with
-// the node API key, so it is not in agent_control.mtls: required (any
-// more): an earlier refusal of the API key bootstrap no longer holds, and an
-// Agent waiting for a credential may enroll with the key again.
-func (m *identityManager) apiKeyAccepted() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.apiKeyRefused {
-		return
-	}
-	m.apiKeyRefused = false
-	if m.current == nil && m.failureClass == enrollFailureWaiting {
-		m.nextEnrollAt = time.Time{}
-		m.signalChanged()
-	}
-}
-
-// noteCertificateNotRequested logs once that Control did not ask for the
-// client certificate, so the stream fell back to the node API key.
-func (m *identityManager) noteCertificateNotRequested() {
-	m.mu.Lock()
-	first := !m.certNotRequested
-	m.certNotRequested = true
-	m.mu.Unlock()
-	if first {
-		log.WithFields(m.fields()).Warn("Control did not request the agent client certificate (agent_control.mtls: off, or Control runs without its agent PKI); the control stream authenticates with the node API key")
 	}
 }
 
@@ -453,26 +402,23 @@ func credentialDigest(credential string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-// bootstrap picks how to enroll: the enrollment credential, else the node
-// API key unless Control refused it.
-func (m *identityManager) bootstrap() (method, credential string, err error) {
+// bootstrap reads the enrollment credential, the only bootstrap of an
+// enrollment.
+func (m *identityManager) bootstrap() (credential string, err error) {
 	credential, err = m.readCredential()
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	m.mu.Lock()
-	refusedCredential, apiKeyRefused := m.refusedCredential, m.apiKeyRefused
+	refusedCredential := m.refusedCredential
 	m.mu.Unlock()
 	if credential != "" && credentialDigest(credential) != refusedCredential {
-		return pki.BootstrapEnrollmentCredential, credential, nil
-	}
-	if !apiKeyRefused && strings.TrimSpace(m.client.config.APIKey) != "" {
-		return pki.BootstrapNodeAPIKey, "", nil
+		return credential, nil
 	}
 	if credential != "" {
-		return "", "", fmt.Errorf("Control rejected the enrollment credential in %s and requires one (agent_control.mtls: required); issue a new one with `anix-control agent token create -node %s`", m.credentialFile, m.store.Node())
+		return "", fmt.Errorf("Control rejected the enrollment credential in %s; issue a new one with `anix-control agent token create -node %s`", m.credentialFile, m.store.Node())
 	}
-	return "", "", fmt.Errorf("Control requires a one-time enrollment credential (agent_control.mtls: required); issue one with `anix-control agent token create -node %s` and write it to AgentIdentity.EnrollCredentialFile", m.store.Node())
+	return "", fmt.Errorf("the Agent needs a one-time enrollment credential; issue one with `anix-control agent token create -node %s` and write it to AgentIdentity.EnrollCredentialFile, or run `anix-agent join`", m.store.Node())
 }
 
 // enrollOnce runs one enrollment and schedules the next on failure.
@@ -491,14 +437,14 @@ func (m *identityManager) enrollOnce(ctx context.Context) {
 		m.enrolling = false
 		m.mu.Unlock()
 	}()
-	method, credential, err := m.bootstrap()
+	credential, err := m.bootstrap()
 	if err != nil {
 		m.enrollFailed(enrollFailureWaiting, err)
 		return
 	}
-	identity, err := m.enrollWith(ctx, method, credential)
+	identity, err := m.enrollWith(ctx, credential)
 	if err != nil {
-		m.classifyEnrollFailure(method, credential, err)
+		m.classifyEnrollFailure(credential, err)
 		return
 	}
 	m.mu.Lock()
@@ -508,20 +454,15 @@ func (m *identityManager) enrollOnce(ctx context.Context) {
 		return
 	}
 	log.WithFields(m.fields()).WithFields(log.Fields{
-		"spiffe_id": identity.SPIFFEID, "serial": identity.Serial, "bootstrap": method,
+		"spiffe_id": identity.SPIFFEID, "serial": identity.Serial,
 		"not_after": identity.NotAfter.UTC().Format(time.RFC3339), "renew_after": identity.RenewAfter.UTC().Format(time.RFC3339),
-	}).Info("Agent enrolled; the control stream now authenticates with its client certificate instead of the node API key")
-	if method == pki.BootstrapEnrollmentCredential {
-		if err := os.Remove(m.credentialFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			log.WithFields(m.fields()).WithError(err).Warn("Could not remove the used enrollment credential")
-		}
-	}
-	if m.onEnrolled != nil {
-		m.onEnrolled()
+	}).Info("Agent enrolled; the control stream authenticates with its client certificate")
+	if err := os.Remove(m.credentialFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log.WithFields(m.fields()).WithError(err).Warn("Could not remove the used enrollment credential")
 	}
 }
 
-func (m *identityManager) enrollWith(ctx context.Context, method, credential string) (*pki.Identity, error) {
+func (m *identityManager) enrollWith(ctx context.Context, credential string) (*pki.Identity, error) {
 	key, err := pki.GenerateKey()
 	if err != nil {
 		return nil, err
@@ -539,9 +480,6 @@ func (m *identityManager) enrollWith(ctx context.Context, method, credential str
 		agentcontrol.MetadataNodeID, strconv.Itoa(m.client.config.NodeID),
 		agentcontrol.MetadataNodeKind, m.client.config.NodeKind,
 	}
-	if method == pki.BootstrapNodeAPIKey {
-		pairs = append(pairs, agentcontrol.MetadataAPIKey, m.client.config.APIKey)
-	}
 	callCtx, cancel := context.WithTimeout(metadata.AppendToOutgoingContext(ctx, pairs...), identityRPCTimeout)
 	defer cancel()
 	var trailer metadata.MD
@@ -550,9 +488,6 @@ func (m *identityManager) enrollWith(ctx context.Context, method, credential str
 		AgentVersion: m.client.config.AgentVersion, InstanceId: m.client.config.InstanceID,
 	}, grpc.Trailer(&trailer))
 	if err != nil {
-		if refused := mtlsRequiredError("enrollment", err, trailer); refused != nil {
-			return nil, refused
-		}
 		return nil, withControlCode(err, trailer)
 	}
 	identity, err := pki.FromIssued(key, response.GetCertificate(), pki.Expectation{
@@ -561,7 +496,7 @@ func (m *identityManager) enrollWith(ctx context.Context, method, credential str
 	if err != nil {
 		return nil, err
 	}
-	identity.EnrolledAt, identity.Bootstrap = m.now().UTC(), method
+	identity.EnrolledAt, identity.Bootstrap = m.now().UTC(), pki.BootstrapEnrollmentCredential
 	return identity, nil
 }
 
@@ -579,34 +514,21 @@ func (m *identityManager) installLocked(expected, identity *pki.Identity) bool {
 	return true
 }
 
-func (m *identityManager) classifyEnrollFailure(method, credential string, err error) {
+func (m *identityManager) classifyEnrollFailure(credential string, err error) {
 	st, _ := grpcStatus(err)
 	rejected := errorCodeOf(err) == agentcontrol.ErrorCodeEnrollmentRejected
 	switch {
-	case errors.Is(err, ErrMTLSRequired):
-		m.mu.Lock()
-		m.apiKeyRefused = true
-		m.mu.Unlock()
-		m.enrollFailed(enrollFailureWaiting, fmt.Errorf("%w; write a one-time credential from `anix-control agent token create -node %s` to AgentIdentity.EnrollCredentialFile", err, m.store.Node()))
 	case st != nil && st.Code() == codes.Unimplemented:
-		m.enrollFailed(enrollFailureUnsupported, fmt.Errorf("Control does not serve AgentEnrollment (a Control before v4.1); the control stream keeps the node API key: %w", err))
+		m.enrollFailed(enrollFailureUnsupported, fmt.Errorf("Control does not serve AgentEnrollment: %w", err))
 	case st != nil && st.Code() == codes.FailedPrecondition:
-		m.enrollFailed(enrollFailureUnsupported, fmt.Errorf("Control cannot enroll agents now (agent_control.mtls: off, or Control runs without its built-in CA); the control stream keeps the node API key: %w", err))
+		m.enrollFailed(enrollFailureUnsupported, fmt.Errorf("Control cannot enroll agents now (agent_control.mtls: off, or Control runs without its built-in CA): %w", err))
 	case rejected || (st != nil && (st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied)):
-		// agent_enrollment_rejected: this bootstrap is unusable; it is
-		// not tried again.
-		if method == pki.BootstrapEnrollmentCredential {
-			m.mu.Lock()
-			m.refusedCredential = credentialDigest(credential)
-			m.mu.Unlock()
-			// Try the node API key next, if Control still takes it.
-			m.enrollFailed(enrollFailureTransient, fmt.Errorf("Control rejected the enrollment credential in %s (used, expired, revoked or for another node): %w", m.credentialFile, err))
-			m.mu.Lock()
-			m.nextEnrollAt = time.Time{}
-			m.mu.Unlock()
-			return
-		}
-		m.enrollFailed(enrollFailureRejected, fmt.Errorf("Control rejected the node API key for enrollment (replaced credentials, or a disabled node): %w", err))
+		// agent_enrollment_rejected: the credential is unusable; it is not
+		// tried again, and the Agent waits for a new one.
+		m.mu.Lock()
+		m.refusedCredential = credentialDigest(credential)
+		m.mu.Unlock()
+		m.enrollFailed(enrollFailureWaiting, fmt.Errorf("Control rejected the enrollment credential in %s (used, expired, revoked or for another node): %w", m.credentialFile, err))
 	default:
 		m.enrollFailed(enrollFailureTransient, err)
 	}
@@ -650,9 +572,8 @@ func (m *identityManager) enrollFailed(class string, err error) {
 
 // maintain keeps the identity current until ctx ends: it renews the
 // certificate at its renewal time, and enrolls an Agent without one when the
-// retry time comes, also while a session authenticated with the API key is
-// open (the client then reconnects with the certificate). The first attempt
-// is prepare's, before the first session.
+// retry time comes. The first attempt is prepare's, before the first
+// session.
 func (m *identityManager) maintain(ctx context.Context) {
 	for {
 		m.mu.Lock()

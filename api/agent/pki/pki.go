@@ -42,7 +42,6 @@ const DefaultRoot = "/var/lib/anixops-agent/pki"
 
 // Bootstrap methods recorded with an identity.
 const (
-	BootstrapNodeAPIKey           = "node-api-key"
 	BootstrapEnrollmentCredential = "enrollment-credential"
 	BootstrapRenewal              = "renewal"
 	// BootstrapJoinToken: `anix-agent join` with a node group's anixjoin_
@@ -83,8 +82,9 @@ type Identity struct {
 	// issued; RenewedAt when the current one replaced an earlier one.
 	EnrolledAt time.Time
 	RenewedAt  time.Time
-	// Bootstrap is how the enrollment started: BootstrapNodeAPIKey,
-	// BootstrapEnrollmentCredential or BootstrapJoinToken.
+	// Bootstrap is how the enrollment started:
+	// BootstrapEnrollmentCredential or BootstrapJoinToken (an identity
+	// enrolled by an older Agent may record another method).
 	Bootstrap string
 }
 

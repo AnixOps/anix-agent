@@ -28,7 +28,7 @@ func TestCredentialOnlyProxyNodeStartsFromTheStream(t *testing.T) {
 	_, err := os.Stat(fixture.credential)
 	assert.True(t, os.IsNotExist(err), "the one-time credential is removed after use")
 	for _, stream := range fixture.control.Streams() {
-		assert.False(t, stream.APIKey, "never an API key")
+		assert.NotEmpty(t, stream.CertificateSerial, "every stream presents the certificate")
 	}
 }
 

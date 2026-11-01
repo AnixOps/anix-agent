@@ -62,7 +62,7 @@ func newUsersClient(t *testing.T, control *agenttest.Control, root string, users
 	store, err := state.Open(root, agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: control.NodeID})
 	require.NoError(t, err)
 	client, err := NewClient(Config{
-		Target: control.Address, NodeID: int(control.NodeID), APIKey: control.APIKey, UseTLS: true, ServerName: control.ServerName,
+		Target: control.Address, NodeID: int(control.NodeID), Identity: &IdentityConfig{Dir: control.Provision(t)}, UseTLS: true, ServerName: control.ServerName,
 		RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
 		Heartbeat:    time.Second, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
@@ -93,7 +93,7 @@ func startUsersClient(t *testing.T, client *Client) {
 }
 
 func TestUsersFullResyncInPagesThenDeltasWithoutResync(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
 	control.SetUserPageSize(2)
 	control.UpsertUsers(nodeUsers(1, 2, 3, 4, 5)...)
 	root := t.TempDir()
@@ -140,7 +140,7 @@ func TestUsersFullResyncInPagesThenDeltasWithoutResync(t *testing.T) {
 }
 
 func TestUsersPagesOfASessionThatEndsBeforeTheLastPageAreDropped(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
 	control.SetUserPageSize(2)
 	control.UpsertUsers(nodeUsers(1, 2, 3, 4, 5)...)
 	control.DropNextResyncAfter(2)
@@ -161,7 +161,7 @@ func TestUsersPagesOfASessionThatEndsBeforeTheLastPageAreDropped(t *testing.T) {
 }
 
 func TestUsersResyncWhenTheLogNoLongerCoversTheCursorOrIsAhead(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
 	control.UpsertUsers(nodeUsers(1, 2)...)
 	users := &recordingUsers{}
 	client := newUsersClient(t, control, t.TempDir(), users)
@@ -196,7 +196,7 @@ func TestUsersRetriesASetTheNodeCouldNotApply(t *testing.T) {
 	previous := usersRetryInterval
 	usersRetryInterval = 100 * time.Millisecond
 	t.Cleanup(func() { usersRetryInterval = previous })
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
 	control.UpsertUsers(nodeUsers(1, 2)...)
 	users := &recordingUsers{fail: 2}
 	client := newUsersClient(t, control, t.TempDir(), users)
@@ -209,7 +209,7 @@ func TestUsersRetriesASetTheNodeCouldNotApply(t *testing.T) {
 }
 
 func TestUsersRestartResumesFromTheStoredCursor(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
 	control.UpsertUsers(nodeUsers(1, 2, 3)...)
 	root := t.TempDir()
 	first := newUsersClient(t, control, root, &recordingUsers{})
@@ -234,7 +234,7 @@ func TestUsersRestartResumesFromTheStoredCursor(t *testing.T) {
 }
 
 func TestUsersNotServedStayOnTheLegacyTransport(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	users := &recordingUsers{}
 	client := newUsersClient(t, control, t.TempDir(), users)
 	startUsersClient(t, client)

@@ -159,7 +159,7 @@ func TestStoreSavesPrivatelyAndLoadsTheSameIdentity(t *testing.T) {
 	require.NoError(t, err)
 	identity, err := FromIssued(key, ca.issue(t, &key.PublicKey, issueOptions{}), Expectation{Node: testNode, Now: time.Now()})
 	require.NoError(t, err)
-	identity.EnrolledAt, identity.Bootstrap = time.Now().UTC().Truncate(time.Second), BootstrapNodeAPIKey
+	identity.EnrolledAt, identity.Bootstrap = time.Now().UTC().Truncate(time.Second), BootstrapEnrollmentCredential
 
 	root := filepath.Join(t.TempDir(), "pki")
 	store, err := NewStore(root, testNode)
@@ -189,7 +189,7 @@ func TestStoreSavesPrivatelyAndLoadsTheSameIdentity(t *testing.T) {
 	assert.Equal(t, identity.SPIFFEID, loaded.SPIFFEID)
 	assert.True(t, loaded.RenewAfter.Equal(identity.RenewAfter.Truncate(time.Second)) || loaded.RenewAfter.Equal(identity.RenewAfter))
 	assert.True(t, loaded.EnrolledAt.Equal(identity.EnrolledAt))
-	assert.Equal(t, BootstrapNodeAPIKey, loaded.Bootstrap)
+	assert.Equal(t, BootstrapEnrollmentCredential, loaded.Bootstrap)
 	assert.Len(t, loaded.TrustBundle, 1)
 
 	status := store.Inspect(time.Now())

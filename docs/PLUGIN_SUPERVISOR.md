@@ -32,9 +32,8 @@ When `PluginSocketDir` is omitted, sockets use
 artifacts, operation journal, runtime state, and sockets. A repeated config
 entry for the same node may reuse its Supervisor only when the root, socket
 directory, trust root, and Control identity match exactly. The Control identity
-includes the API and gRPC endpoints, TLS settings, server name, and an API-key
-fingerprint; the raw API key is not stored in the identity. Reusing one numeric
-node ID across different Controls fails closed.
+includes the API and gRPC endpoints, TLS settings, and server name. Reusing one
+numeric node ID across different Controls fails closed.
 
 An upgrade of a true single-node Agent preserves the old non-namespaced root
 and socket directory when existing plugin state or sockets are detected. A
@@ -57,23 +56,16 @@ Each installed version is retained under the selected node namespace at
 `<node-root>/<plugin>/<version>` (the legacy single-node layout keeps
 `PluginRoot/<plugin>/<version>`).
 `plugin.install` accepts the strict `anixops.io/plugin-install/v1alpha1`
-descriptor from the Agent Control stream. Its manifest and artifact URLs must
-be exact same-origin `/api/v3/agent/plugin-releases/<plugin>/<version>/...`
-paths with matching `sha256` and `size` query values. When the control stream
-negotiated `artifacts.v1` (an enrolled Agent, on a session authenticated by its
-client certificate) the Agent downloads both documents from Control's
+descriptor from the Agent Control stream. The session must have negotiated
+`artifacts.v1`: the Agent downloads both documents from Control's
 `AgentArtifacts` service by their content address (plugin id, version,
 SHA-256, size), the artifact in chunks written in offset order up to its size,
 retrying `plugin_release_download_busy` and `Unavailable`, and cross-checks the
 `PluginRelease` Control describes them by (digests, sizes, signature,
 `ed25519`, publisher, key ID, plugin API version) against the descriptor; a
 certificate refusal (`agent_cert_*`) discards the certificate and enrolls
-again; the API key is never sent then. Without `artifacts.v1` on the session
-(an Agent not enrolled yet, or a Control 4.1.x that predates AgentArtifacts,
-since the v4.2 upgrade runs the new Agent first) the Agent uses the HTTP
-download, authenticating both raw-body GETs with its existing `X-API-Key`; it
-refuses redirects and encoded or traversal paths, and names a refusal with
-`agent_mtls_required` in the install error. Either way it enforces a 1 MiB manifest limit and
+again. Without `artifacts.v1` on the session the install fails. The descriptor's
+`url` fields are not used. It enforces a 1 MiB manifest limit and
 64 MiB artifact limit, then verifies exact size, SHA-256, publisher, API
 version, trust-root key ID, and Ed25519 signature before installation.
 

@@ -45,12 +45,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// agent_control.mtls modes.
+// agent_control.mtls modes: off does not ask for the client certificate
+// and cannot enroll; required does both.
 const (
-	ModeOff       = "off"
-	ModeOptional  = "optional"
-	ModePreferred = "preferred"
-	ModeRequired  = "required"
+	ModeOff      = "off"
+	ModeRequired = "required"
 )
 
 // ConfigFormat is the snapshot format Control sends.
@@ -68,7 +67,6 @@ type Control struct {
 	// or agentcontrol.NodeKindForward (a forward node: certificate-only
 	// streams, forward.v1, no users or reports.v1).
 	NodeKind string
-	APIKey   string
 	Cluster  string
 	// ServerName is the name in the server certificate.
 	ServerName string
@@ -159,7 +157,6 @@ type userChange struct {
 // StreamAuth records how a stream authenticated.
 type StreamAuth struct {
 	CertificateSerial string
-	APIKey            bool
 	Accepted          bool
 }
 
@@ -197,7 +194,7 @@ func (s *session) send(message *agentv1pb.ControlToAgent) error {
 func New(t testing.TB, mode string, serves ...string) *Control {
 	t.Helper()
 	control := &Control{
-		t: t, NodeID: 12, APIKey: "node-api-key", Cluster: "test-cluster", ServerName: "control.test",
+		t: t, NodeID: 12, Cluster: "test-cluster", ServerName: "control.test",
 		mode: mode, serves: map[string]bool{}, credentials: map[string]bool{}, sessions: map[string]*session{},
 		users: map[uint64]*agentv1pb.NodeUser{}, pageSize: 500,
 		batches: map[string]bool{}, appliedTraffic: map[uint64][2]uint64{},
@@ -968,9 +965,8 @@ func (c *Control) issueFor(csrDER []byte, node agentcontrol.AgentNode) (*agentv1
 }
 
 // Enroll implements AgentEnrollment.Enroll: a one-time credential in every
-// mode but off, the node API key in optional and preferred. A credential
-// names its node, so x-node-id and x-node-kind are optional with one (the
-// node they name must be the credential's); the API key needs them.
+// mode but off. A credential names its node, so x-node-id and x-node-kind
+// are optional (the node they name must be the credential's).
 func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequest) (*agentv1pb.EnrollAgentResponse, error) {
 	mode := c.Mode()
 	if mode == ModeOff {
@@ -978,7 +974,7 @@ func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequ
 	}
 	nodeID := metadataValue(ctx, agentcontrol.MetadataNodeID)
 	if nodeID == "" && request.EnrollmentCredential == "" {
-		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "an enrollment credential or x-node-id and x-api-key are required")
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "an enrollment credential is required")
 	}
 	if nodeID != "" && nodeID != strconv.FormatUint(uint64(c.NodeID), 10) {
 		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
@@ -1000,13 +996,7 @@ func (c *Control) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequ
 			return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
 		}
 	} else {
-		if mode == ModeRequired {
-			_ = grpc.SetTrailer(ctx, metadata.Pairs(agentcontrol.MetadataErrorCode, agentcontrol.ErrorCodeMTLSRequired))
-			return nil, status.Error(codes.Unauthenticated, agentcontrol.ErrorCodeMTLSRequired+": an enrollment credential is required (agent_control.mtls: required)")
-		}
-		if metadataValue(ctx, agentcontrol.MetadataAPIKey) != c.APIKey {
-			return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "agent enrollment rejected")
-		}
+		return nil, refuse(ctx, codes.Unauthenticated, agentcontrol.ErrorCodeEnrollmentRejected, "an enrollment credential is required")
 	}
 	certificate, err := c.issue(request.CsrDer)
 	if err != nil {
@@ -1071,7 +1061,7 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 		return status.Error(codes.Unavailable, "control is unavailable")
 	}
 	index := len(c.streams)
-	c.streams = append(c.streams, StreamAuth{APIKey: metadataValue(ctx, agentcontrol.MetadataAPIKey) != ""})
+	c.streams = append(c.streams, StreamAuth{})
 	mode := c.mode
 	c.mu.Unlock()
 	update := func(change func(*StreamAuth)) {
@@ -1088,18 +1078,7 @@ func (c *Control) ControlStream(stream agentv1pb.AgentControlService_ControlStre
 		certificate = true
 		update(func(record *StreamAuth) { record.CertificateSerial = hex.EncodeToString(leaf.SerialNumber.Bytes()) })
 	} else {
-		if c.node().Kind == agentcontrol.NodeKindForward {
-			// A forward node's token never authenticates the stream.
-			return status.Error(codes.Unauthenticated, "a forward node authenticates the stream with its client certificate")
-		}
-		if mode == ModeRequired {
-			stream.SetTrailer(metadata.Pairs(agentcontrol.MetadataErrorCode, agentcontrol.ErrorCodeMTLSRequired))
-			return status.Error(codes.Unauthenticated, agentcontrol.ErrorCodeMTLSRequired+": an agent client certificate is required (agent_control.mtls: required)")
-		}
-		if metadataValue(ctx, agentcontrol.MetadataAPIKey) != c.APIKey ||
-			metadataValue(ctx, agentcontrol.MetadataNodeID) != strconv.FormatUint(uint64(c.NodeID), 10) {
-			return status.Error(codes.Unauthenticated, "invalid node credentials")
-		}
+		return status.Error(codes.Unauthenticated, "an agent client certificate is required")
 	}
 
 	first, err := stream.Recv()

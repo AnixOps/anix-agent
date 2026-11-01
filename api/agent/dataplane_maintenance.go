@@ -18,8 +18,7 @@ import (
 // MaintenanceAck at a time, and applies each event's result: persisted
 // removes it; a refusal (an error, or any error_code but
 // maintenance_unavailable) removes it for good; neither keeps it and sends
-// it again, not before retry_after_ms. The legacy maintenance-only
-// WebSocket is not needed then.
+// it again, not before retry_after_ms.
 
 // Maintenance defaults.
 const (

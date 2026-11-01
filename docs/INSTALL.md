@@ -363,11 +363,13 @@ sudo anix-agent status
 sudo anix-agent log
 ```
 
-The wizard asks for the HTTPS panel URL, node ID, API key, core type, and the existing
-data-plane transport. It then asks separately whether to enable the Agent
-Control stream. When enabled, configure its gRPC target, TLS preference, SNI,
-and keepalive settings. The installed binary validates the generated file before
-the wizard reports success. Never paste API keys into public logs or support tickets.
+The wizard asks for the HTTPS Control URL, the Agent control stream's gRPC
+target, the node ID, the node type, and whether to enable the plugin
+Supervisor, and writes the same credential-only configuration as Control's
+installer. Write the one-time enrollment credential to
+`AgentIdentity.EnrollCredentialFile` before the first start. The installed
+binary validates the generated file before the wizard reports success. Never
+paste enrollment credentials into public logs or support tickets.
 
 ## Update And Rollback
 
@@ -489,8 +491,9 @@ production node.
 
 ## Panel Pairing
 
-Use the matching panel release. Create or rotate the node API key in the panel,
-then set it in `/etc/anixops/agent/config.json`. Verify after startup:
+Use the matching Control release. Issue a one-time enrollment credential for
+the node in Control (`anix-control agent token create -node proxy-<id>`) and
+write it to `AgentIdentity.EnrollCredentialFile`. Verify after startup:
 
 1. The control stream connects with the client certificate.
 2. The node applies Control's configuration snapshot and user set.

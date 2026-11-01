@@ -65,9 +65,6 @@ func (c *Client) LinkTrustBundle(ctx context.Context) ([][]byte, error) {
 }
 
 func (c *Client) linkCall(ctx context.Context, do func(context.Context, agentv1pb.AgentEnrollmentClient, *metadata.MD) error) error {
-	if c.identity == nil {
-		return ErrNoIdentity
-	}
 	identity := c.identity.certificate()
 	if identity == nil {
 		return ErrNoIdentity
@@ -96,9 +93,6 @@ func (c *Client) linkCall(ctx context.Context, do func(context.Context, agentv1p
 // AgentPublicKey answers the agent certificate's public key, nil without
 // one: a link key must never be it.
 func (c *Client) AgentPublicKey() crypto.PublicKey {
-	if c.identity == nil {
-		return nil
-	}
 	identity := c.identity.certificate()
 	if identity == nil || identity.Leaf == nil {
 		return nil
@@ -111,9 +105,7 @@ func (c *Client) AgentPublicKey() crypto.PublicKey {
 // (agentcontrol.ErrorCodeCertRevoked, ...). The forward component deletes
 // the link key and certificate on revocation. Set it before Start.
 func (c *Client) OnIdentityRejected(f func(code string)) {
-	if c.identity != nil {
-		c.identity.onRejected = f
-	}
+	c.identity.onRejected = f
 }
 
 // RestartSession ends the current session; the client reconnects and its

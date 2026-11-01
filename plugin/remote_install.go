@@ -8,10 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
-	"path"
-	"strconv"
 	"strings"
 
 	"github.com/AnixOps/anix-agent/v5/api/agent"
@@ -26,14 +22,8 @@ const (
 type RemoteInstallerConfig struct {
 	Supervisor *Supervisor
 	// Artifacts downloads the release from Control's AgentArtifacts by the
-	// agent client certificate (artifacts.v1). Set, BaseURL and APIKey are
-	// not used: an enrolled Agent does not send its node API key.
+	// agent client certificate (artifacts.v1).
 	Artifacts ArtifactSource
-	// BaseURL and APIKey are the HTTP download's, for an Agent that is not
-	// enrolled.
-	BaseURL    string
-	APIKey     string
-	HTTPClient *http.Client
 }
 
 // ArtifactSource is Control's AgentArtifacts service
@@ -47,9 +37,6 @@ type ArtifactSource interface {
 type RemoteInstaller struct {
 	supervisor *Supervisor
 	artifacts  ArtifactSource
-	baseURL    *url.URL
-	apiKey     string
-	client     *http.Client
 }
 
 type remoteInstallSpec struct {
@@ -61,6 +48,8 @@ type remoteInstallSpec struct {
 }
 
 type remoteAsset struct {
+	// URL is not used: the documents come from AgentArtifacts by their
+	// content address. Control's install payload still names it.
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
@@ -78,29 +67,10 @@ func NewRemoteInstaller(config RemoteInstallerConfig) (*RemoteInstaller, error) 
 	if config.Supervisor == nil {
 		return nil, errors.New("plugin supervisor is required")
 	}
-	if config.Artifacts != nil {
-		return &RemoteInstaller{supervisor: config.Supervisor, artifacts: config.Artifacts}, nil
+	if config.Artifacts == nil {
+		return nil, errors.New("plugin artifact source (AgentArtifacts) is required")
 	}
-	baseURL, err := url.Parse(strings.TrimSpace(config.BaseURL))
-	if err != nil || baseURL == nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" {
-		return nil, errors.New("plugin download base URL must be an absolute HTTP(S) URL")
-	}
-	if baseURL.User != nil || baseURL.Fragment != "" {
-		return nil, errors.New("plugin download base URL must not contain credentials or a fragment")
-	}
-	apiKey := strings.TrimSpace(config.APIKey)
-	if apiKey == "" || strings.ContainsAny(apiKey, "\x00\r\n") {
-		return nil, errors.New("plugin download node API key is required")
-	}
-	client := &http.Client{}
-	if config.HTTPClient != nil {
-		copy := *config.HTTPClient
-		client = &copy
-	}
-	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-	return &RemoteInstaller{supervisor: config.Supervisor, baseURL: baseURL, apiKey: apiKey, client: client}, nil
+	return &RemoteInstaller{supervisor: config.Supervisor, artifacts: config.Artifacts}, nil
 }
 
 func (i *RemoteInstaller) Handle(ctx context.Context, envelope *agent.OperationEnvelope) (json.RawMessage, error) {
@@ -181,20 +151,11 @@ func (i *RemoteInstaller) validateSpec(spec *remoteInstallSpec) error {
 	if err := validateRemoteAsset(spec.Artifact, maxPluginArtifactBytes); err != nil {
 		return fmt.Errorf("plugin artifact download: %w", err)
 	}
-	if _, err := assetPath(spec.PluginID, spec.Version, "manifest", spec.Manifest.remoteAsset); err != nil {
-		return err
-	}
-	if _, err := assetPath(spec.PluginID, spec.Version, "artifact", spec.Artifact); err != nil {
-		return err
-	}
 	return nil
 }
 
-// fetchManifest downloads the manifest from AgentArtifacts, or over HTTP.
+// fetchManifest downloads the manifest from AgentArtifacts.
 func (i *RemoteInstaller) fetchManifest(ctx context.Context, spec *remoteInstallSpec) ([]byte, error) {
-	if i.artifacts == nil {
-		return i.fetch(ctx, spec.PluginID, spec.Version, "manifest", spec.Manifest.remoteAsset, maxRemoteManifestBytes)
-	}
 	release, manifest, err := i.artifacts.GetPluginManifest(ctx, releaseAddress(spec, spec.Manifest.remoteAsset))
 	if err != nil {
 		return nil, err
@@ -208,11 +169,8 @@ func (i *RemoteInstaller) fetchManifest(ctx context.Context, spec *remoteInstall
 	return manifest, nil
 }
 
-// fetchArtifact downloads the artifact from AgentArtifacts, or over HTTP.
+// fetchArtifact downloads the artifact from AgentArtifacts.
 func (i *RemoteInstaller) fetchArtifact(ctx context.Context, spec *remoteInstallSpec) ([]byte, error) {
-	if i.artifacts == nil {
-		return i.fetch(ctx, spec.PluginID, spec.Version, "artifact", spec.Artifact, maxPluginArtifactBytes)
-	}
 	release, artifact, err := i.artifacts.DownloadPluginArtifact(ctx, releaseAddress(spec, spec.Artifact), min(spec.Artifact.Size, maxPluginArtifactBytes))
 	if err != nil {
 		return nil, err
@@ -248,8 +206,7 @@ func verifyDocument(kind string, contents []byte, asset remoteAsset, maximum int
 }
 
 // checkRelease cross-checks the release Control describes the download by
-// (the HTTP download's X-AnixOps-* headers) against the install
-// configuration.
+// against the install configuration.
 func checkRelease(release *agentv1pb.PluginRelease, spec *remoteInstallSpec) error {
 	if release == nil {
 		return errors.New("Control described no plugin release")
@@ -297,86 +254,4 @@ func validateRemoteAsset(asset remoteAsset, maximum int64) error {
 func trustRootKeyID(publicKey []byte) string {
 	digest := sha256.Sum256(publicKey)
 	return hex.EncodeToString(digest[:])[:16]
-}
-
-func (i *RemoteInstaller) resolveAssetURL(pluginID, version, kind string, asset remoteAsset) (*url.URL, error) {
-	parsed, err := assetPath(pluginID, version, kind, asset)
-	if err != nil {
-		return nil, err
-	}
-	if i.baseURL == nil {
-		return nil, fmt.Errorf("plugin %s HTTP download is not configured", kind)
-	}
-	return &url.URL{Scheme: i.baseURL.Scheme, Host: i.baseURL.Host, Path: parsed.Path, RawQuery: parsed.RawQuery}, nil
-}
-
-// assetPath checks a document's same-origin download path against its
-// content address.
-func assetPath(pluginID, version, kind string, asset remoteAsset) (*url.URL, error) {
-	raw := strings.TrimSpace(asset.URL)
-	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.Contains(raw, "\\") {
-		return nil, fmt.Errorf("plugin %s URL must be a same-origin absolute path", kind)
-	}
-	parsed, err := url.ParseRequestURI(raw)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.Fragment != "" {
-		return nil, fmt.Errorf("plugin %s URL must be a valid same-origin path", kind)
-	}
-	if parsed.RawPath != "" || strings.Contains(strings.SplitN(raw, "?", 2)[0], "%") {
-		return nil, fmt.Errorf("plugin %s URL must not use encoded path segments", kind)
-	}
-	expectedPath := path.Join("/api/v3/agent/plugin-releases", pluginID, version, kind)
-	if parsed.Path != expectedPath {
-		return nil, fmt.Errorf("plugin %s URL path does not match the requested release", kind)
-	}
-	query := parsed.Query()
-	if len(query) != 2 || len(query["sha256"]) != 1 || len(query["size"]) != 1 ||
-		!strings.EqualFold(query.Get("sha256"), asset.SHA256) || query.Get("size") != strconv.FormatInt(asset.Size, 10) {
-		return nil, fmt.Errorf("plugin %s URL query does not match its signed metadata", kind)
-	}
-	return parsed, nil
-}
-
-func (i *RemoteInstaller) fetch(ctx context.Context, pluginID, version, kind string, asset remoteAsset, maximum int64) ([]byte, error) {
-	if asset.Size > maximum {
-		return nil, fmt.Errorf("plugin %s exceeds the download limit", kind)
-	}
-	target, err := i.resolveAssetURL(pluginID, version, kind, asset)
-	if err != nil {
-		return nil, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("X-API-Key", i.apiKey)
-	request.Header.Set("Accept-Encoding", "identity")
-	response, err := i.client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("download plugin %s: %w", kind, err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		var refusal struct {
-			Code string `json:"code"`
-		}
-		if json.Unmarshal(body, &refusal) == nil && refusal.Code == "agent_mtls_required" {
-			return nil, fmt.Errorf("download plugin %s: Control refused the node API key (HTTP %d, agent_mtls_required: agent_control.mtls is required); the HTTP download needs a Control that still accepts the key, and AgentArtifacts (artifacts.v1) needs a Control that serves it to this enrolled Agent", kind, response.StatusCode)
-		}
-		return nil, fmt.Errorf("download plugin %s: unexpected HTTP status %d", kind, response.StatusCode)
-	}
-	if encoding := strings.TrimSpace(response.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {
-		return nil, fmt.Errorf("download plugin %s: content encoding is not allowed", kind)
-	}
-	if response.ContentLength >= 0 && response.ContentLength != asset.Size {
-		return nil, fmt.Errorf("download plugin %s: content length does not match metadata", kind)
-	}
-	contents, err := io.ReadAll(io.LimitReader(response.Body, asset.Size+1))
-	if err != nil {
-		return nil, fmt.Errorf("download plugin %s body: %w", kind, err)
-	}
-	if err := verifyDocument(kind, contents, asset, maximum); err != nil {
-		return nil, err
-	}
-	return contents, nil
 }

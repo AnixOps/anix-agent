@@ -10,8 +10,8 @@ import (
 // Agent identity enrollment modes (AgentIdentity.Enroll).
 const (
 	// AgentIdentityEnrollAuto enrolls with Control's AgentEnrollment when
-	// the node has no valid certificate: with EnrollCredentialFile when set,
-	// else once with the node API key. The default.
+	// the node has no valid certificate, with EnrollCredentialFile. The
+	// default.
 	AgentIdentityEnrollAuto = "auto"
 	// AgentIdentityEnrollOff never enrolls. A stored identity is still used
 	// and renewed.

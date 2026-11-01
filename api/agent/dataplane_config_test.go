@@ -66,7 +66,7 @@ func (a *recordingApplier) setErr(err error) {
 }
 
 func configDocument(name string) map[string]any {
-	return map[string]any{"kind": "proxy", "node": map[string]any{"id": 12, "name": name}, "legacy_pull": map[string]any{"default": map[string]any{"node_type": "vless"}}}
+	return map[string]any{"kind": "proxy", "node": map[string]any{"id": 12, "name": name}, "runtime": map[string]any{"default": map[string]any{"node_type": "vless"}}}
 }
 
 func openState(t *testing.T, root string) *state.Store {
@@ -79,7 +79,7 @@ func openState(t *testing.T, root string) *state.Store {
 func newDataPlaneClient(t *testing.T, control *agenttest.Control, root string, applier agentapi.ConfigApplier, grace time.Duration) *agentapi.Client {
 	t.Helper()
 	client, err := agentapi.NewClient(agentapi.Config{
-		Target: control.Address, NodeID: int(control.NodeID), APIKey: control.APIKey, UseTLS: true, ServerName: control.ServerName,
+		Target: control.Address, NodeID: int(control.NodeID), Identity: &agentapi.IdentityConfig{Dir: control.Provision(t)}, UseTLS: true, ServerName: control.ServerName,
 		RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
 		Heartbeat:    time.Second, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
@@ -105,7 +105,7 @@ func statusesOf(control *agenttest.Control) []*agentv1pb.ConfigStatus {
 }
 
 func TestDataPlaneAdvertisesConfigAndAppliesTheHelloSnapshot(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	desired := agenttest.Snapshot(3, configDocument("a"))
 	control.SetDesiredConfig(desired, false)
 	root := t.TempDir()
@@ -144,7 +144,7 @@ func TestDataPlaneAdvertisesConfigAndAppliesTheHelloSnapshot(t *testing.T) {
 }
 
 func TestDataPlaneRestartReportsTheStoredRevisionAndIsNotSentItAgain(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	desired := agenttest.Snapshot(5, configDocument("a"))
 	control.SetDesiredConfig(desired, false)
 	root := t.TempDir()
@@ -190,7 +190,7 @@ func TestDataPlaneRefusesASnapshotThatDoesNotVerify(t *testing.T) {
 		"format": func(snapshot *agentv1pb.ConfigSnapshot) { snapshot.Format = "anixops.nodeconfig/v2" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+			control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 			snapshot := agenttest.Snapshot(4, configDocument("a"))
 			mutate(snapshot)
 			control.SetDesiredConfig(snapshot, false)
@@ -214,7 +214,7 @@ func TestDataPlaneRefusesASnapshotThatDoesNotVerify(t *testing.T) {
 }
 
 func TestDataPlaneReportsApplyErrorsAndKeepsTheRunningRevision(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	good := agenttest.Snapshot(2, configDocument("a"))
 	control.SetDesiredConfig(good, false)
 	root := t.TempDir()
@@ -236,11 +236,11 @@ func TestDataPlaneReportsApplyErrorsAndKeepsTheRunningRevision(t *testing.T) {
 	assert.Empty(t, statusesOf(control)[0].ErrorCode, "no code when applied")
 
 	// A document the node cannot read is config_invalid.
-	applier.setErr(agentapi.InvalidConfig(errors.New("no legacy_pull")))
+	applier.setErr(agentapi.InvalidConfig(errors.New("no runtime")))
 	control.SetDesiredConfig(agenttest.Snapshot(4, configDocument("c")), true)
 	require.Eventually(t, func() bool { return len(statusesOf(control)) == 3 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, agentcontrol.ConfigErrorCodeInvalid, statusesOf(control)[2].ErrorCode)
-	assert.Equal(t, "no legacy_pull", statusesOf(control)[2].Error)
+	assert.Equal(t, "no runtime", statusesOf(control)[2].Error)
 
 	// The node still runs revision 2: that is what is stored and what the
 	// next Hello reports, so Control sends the desired revision again.
@@ -257,7 +257,7 @@ func TestDataPlaneReportsApplyErrorsAndKeepsTheRunningRevision(t *testing.T) {
 }
 
 func TestDataPlaneDeliversAStatusAfterReconnectingWhenTheSessionEndedDuringTheApply(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	control.SetDesiredConfig(agenttest.Snapshot(7, configDocument("a")), false)
 	applier := &recordingApplier{block: make(chan struct{}), entered: make(chan struct{}, 1)}
 	client := newDataPlaneClient(t, control, t.TempDir(), applier, time.Minute)
@@ -289,7 +289,7 @@ func TestDataPlaneDeliversAStatusAfterReconnectingWhenTheSessionEndedDuringTheAp
 }
 
 func TestDataPlaneAppliesOnlyTheNewestOfSnapshotsThatArriveDuringAnApply(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	control.SetDesiredConfig(agenttest.Snapshot(1, configDocument("a")), false)
 	applier := &recordingApplier{block: make(chan struct{}), entered: make(chan struct{}, 1)}
 	client := newDataPlaneClient(t, control, t.TempDir(), applier, time.Minute)
@@ -305,8 +305,8 @@ func TestDataPlaneAppliesOnlyTheNewestOfSnapshotsThatArriveDuringAnApply(t *test
 	assert.Equal(t, []uint64{1, 3}, applier.revisions())
 }
 
-func TestDataPlaneWithoutConfigServedKeepsTheLegacyTransport(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional)
+func TestDataPlaneWithoutConfigServedIsOff(t *testing.T) {
+	control := agenttest.New(t, agenttest.ModeRequired)
 	applier := &recordingApplier{}
 	client := newDataPlaneClient(t, control, t.TempDir(), applier, time.Minute)
 	require.NoError(t, client.Start())
@@ -319,15 +319,15 @@ func TestDataPlaneWithoutConfigServedKeepsTheLegacyTransport(t *testing.T) {
 	assert.True(t, agentcontrol.HasCapabilityVersion(hellos[0].Capabilities, agentcontrol.CapabilityConfig, "v1"), "the Agent advertises config.v1; Control decides")
 }
 
-func TestDataPlaneModeIsPendingWithinTheGraceAndLegacyAfter(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+func TestDataPlaneModeIsPendingWithinTheGraceAndOffAfter(t *testing.T) {
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	client := newDataPlaneClient(t, control, t.TempDir(), &recordingApplier{}, 300*time.Millisecond)
 	require.NoError(t, client.Start())
 	waitSession(t, client)
 	plane := client.DataPlane()
 	assert.Equal(t, agentapi.DataPlaneStream, plane.Mode(agentcontrol.CapabilityConfig))
 
-	control.SetMode(agenttest.ModeRequired) // the API key is refused from now on
+	control.RefuseStreams(true)
 	control.DropSessions()
 	require.Eventually(t, func() bool { return !client.IsConnected() }, 5*time.Second, 5*time.Millisecond)
 	assert.Equal(t, agentapi.DataPlanePending, plane.Mode(agentcontrol.CapabilityConfig))
@@ -335,7 +335,7 @@ func TestDataPlaneModeIsPendingWithinTheGraceAndLegacyAfter(t *testing.T) {
 }
 
 func TestDataPlaneStartsPendingAfterARestartWhenTheLastSessionCarriedConfig(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig)
 	root := t.TempDir()
 	first := newDataPlaneClient(t, control, root, &recordingApplier{}, time.Minute)
 	require.NoError(t, first.Start())
@@ -347,7 +347,7 @@ func TestDataPlaneStartsPendingAfterARestartWhenTheLastSessionCarriedConfig(t *t
 
 	// State of another Control is not trusted.
 	other, err := agentapi.NewClient(agentapi.Config{
-		Target: "other-control.test:50051", NodeID: 12, APIKey: "key", AgentVersion: "test-agent",
+		Target: "other-control.test:50051", NodeID: 12, UseTLS: true, Identity: &agentapi.IdentityConfig{Dir: t.TempDir()}, AgentVersion: "test-agent",
 		DataPlane: &agentapi.DataPlaneConfig{State: openState(t, root), Config: &recordingApplier{}},
 	})
 	require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestDataPlaneStartsPendingAfterARestartWhenTheLastSessionCarriedConfig(t *t
 
 func TestNewClientRefusesDataPlaneCapabilitiesWithoutAHandler(t *testing.T) {
 	_, err := agentapi.NewClient(agentapi.Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: &agentapi.IdentityConfig{Dir: t.TempDir()}, AgentVersion: "test-agent",
 		Capabilities: []*agentv1pb.Capability{{Name: agentcontrol.CapabilityConfig, Version: "v1"}},
 	})
 	require.Error(t, err)

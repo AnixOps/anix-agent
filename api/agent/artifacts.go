@@ -18,26 +18,9 @@ import (
 )
 
 // Plugin artifacts by client certificate (artifacts.v1; PROTOCOL.md,
-// "Plugin artifacts"). An enrolled Agent downloads the signed plugin
-// releases assigned to its node from AgentArtifacts, on Control's agent
-// listener, instead of GET /api/v3/agent/plugin-releases/... with the node
-// API key. The bytes are the HTTP download's; the caller verifies them as
-// before (plugin.RemoteInstaller).
-
-// PluginDownload says how a plugin release can be downloaded now.
-type PluginDownload int
-
-const (
-	// PluginDownloadHTTP: the HTTP download with the node API key. It is
-	// used whenever the session did not negotiate artifacts.v1: the Agent
-	// is not enrolled, or its Control predates AgentArtifacts (Control
-	// 4.1.x, which still accepts the key in preferred and optional; the
-	// v4.2 upgrade runs the new Agent first).
-	PluginDownloadHTTP PluginDownload = iota
-	// PluginDownloadArtifacts: AgentArtifacts, by the client certificate;
-	// the API key is never sent then.
-	PluginDownloadArtifacts
-)
+// "Plugin artifacts"). The Agent downloads the signed plugin releases
+// assigned to its node from AgentArtifacts, on Control's agent listener; the
+// caller verifies them (plugin.RemoteInstaller).
 
 // Heartbeat metric keys of the plugin downloads.
 const (
@@ -60,25 +43,15 @@ type artifactCounters struct {
 	failures  atomic.Uint64
 }
 
-// PluginDownload tells how a plugin release can be downloaded now:
-// AgentArtifacts when the session negotiated artifacts.v1 with the client
-// certificate, the HTTP download otherwise.
-func (c *Client) PluginDownload() PluginDownload {
-	c.mu.RLock()
-	negotiated := c.ready && agentcontrol.Negotiated(c.helloCapabilities, c.serverCapabilities, agentcontrol.CapabilityArtifacts)
-	c.mu.RUnlock()
-	if negotiated && c.identity != nil && c.identity.certificate() != nil {
-		return PluginDownloadArtifacts
-	}
-	return PluginDownloadHTTP
-}
-
 // PluginArtifacts returns the AgentArtifacts client for the current
 // session's certificate; ErrSessionGone when the session did not negotiate
 // artifacts.v1.
 func (c *Client) PluginArtifacts() (*PluginArtifacts, error) {
-	if c.PluginDownload() != PluginDownloadArtifacts {
-		return nil, fmt.Errorf("plugin artifacts: %w (artifacts.v1 needs a session authenticated by the agent client certificate)", ErrSessionGone)
+	c.mu.RLock()
+	negotiated := c.ready && agentcontrol.Negotiated(c.helloCapabilities, c.serverCapabilities, agentcontrol.CapabilityArtifacts)
+	c.mu.RUnlock()
+	if !negotiated {
+		return nil, fmt.Errorf("plugin artifacts: %w (the session did not negotiate artifacts.v1)", ErrSessionGone)
 	}
 	identity := c.identity.certificate()
 	if identity == nil {

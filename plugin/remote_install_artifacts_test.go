@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -63,10 +65,16 @@ func artifactsFixture(t *testing.T) (*Supervisor, ed25519.PublicKey, InstallRequ
 	return supervisor, publicKey, request, source, root
 }
 
-func TestRemoteInstallerDownloadsFromAgentArtifactsWithoutTheAPIKey(t *testing.T) {
+func TestRemoteInstallerNeedsAgentArtifacts(t *testing.T) {
+	supervisor, _, _, _, _ := artifactsFixture(t)
+	_, err := NewRemoteInstaller(RemoteInstallerConfig{Supervisor: supervisor})
+	require.ErrorContains(t, err, "AgentArtifacts")
+}
+
+func TestRemoteInstallerDownloadsFromAgentArtifactsAndReplaysWithoutFetching(t *testing.T) {
 	supervisor, publicKey, request, source, root := artifactsFixture(t)
 	installer, err := NewRemoteInstaller(RemoteInstallerConfig{Supervisor: supervisor, Artifacts: source})
-	require.NoError(t, err, "no base URL or API key needed")
+	require.NoError(t, err)
 	envelope := testEnvelope("artifacts-install", "wireguard", "4.0.0", 1, remoteInstallPayload(t, publicKey, request, "wireguard", "4.0.0"))
 	result, err := installer.Handle(context.Background(), envelope)
 	require.NoError(t, err)
@@ -75,6 +83,42 @@ func TestRemoteInstallerDownloadsFromAgentArtifactsWithoutTheAPIKey(t *testing.T
 	require.Len(t, source.addresses, 2)
 	require.Equal(t, &agentv1pb.PluginReleaseAddress{PluginId: "wireguard", Version: "4.0.0", Sha256: hexDigest([]byte(request.ManifestJSON)), Size: int64(len(request.ManifestJSON))}, source.addresses[0])
 	require.Equal(t, hexDigest(request.Artifact), source.addresses[1].GetSha256())
+
+	replayed, err := installer.Handle(context.Background(), envelope)
+	require.NoError(t, err)
+	require.JSONEq(t, string(result), string(replayed))
+	require.Len(t, source.addresses, 2, "an exact replay downloads nothing")
+}
+
+func TestRemoteInstallerRejectsTamperedManifestWithoutDownloadingArtifact(t *testing.T) {
+	supervisor, publicKey, request, source, _ := artifactsFixture(t)
+	tampered := strings.Replace(request.ManifestJSON, `"name":"wireguard"`, `"name":"tampered"`, 1)
+	source.manifest = []byte(tampered)
+	source.release.ManifestSha256, source.release.ManifestSize = hexDigest(source.manifest), int64(len(source.manifest))
+	var spec remoteInstallSpec
+	require.NoError(t, json.Unmarshal(remoteInstallPayload(t, publicKey, request, "wireguard", "4.0.0"), &spec))
+	spec.Manifest.SHA256, spec.Manifest.Size = hexDigest(source.manifest), int64(len(source.manifest))
+	payload, err := json.Marshal(spec)
+	require.NoError(t, err)
+	installer, err := NewRemoteInstaller(RemoteInstallerConfig{Supervisor: supervisor, Artifacts: source})
+	require.NoError(t, err)
+	_, err = installer.Handle(context.Background(), testEnvelope("tampered-install", "wireguard", "4.0.0", 1, payload))
+	require.ErrorContains(t, err, "verify downloaded plugin manifest")
+	require.Len(t, source.addresses, 1, "the artifact is not downloaded")
+}
+
+func TestRemoteInstallerRejectsArtifactMetadataAbove64MiB(t *testing.T) {
+	supervisor, publicKey, request, source, _ := artifactsFixture(t)
+	var spec remoteInstallSpec
+	require.NoError(t, json.Unmarshal(remoteInstallPayload(t, publicKey, request, "wireguard", "4.0.0"), &spec))
+	spec.Artifact.Size = maxPluginArtifactBytes + 1
+	payload, err := json.Marshal(spec)
+	require.NoError(t, err)
+	installer, err := NewRemoteInstaller(RemoteInstallerConfig{Supervisor: supervisor, Artifacts: source})
+	require.NoError(t, err)
+	_, err = installer.Handle(context.Background(), testEnvelope("oversized-artifact", "wireguard", "4.0.0", 1, payload))
+	require.ErrorContains(t, err, "size must be between 1 and 67108864 bytes")
+	require.Empty(t, source.addresses)
 }
 
 func TestRemoteInstallerVerifiesWhatAgentArtifactsSends(t *testing.T) {

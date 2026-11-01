@@ -42,21 +42,18 @@ func main() {
 	var (
 		target          = flag.String("target", "", "Control gRPC host:port")
 		nodeID          = flag.Int("node-id", 0, "Control node ID")
-		apiKey          = flag.String("api-key", "", "Control node API key")
 		readyFile       = flag.String("ready-file", "", "file written after the Agent stream is ready")
 		resultFile      = flag.String("result-file", "", "file written after an operation is handled")
 		timeout         = flag.Duration("timeout", 30*time.Second, "maximum fixture lifetime")
 		pluginRoot      = flag.String("plugin-root", "", "enable the production plugin Supervisor at this root")
 		pluginSockets   = flag.String("plugin-socket-dir", "", "private Unix socket directory for plugin processes")
 		pluginPublicKey = flag.String("plugin-public-key", "", "base64 Ed25519 official plugin public key")
-		pluginBaseURL   = flag.String("plugin-base-url", "", "Control HTTP origin used for signed plugin downloads")
-		useTLS          = flag.Bool("tls", false, "dial Control over TLS")
 		tlsCAFile       = flag.String("tls-ca-file", "", "PEM roots for Control's TLS certificate (default: system roots)")
 		serverName      = flag.String("server-name", "", "TLS server name of Control")
-		pkiDir          = flag.String("pki-dir", "", "enable the mTLS identity (AG-2) with this identity root; needs -tls")
-		enroll          = flag.Bool("enroll", true, "with -pki-dir: enroll when the node has no identity")
-		enrollCredFile  = flag.String("enroll-credential-file", "", "with -pki-dir: one-time anixagt_ enrollment credential file")
-		cluster         = flag.String("cluster", "", "with -pki-dir: pin the SPIFFE cluster")
+		pkiDir          = flag.String("pki-dir", "", "the mTLS identity (AG-2) root")
+		enroll          = flag.Bool("enroll", true, "enroll when the node has no identity")
+		enrollCredFile  = flag.String("enroll-credential-file", "", "one-time anixagt_ enrollment credential file")
+		cluster         = flag.String("cluster", "", "pin the SPIFFE cluster")
 		dataPlaneDir    = flag.String("data-plane-dir", "", "turn on the stream data plane (config.v1) with this state root")
 		configRecord    = flag.String("config-record", "", "with -data-plane-dir: file written after each applied configuration snapshot")
 		usersRecord     = flag.String("users-record", "", "with -data-plane-dir: take users from the stream (users.v1); file written after each applied user set")
@@ -65,13 +62,14 @@ func main() {
 		packageReport   = flag.String("package-report-file", "", "with -data-plane-dir: JSON PackageReport (plugin_id, kind, version, payload_json, observed_at_unix_ms) sent with package-reports.v1")
 	)
 	flag.Parse()
-	if *target == "" || *nodeID <= 0 || *apiKey == "" || *readyFile == "" || *resultFile == "" {
-		fatal(errors.New("target, node-id, api-key, ready-file, and result-file are required"))
+	if *target == "" || *nodeID <= 0 || *pkiDir == "" || *readyFile == "" || *resultFile == "" {
+		fatal(errors.New("target, node-id, pki-dir, ready-file, and result-file are required"))
 	}
 
+	var client *agentapi.Client
 	operationHandler, capabilities, metricsProvider, closePlugins, err := newOperationHandler(pluginFixtureConfig{
 		RootDir: *pluginRoot, SocketDir: *pluginSockets, PublicKey: *pluginPublicKey,
-		BaseURL: *pluginBaseURL, APIKey: *apiKey, ResultFile: *resultFile,
+		ResultFile: *resultFile, Artifacts: func() (*agentapi.PluginArtifacts, error) { return client.PluginArtifacts() },
 	})
 	if err != nil {
 		fatal(err)
@@ -97,10 +95,7 @@ func main() {
 			fatal(fmt.Errorf("%s holds no PEM certificate", *tlsCAFile))
 		}
 	}
-	var identity *agentapi.IdentityConfig
-	if *pkiDir != "" {
-		identity = &agentapi.IdentityConfig{Dir: *pkiDir, Enroll: *enroll, EnrollCredentialFile: *enrollCredFile, Cluster: *cluster}
-	}
+	identity := &agentapi.IdentityConfig{Dir: *pkiDir, Enroll: *enroll, EnrollCredentialFile: *enrollCredFile, Cluster: *cluster}
 	dataPlane, err := newFixtureDataPlane(*dataPlaneDir, *configRecord, *usersRecord, *nodeID)
 	if err != nil {
 		fatal(err)
@@ -119,9 +114,9 @@ func main() {
 			return []*agentv1pb.PackageReport{report}, nil
 		}}
 	}
-	client, err := agentapi.NewClient(agentapi.Config{
-		Target: *target, NodeID: *nodeID, APIKey: *apiKey,
-		UseTLS: *useTLS, ServerName: *serverName, RootCAs: roots, Identity: identity,
+	client, err = agentapi.NewClient(agentapi.Config{
+		Target: *target, NodeID: *nodeID,
+		UseTLS: true, ServerName: *serverName, RootCAs: roots, Identity: identity,
 		AgentVersion: "agent-control-fixture", InstanceID: "agent-control-fixture-" + strconv.Itoa(os.Getpid()),
 		Capabilities: capabilities,
 		ReconnectMin: 20 * time.Millisecond, ReconnectMax: 100 * time.Millisecond,
@@ -167,7 +162,6 @@ func main() {
 		status := client.TransportStatus()
 		ready := map[string]any{
 			"node_id": *nodeID, "session_id": client.SessionID(), "pid": os.Getpid(),
-			"authentication": status.Authentication,
 		}
 		if status.Identity != nil {
 			ready["spiffe_id"], ready["serial"] = status.Identity.SPIFFEID, status.Identity.Serial
@@ -200,9 +194,9 @@ type pluginFixtureConfig struct {
 	RootDir    string
 	SocketDir  string
 	PublicKey  string
-	BaseURL    string
-	APIKey     string
 	ResultFile string
+	// Artifacts is the session's AgentArtifacts client, for plugin.install.
+	Artifacts func() (*agentapi.PluginArtifacts, error)
 }
 
 func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler, []*agentv1pb.Capability, func(context.Context) (map[string]float64, error), func(context.Context) error, error) {
@@ -227,7 +221,7 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 		return envelope, nil
 	}
 
-	pluginMode := config.RootDir != "" || config.SocketDir != "" || config.PublicKey != "" || config.BaseURL != ""
+	pluginMode := config.RootDir != "" || config.SocketDir != "" || config.PublicKey != ""
 	if !pluginMode {
 		return agentapi.OperationHandlerFunc(func(ctx context.Context, operation *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			if _, err := record(ctx, operation); err != nil {
@@ -236,8 +230,8 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 			return json.RawMessage(`{"fixture":"agent-control","status":"ok"}`), nil
 		}), capabilities, nil, nil, nil
 	}
-	if config.RootDir == "" || config.SocketDir == "" || config.PublicKey == "" || config.BaseURL == "" {
-		return nil, nil, nil, nil, errors.New("plugin-root, plugin-socket-dir, plugin-public-key, and plugin-base-url are all required in plugin mode")
+	if config.RootDir == "" || config.SocketDir == "" || config.PublicKey == "" {
+		return nil, nil, nil, nil, errors.New("plugin-root, plugin-socket-dir, and plugin-public-key are all required in plugin mode")
 	}
 	decodedKey, err := base64.StdEncoding.DecodeString(config.PublicKey)
 	if err != nil || len(decodedKey) != ed25519.PublicKeySize {
@@ -247,13 +241,6 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 		RootDir: config.RootDir, SocketDir: config.SocketDir, PublicKey: ed25519.PublicKey(decodedKey),
 	})
 	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	installer, err := plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
-		Supervisor: supervisor, BaseURL: config.BaseURL, APIKey: config.APIKey,
-	})
-	if err != nil {
-		_ = supervisor.Close(context.Background())
 		return nil, nil, nil, nil, err
 	}
 	capabilities = capabilities[:2]
@@ -269,6 +256,14 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 			return nil, err
 		}
 		if operation.Kind == "plugin.install" {
+			artifacts, err := config.Artifacts()
+			if err != nil {
+				return nil, err
+			}
+			installer, err := plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{Supervisor: supervisor, Artifacts: artifacts})
+			if err != nil {
+				return nil, err
+			}
 			return installer.Handle(ctx, envelope)
 		}
 		return supervisor.Handle(ctx, operation.Kind, envelope)
@@ -292,8 +287,6 @@ func (a fixtureConfigApplier) ApplyConfig(_ context.Context, snapshot *agentv1pb
 	var document struct {
 		Kind    string   `json:"kind"`
 		Runtime *answers `json:"runtime"`
-		// LegacyPull is runtime's earlier name.
-		LegacyPull *answers `json:"legacy_pull"`
 	}
 	if err := json.Unmarshal(snapshot.GetConfigJson(), &document); err != nil {
 		return fmt.Errorf("decode the configuration document: %w", err)
@@ -304,9 +297,6 @@ func (a fixtureConfigApplier) ApplyConfig(_ context.Context, snapshot *agentv1pb
 	}
 	if document.Kind == "proxy" {
 		runtime := document.Runtime
-		if runtime == nil {
-			runtime = document.LegacyPull
-		}
 		if runtime == nil {
 			return fmt.Errorf("the configuration document has no runtime answers")
 		}

@@ -93,8 +93,8 @@ func DecodeOperationEnvelope(operation *agentv1pb.DesiredOperation) (*OperationE
 }
 
 // DecodeOperationEnvelopeContext additionally binds a plugin operation to the
-// active Agent Control stream. DecodeOperationEnvelope remains available for
-// offline validation and legacy callers that do not own a live session.
+// active Agent Control stream. DecodeOperationEnvelope is for offline
+// validation, without a live session.
 func DecodeOperationEnvelopeContext(ctx context.Context, operation *agentv1pb.DesiredOperation) (*OperationEnvelope, error) {
 	envelope, err := DecodeOperationEnvelope(operation)
 	if err != nil {

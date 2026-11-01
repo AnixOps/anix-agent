@@ -164,7 +164,7 @@ func TestEnrolledAgentRunsTheWholeDataPlaneOnTheStream(t *testing.T) {
 	require.Eventually(t, func() bool { return len(control.Batches()) >= 1 && len(control.NodeStatuses()) >= 1 }, 5*time.Second, 10*time.Millisecond)
 
 	for _, stream := range control.Streams() {
-		assert.False(t, stream.APIKey, "never the node API key")
+		assert.NotEmpty(t, stream.CertificateSerial, "every stream presents the certificate")
 	}
 }
 

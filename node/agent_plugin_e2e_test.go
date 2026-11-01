@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,23 +24,22 @@ import (
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
+	"github.com/AnixOps/anix-agent/v5/api/agent/agenttest"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/AnixOps/anix-agent/v5/plugin"
 	"github.com/AnixOps/anix-agent/v5/plugin/machinetelemetry"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	agentPluginE2ENodeID = uint32(77)
-	agentPluginE2EAPIKey = "agent-plugin-e2e-key"
-)
+const agentPluginE2ENodeID = uint32(77)
 
 type e2eHealthGate struct {
 	delegate plugin.HealthChecker
@@ -84,7 +82,6 @@ func (g *e2eHealthGate) Check(ctx context.Context, socketPath string) error {
 type e2eControlServer struct {
 	agentv1pb.UnimplementedAgentControlServiceServer
 	nodeID uint32
-	apiKey string
 	gate   *e2eHealthGate
 
 	sessions      atomic.Int32
@@ -95,7 +92,7 @@ type e2eControlServer struct {
 
 func newE2EControlServer(gate *e2eHealthGate) *e2eControlServer {
 	return &e2eControlServer{
-		nodeID: agentPluginE2ENodeID, apiKey: agentPluginE2EAPIKey, gate: gate,
+		nodeID: agentPluginE2ENodeID, gate: gate,
 		firstErr: make(chan error, 1), firstTerminal: make(chan *agentv1pb.ObservedState, 1),
 		replayDone: make(chan *agentv1pb.ObservedState, 1),
 	}
@@ -136,12 +133,12 @@ func (s *e2eControlServer) ControlStream(stream agentv1pb.AgentControlService_Co
 }
 
 func (s *e2eControlServer) authenticate(ctx context.Context) error {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok || len(md.Get("x-node-id")) == 0 || len(md.Get("x-api-key")) == 0 {
-		return status.Error(codes.Unauthenticated, "agent credentials are required")
+	md, _ := metadata.FromIncomingContext(ctx)
+	if len(md.Get("x-node-id")) == 0 || md.Get("x-node-id")[0] != strconv.FormatUint(uint64(s.nodeID), 10) {
+		return status.Error(codes.Unauthenticated, "agent node is invalid")
 	}
-	if md.Get("x-node-id")[0] != strconv.FormatUint(uint64(s.nodeID), 10) || md.Get("x-api-key")[0] != s.apiKey {
-		return status.Error(codes.Unauthenticated, "agent credentials are invalid")
+	if remote, ok := peer.FromContext(ctx); !ok || len(remote.AuthInfo.(credentials.TLSInfo).State.PeerCertificates) == 0 {
+		return status.Error(codes.Unauthenticated, "the agent client certificate is required")
 	}
 	return nil
 }
@@ -324,22 +321,14 @@ func TestAgentClientControllerSupervisorMachineTelemetryE2E(t *testing.T) {
 	}
 	var handlerCalls atomic.Int32
 	control := newE2EControlServer(gate)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	grpcServer := grpc.NewServer()
-	agentv1pb.RegisterAgentControlServiceServer(grpcServer, control)
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- grpcServer.Serve(listener) }()
-	t.Cleanup(func() {
-		grpcServer.Stop()
-		select {
-		case <-serverErr:
-		case <-time.After(time.Second):
-		}
-	})
+	listener := agenttest.NewListener(t, agentPluginE2ENodeID)
+	agentv1pb.RegisterAgentControlServiceServer(listener.Server, control)
+	listener.Serve()
 
 	client, err := agentapi.NewClient(agentapi.Config{
-		Target: listener.Addr().String(), NodeID: int(agentPluginE2ENodeID), APIKey: agentPluginE2EAPIKey,
+		Target: listener.Address, NodeID: int(agentPluginE2ENodeID),
+		UseTLS: true, ServerName: listener.ServerName, RootCAs: listener.ServerCAs,
+		Identity:     &agentapi.IdentityConfig{Dir: listener.Provision(t)},
 		AgentVersion: "machine-e2e-agent", InstanceID: "machine-e2e-instance",
 		Capabilities: []*agentv1pb.Capability{
 			{Name: "agent.control", Version: agentcontrol.CapabilityVersionV1}, {Name: "operation.cancel", Version: agentcontrol.CapabilityVersionV1},

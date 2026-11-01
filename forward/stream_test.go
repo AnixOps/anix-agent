@@ -209,7 +209,7 @@ func TestForwardNotServedKeepsReportsBack(t *testing.T) {
 func TestProxyNodeCarriesForwarding(t *testing.T) {
 	// A proxy node's stream carries forwarding too: proxy-<id> state and
 	// reports, next to its users and reports.v1.
-	control := agenttest.New(t, agenttest.ModePreferred, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
 	node := agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: control.NodeID}
 	registry := driver.NewRegistry()
 	host := fake.NewHost(nil)
@@ -229,7 +229,7 @@ func TestProxyNodeCarriesForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	client, err := agentapi.NewClient(agentapi.Config{
-		Target: control.Address, NodeID: int(control.NodeID), APIKey: control.APIKey, UseTLS: true, ServerName: control.ServerName,
+		Target: control.Address, NodeID: int(control.NodeID), Identity: &agentapi.IdentityConfig{Dir: control.Provision(t)}, UseTLS: true, ServerName: control.ServerName,
 		RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1", Heartbeat: 200 * time.Millisecond,
 		ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond, DialTimeout: 2 * time.Second,
 		DataPlane: &agentapi.DataPlaneConfig{State: store, Config: c.Applier(nil), Forward: c},
