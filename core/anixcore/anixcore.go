@@ -6,6 +6,7 @@
 package anixcore
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -70,6 +71,9 @@ type Core struct {
 	nodes  map[string]*node
 	// egress is the last configuration ApplyEgress sent, nil for none.
 	egress *panel.EgressConfig
+	// qos is the traffic priority configuration last given to anixcore
+	// (ApplyQoS), nil before the first.
+	qos json.RawMessage
 	// rules are the block rules last given to anixcore (syncRules), nil
 	// before the first.
 	rules *rulesConfig
@@ -320,6 +324,11 @@ func (c *Core) replay() error {
 	c.rules = nil
 	if err := c.syncRules(); err != nil {
 		failed = errors.Join(failed, err)
+	}
+	if c.qos != nil && !bytes.Equal(c.qos, offQoS) {
+		if err := c.putQoS(c.qos); err != nil {
+			failed = errors.Join(failed, err)
+		}
 	}
 	return failed
 }

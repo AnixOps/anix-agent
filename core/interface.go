@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -63,6 +64,14 @@ type DestinationProvider interface {
 // ran from the previous call; an empty configuration removes it all.
 type EgressApplier interface {
 	ApplyEgress(config *panel.EgressConfig) error
+}
+
+// QoSApplier is implemented by cores that run Control's traffic
+// priorities and per-user class caps (the member "qos" of a node's
+// configuration, panel.ParseQoS): the anixcore core. ApplyQoS replaces
+// what the previous call set; nil turns them off.
+type QoSApplier interface {
+	ApplyQoS(config json.RawMessage) error
 }
 
 // NetworkApplier is implemented by cores that run the device network model
