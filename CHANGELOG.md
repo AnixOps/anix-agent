@@ -5,7 +5,7 @@
 ## 5.0.0-rc.26 - 2026-11-01
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.26 and
-anx-node 0.1.0-alpha.8.
+anx-node 0.1.0-alpha.9.
 
 ### Security
 
