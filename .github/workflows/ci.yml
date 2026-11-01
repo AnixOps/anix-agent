@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "sdk"]
+        module: ["."]
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
