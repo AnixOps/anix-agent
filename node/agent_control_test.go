@@ -139,3 +139,13 @@ func TestAgentCapabilitiesAdvertisePluginOperationsOnlyWhenEnabled(t *testing.T)
 		t.Fatal("plugin-enabled Agent did not advertise kernel.observed-state")
 	}
 }
+
+func TestHelloLabelsCarryTheInstalledKernel(t *testing.T) {
+	labels := helloLabels("anixcore", "vless", "0.1.0-alpha.13")
+	if labels[KernelVersionLabel] != "0.1.0-alpha.13" || labels["core"] != "anixcore" || labels["node_type"] != "vless" {
+		t.Fatalf("labels = %v", labels)
+	}
+	if _, ok := helloLabels("wireguard", "wireguard", "")[KernelVersionLabel]; ok {
+		t.Fatal("a node without a kernel reported one")
+	}
+}

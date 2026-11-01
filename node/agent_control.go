@@ -82,18 +82,15 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	hostname, _ := os.Hostname()
 	keepaliveTime := time.Duration(apiConfig.GRPCKeepalive) * time.Second
 	client, err := agentapi.NewClient(agentapi.Config{
-		Target:       target,
-		NodeID:       nodeID,
-		UseTLS:       useTLS,
-		ServerName:   serverName,
-		Identity:     identity,
-		AgentVersion: panel.Version,
-		InstanceID:   agentapi.InstanceID(hostname, strconv.Itoa(nodeID)),
-		Capabilities: capabilities,
-		Labels: map[string]string{
-			"core":      core.Type(),
-			"node_type": apiConfig.NodeType,
-		},
+		Target:        target,
+		NodeID:        nodeID,
+		UseTLS:        useTLS,
+		ServerName:    serverName,
+		Identity:      identity,
+		AgentVersion:  panel.Version,
+		InstanceID:    agentapi.InstanceID(hostname, strconv.Itoa(nodeID)),
+		Capabilities:  capabilities,
+		Labels:        helloLabels(core.Type(), apiConfig.NodeType, installedKernel()),
 		KeepaliveTime: keepaliveTime,
 		RootCAs:       agentControlRootCAs,
 		Handler:       agentapi.OperationHandlerFunc(controller.handleAgentOperation),
@@ -188,6 +185,27 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 // agentUpgrader answers the process's agent.upgrade handler (tests
 // replace it; nil turns upgrades off).
 var agentUpgrader = func() *upgrade.Agent { return upgrade.Shared(panel.Version) }
+
+// installedKernel answers the anx-node release installed next to the
+// Agent binary, "" when there is none.
+var installedKernel = func() string { return upgrade.InstalledKernel(upgrade.DefaultLibDir) }
+
+// KernelVersionLabel is the Hello label that tells Control which anx-node
+// release the node has installed, so the panel can show it and offer a
+// kernel-only upgrade. It is left out when no kernel is installed.
+const KernelVersionLabel = "kernel.anx-node"
+
+// helloLabels are the labels of the Agent's Hello.
+func helloLabels(coreType, nodeType, kernel string) map[string]string {
+	labels := map[string]string{
+		"core":      coreType,
+		"node_type": nodeType,
+	}
+	if kernel != "" {
+		labels[KernelVersionLabel] = kernel
+	}
+	return labels
+}
 
 // admitAgentOperation refuses an agent.upgrade before its acknowledgement
 // when it does not parse or another upgrade runs.
