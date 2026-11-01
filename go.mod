@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.9
 
 require (
-	github.com/AnixOps/anix-control/sdk v0.0.0-20261031163603-b69dc6f3cb5e
+	github.com/AnixOps/anix-control/sdk v0.0.0-20261101005154-b78d88b626f9
 	github.com/beevik/ntp v1.4.4-0.20240716062501-06ef196b89ec
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-acme/lego/v4 v4.25.2
