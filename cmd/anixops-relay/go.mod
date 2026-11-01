@@ -2,7 +2,7 @@ module github.com/AnixOps/anix-agent/v5/cmd/anixops-relay
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require github.com/AnixOps/anix-control/sdk v0.0.0-20261009114255-d8684dc26220
 

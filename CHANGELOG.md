@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Security
+
+- Go toolchain 1.26.9 → 1.26.10 (the release Control already builds with),
+  and CI runs govulncheck on the agent, the SDK and anixops-relay on every
+  pull request and nightly on main.
+
 ### Added
 
 - Traffic priorities and per-user class caps: the member "qos" of a

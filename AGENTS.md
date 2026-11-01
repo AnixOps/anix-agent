@@ -46,7 +46,7 @@ V2bX AnixOps 是一个代理服务节点后端程序，运行 AnixOps 自研内�
 
 | 类别 | 技术 | 版本/说明 |
 |------|------|----------|
-| 语言 | Go | 1.26.9 (需 GOEXPERIMENT=jsonv2) |
+| 语言 | Go | 1.26.10 (需 GOEXPERIMENT=jsonv2) |
 | CLI 框架 | Cobra | 命令行解析 |
 | 配置管理 | Viper | 配置文件解析 |
 | HTTP 客户端 | Resty | API 请求 |
