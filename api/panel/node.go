@@ -181,6 +181,13 @@ type AnxNode struct {
 	ServerNames []string `json:"server_names"`
 	Dest        string   `json:"dest"`
 	ALPN        []string `json:"alpn"`
+	// AllowNoSNI also accepts ClientHellos without SNI (the A2 no-SNI mode,
+	// clients dialing the IP).
+	AllowNoSNI bool `json:"allow_no_sni"`
+	// ShapePlain hands out the plain shape profile instead of VisionLike.
+	ShapePlain bool `json:"shape_plain"`
+	// MaxStreams caps the streams of one session; 0 = anx-node's default.
+	MaxStreams int `json:"max_streams"`
 }
 
 type WireGuardRelay struct {

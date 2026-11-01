@@ -492,13 +492,11 @@ func (c *GRPCClient) GetNodeConfig() (*panel.NodeInfo, error) {
 		node.Security = panel.None
 
 	case "anx":
-		extra := resp.GetExtra()
-		node.Anx = &panel.AnxNode{
-			CommonNode:  common,
-			ServerNames: parseStringList(extra["server_names"]),
-			Dest:        extra["dest"],
-			ALPN:        parseStringList(extra["alpn"]),
+		anx, err := parseAnxNode(common, resp.GetExtra())
+		if err != nil {
+			return nil, fmt.Errorf("grpc get config: %w", err)
 		}
+		node.Anx = anx
 		node.Security = panel.None
 	}
 
@@ -876,4 +874,31 @@ func (c *GRPCClient) setCredential(cred *panel.Credential) {
 	c.nodeID = cred.NodeID
 	c.apiKey = cred.APIKey
 	c.secret = cred.Secret
+}
+
+// parseAnxNode reads an ANX-A node from the config's extra fields.
+func parseAnxNode(common panel.CommonNode, extra map[string]string) (*panel.AnxNode, error) {
+	node := &panel.AnxNode{
+		CommonNode:  common,
+		ServerNames: parseStringList(extra["server_names"]),
+		Dest:        extra["dest"],
+		ALPN:        parseStringList(extra["alpn"]),
+	}
+	for key, target := range map[string]*bool{"allow_no_sni": &node.AllowNoSNI, "shape_plain": &node.ShapePlain} {
+		if value := extra[key]; value != "" {
+			flag, err := strconv.ParseBool(value)
+			if err != nil {
+				return nil, fmt.Errorf("anx %s %q is invalid", key, value)
+			}
+			*target = flag
+		}
+	}
+	if value := strings.TrimSpace(extra["max_streams"]); value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("anx max_streams %q is invalid", value)
+		}
+		node.MaxStreams = n
+	}
+	return node, nil
 }
