@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", "sdk", "cmd/anixops-relay"]
+        module: [".", "sdk"]
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
@@ -111,9 +111,6 @@ jobs:
       - name: Verify WireGuard relay and peer limit contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
 
-      - name: Vet and build the anixops relay module
-        # cmd/anixops-relay is a module of its own.
-        run: (cd cmd/anixops-relay && GOWORK=off go vet ./... && GOWORK=off go build -o /dev/null .)
 
       - name: Set up protoc
         uses: arduino/setup-protoc@v3

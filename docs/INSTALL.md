@@ -173,33 +173,14 @@ The Agent stops `anixops-gost.service` and clears `/var/lib/anixops-gost` at
 start, the updater deletes `/usr/lib/anixops-agent/gost` after an upgrade, and
 the installer removes the unit and the `anixops-gost` account.
 
-### The experimental anixops engine
+### The experimental anixops engine (removed)
 
-The anixops engine (anix-control `docs/architecture/anixops-protocol.md`, H22)
-is a v4.2 **prototype, off by default**: its wire format (ALPN `anixops/0`) may
-change without notice until v4.3. Both sides need their switch: Control's
-`forward.anixops_experimental`, and the Agent's `Forward.AnixOps.Enable`:
-
-```json
-"Forward": { "Enable": true, "AnixOps": { "Enable": true } }
-```
-
-It runs in its own process, `anixops-relay` (shipped in the release zip, installed as
-`/usr/lib/anixops-agent/anixops-relay`), under its own unit
-`anixops-relay.service` (user `anixops-relay`, `CAP_NET_BIND_SERVICE` only), so
-restarting or upgrading the Agent keeps forwarding. The Agent controls it over
-`/run/anixops-relay/control.sock` and keeps the relay's own copy of the link
-certificate files (`/var/lib/anixops-relay/tls`, group `anixops-relay`) next to
-gost's; `Forward.AnixOps.ManualLinkCertificates` leaves that copy to you.
-
-The root installer prepares it with `ANIXOPS_FORWARD=1 ANIXOPS_RELAY=1`; by
-hand, create the user and group `anixops-relay`, the directories above
-(`root:anixops-relay`, mode 0750), install the binary, and
-`anix-agent forward relay-unit | sudo tee /etc/systemd/system/anixops-relay.service`.
-AnixOps Control's own installer does not set the relay up yet. Without the
-binary or the unit the engine is reported unavailable (with the reason), and
-without the link certificate only the `PLAIN` carrier is offered. PROXY protocol
-v2 and the relay's metrics socket are not implemented.
+The experimental anixops relay engine is gone: forwarding runs on the network
+model (anx-node). Releases no longer ship `anixops-relay`, and the root
+installer removes what an earlier `ANIXOPS_RELAY=1` install set up
+(`anixops-relay.service`, `/usr/lib/anixops-agent/anixops-relay`,
+`/var/lib/anixops-relay` and the `anixops-relay` account). The uninstaller
+still removes those leftovers.
 
 ## File System Layout
 
@@ -211,8 +192,6 @@ v2 and the relay's metrics socket are not implemented.
 | `/var/lib/anixops-agent/forward` | Forwarding state (`Forward.StateDir` default) |
 | `/var/lib/anixops-agent/plugins` | Official plugin data (`PluginRoot` default) |
 | `/run/anixops-agent/plugins` | Plugin sockets (`PluginSocketDir` default; the unit's `RuntimeDirectory=anixops-agent`) |
-| `/var/lib/anixops-relay` | The anixops relay's configuration, state and link certificates (experimental) |
-| `/usr/lib/anixops-agent/anixops-relay` | The anixops relay of the release (experimental) |
 | `/var/lib/anixops-agent/upgrade` | Control-pushed upgrades: the staged release, `request.json`, the updater's `result.json` |
 | `/usr/lib/anixops-agent/anix-agent.prev` | The binary kept for a rollback, with `anix-agent.prev.json` (version, SHA-256) |
 
@@ -303,18 +282,12 @@ upgrades"). An Agent never upgrades on its own.
   whose configuration lists no cores runs the installed anx-node as the
   anixcore core with ANX-Line, ahead of Xray and sing-box. arm64 has no
   anx-node release yet and keeps the old cores.
-- **The relay is not staged.** The updater unpacks only `anix-agent`:
-  a new `anixops-relay` in a release arrives with the installer (or by hand),
-  and the updater never restarts `anixops-relay.service` either, so a running
-  relay keeps forwarding through an Agent update.
 
 ## Release Signing
 
 Every release publishes, next to `anix-agent-linux-64.zip` and
 `anix-agent-linux-arm64-v8a.zip` (each with its `.dgst`):
 
-- the experimental anixops relay as `anixops-relay` inside each zip (the
-  release's own build, built from `cmd/anixops-relay`);
 - `SHA256SUMS` of both packages;
 - `<asset>.sig` for each package and for `SHA256SUMS`: base64 of the raw
   Ed25519 signature by the official AnixOps release key over the file's

@@ -35,5 +35,3 @@ data/*.enc
 build/
 logs/
 
-# a plain `go build` inside cmd/anixops-relay writes the binary here
-/cmd/anixops-relay/anixops-relay

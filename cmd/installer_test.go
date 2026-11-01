@@ -37,20 +37,6 @@ func TestForwardSysctlDropIn(t *testing.T) {
 	}
 }
 
-func TestForwardRelayUnit(t *testing.T) {
-	found, _, err := command.Find([]string{"forward", "relay-unit"})
-	require.NoError(t, err)
-	var out bytes.Buffer
-	found.SetOut(&out)
-	require.NoError(t, found.RunE(found, nil))
-	unit := out.String()
-	require.Contains(t, unit, "Description=AnixOps forward relay (anixops-forward-driver anixops v1)")
-	require.Contains(t, unit, "ExecStart=/usr/lib/anixops-agent/anixops-relay -config /var/lib/anixops-relay/relay.json -socket /run/anixops-relay/control.sock")
-	require.Contains(t, unit, "User=anixops-relay")
-	require.Contains(t, unit, "AmbientCapabilities=CAP_NET_BIND_SERVICE")
-	require.NotContains(t, unit, "CAP_NET_ADMIN")
-}
-
 func TestForwardSysctlDropInRaisesTheQUICSocketBuffers(t *testing.T) {
 	require.Contains(t, ForwardSysctlDropIn, "net.core.rmem_max = 8388608")
 	require.Contains(t, ForwardSysctlDropIn, "net.core.wmem_max = 8388608")

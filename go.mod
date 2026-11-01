@@ -162,7 +162,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/regfish/regfish-dnsapi-go v0.1.1 // indirect
 	github.com/sacloud/api-client-go v0.3.2 // indirect
 	github.com/sacloud/go-http v0.1.9 // indirect

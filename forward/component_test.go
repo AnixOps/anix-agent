@@ -200,30 +200,6 @@ func TestRenderHopErrorsKeepOtherHops(t *testing.T) {
 	}
 }
 
-func TestLinkCertificateHint(t *testing.T) {
-	host := fake.NewHost(nil)
-	caps := fake.NFTablesCapabilities()
-	caps.LinkSecurities = []forwardv1.LinkSecurity{forwardv1.LinkSecurity_LINK_SECURITY_RAW}
-	gostDriver := fake.New(host, fake.Options{Engine: forwardv1.Engine_ENGINE_GOST, Capabilities: caps})
-	h := newHarness(t, func(o *Options) {
-		if err := o.Registry.Register(gostDriver); err != nil {
-			t.Fatal(err)
-		}
-	})
-	tls := hop("R3", 1, 30003, rr, up("192.0.2.30", 30004, 0))
-	tls.Engine = forwardv1.Engine_ENGINE_GOST
-	tls.Role = forwardv1.HopRole_HOP_ROLE_RELAY
-	tls.Ingress = &forwardv1.LinkTransport{Security: forwardv1.LinkSecurity_LINK_SECURITY_TLS}
-	tls.IngressSources = []string{"192.0.2.1/32"}
-	if err := h.apply(1, state(1, hashOf(1), tls)); err != nil {
-		t.Fatal(err)
-	}
-	report := h.c.Report(context.Background())
-	if e := report.GetErrors(); len(e) != 1 || !strings.Contains(e[0].GetMessage(), "H28") {
-		t.Fatalf("an encrypted gost hop without link certificates: %v", e)
-	}
-}
-
 func TestHealthFailoverKeepsLastUpstreamAndRecovers(t *testing.T) {
 	h := newHarness(t)
 	failover := forwardv1.BalanceStrategy_BALANCE_STRATEGY_FAILOVER
