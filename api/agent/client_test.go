@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	mathrand "math/rand"
-	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/api/agent/agenttest"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +62,6 @@ func (s *recordingAgentClientStream) messages() []*agentv1pb.AgentToControl {
 type testAgentControlServer struct {
 	agentv1pb.UnimplementedAgentControlServiceServer
 	nodeID    uint32
-	apiKey    string
 	operation *agentv1pb.DesiredOperation
 	result    chan controlStreamResult
 }
@@ -76,16 +75,12 @@ type cancellationControlResult struct {
 type cancellationAgentControlServer struct {
 	agentv1pb.UnimplementedAgentControlServiceServer
 	nodeID    uint32
-	apiKey    string
 	operation *agentv1pb.DesiredOperation
 	result    chan cancellationControlResult
 }
 
 func (s *cancellationAgentControlServer) ControlStream(stream agentv1pb.AgentControlService_ControlStreamServer) error {
-	md, ok := metadata.FromIncomingContext(stream.Context())
-	if !ok || len(md.Get("x-api-key")) == 0 || md.Get("x-api-key")[0] != s.apiKey {
-		return status.Error(codes.Unauthenticated, "missing agent API key")
-	}
+	md, _ := metadata.FromIncomingContext(stream.Context())
 	if len(md.Get("x-node-id")) == 0 || md.Get("x-node-id")[0] != strconv.FormatUint(uint64(s.nodeID), 10) {
 		return status.Error(codes.Unauthenticated, "missing agent node ID")
 	}
@@ -161,10 +156,7 @@ func (s *cancellationAgentControlServer) sendDesired(stream agentv1pb.AgentContr
 }
 
 func (s *testAgentControlServer) ControlStream(stream agentv1pb.AgentControlService_ControlStreamServer) error {
-	md, ok := metadata.FromIncomingContext(stream.Context())
-	if !ok || len(md.Get("x-api-key")) == 0 || md.Get("x-api-key")[0] != s.apiKey {
-		return status.Error(codes.Unauthenticated, "missing agent API key")
-	}
+	md, _ := metadata.FromIncomingContext(stream.Context())
 	if len(md.Get("x-node-id")) == 0 || md.Get("x-node-id")[0] != strconv.FormatUint(uint64(s.nodeID), 10) {
 		return status.Error(codes.Unauthenticated, "missing agent node ID")
 	}
@@ -228,9 +220,7 @@ func (s *testAgentControlServer) ControlStream(stream agentv1pb.AgentControlServ
 }
 
 func TestClientControlStreamOperationLifecycle(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	server := grpc.NewServer()
+	listener := agenttest.NewListener(t, 42)
 	resultCh := make(chan controlStreamResult, 1)
 	operation := &agentv1pb.DesiredOperation{
 		OperationId: "operation-1",
@@ -238,21 +228,17 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 		Revision:    7,
 		PayloadJson: []byte(`{"message":"ping"}`),
 	}
-	agentv1pb.RegisterAgentControlServiceServer(server, &testAgentControlServer{
+	agentv1pb.RegisterAgentControlServiceServer(listener.Server, &testAgentControlServer{
 		nodeID:    42,
-		apiKey:    "node-api-key",
 		operation: operation,
 		result:    resultCh,
 	})
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- server.Serve(listener) }()
+	listener.Serve()
 
 	handled := make(chan *agentv1pb.DesiredOperation, 1)
 	handledSession := make(chan string, 1)
-	client, err := NewClient(Config{
-		Target:       listener.Addr().String(),
+	client, err := NewClient(listenerConfig(t, listener, Config{
 		NodeID:       42,
-		APIKey:       "node-api-key",
 		AgentVersion: "test-agent",
 		InstanceID:   "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.ping", Version: "v1"}},
@@ -264,7 +250,7 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 		}),
 		ReconnectMin: 100 * time.Millisecond,
 		ReconnectMax: time.Second,
-	})
+	}))
 	require.NoError(t, err)
 	require.NoError(t, client.Start())
 
@@ -304,17 +290,12 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 	}
 
 	require.NoError(t, client.Close())
-	server.GracefulStop()
-	err = <-serverErr
-	if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-		require.NoError(t, err)
-	}
 }
 
 func TestCompletedOperationReplayResendsTerminalWithoutExecutingOldRevision(t *testing.T) {
 	var handled atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			handled.Add(1)
 			return json.RawMessage(`{"applied":true}`), nil
@@ -361,20 +342,17 @@ func TestCompletedOperationReplayResendsTerminalWithoutExecutingOldRevision(t *t
 }
 
 func TestClientControlStreamCancellationLifecycle(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	server := grpc.NewServer()
+	listener := agenttest.NewListener(t, 42)
 	resultCh := make(chan cancellationControlResult, 1)
 	operation := &agentv1pb.DesiredOperation{OperationId: "stream-cancel", Kind: "agent.ping", Revision: 12}
-	agentv1pb.RegisterAgentControlServiceServer(server, &cancellationAgentControlServer{
-		nodeID: 42, apiKey: "node-api-key", operation: operation, result: resultCh,
+	agentv1pb.RegisterAgentControlServiceServer(listener.Server, &cancellationAgentControlServer{
+		nodeID: 42, operation: operation, result: resultCh,
 	})
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- server.Serve(listener) }()
+	listener.Serve()
 
 	handlerCancelled := make(chan struct{})
-	client, err := NewClient(Config{
-		Target: listener.Addr().String(), NodeID: 42, APIKey: "node-api-key", AgentVersion: "test-agent",
+	client, err := NewClient(listenerConfig(t, listener, Config{
+		NodeID: 42, AgentVersion: "test-agent",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.ping", Version: "v1"}, {Name: operationCancelKind, Version: "v1"}},
 		Handler: OperationHandlerFunc(func(ctx context.Context, _ *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			<-ctx.Done()
@@ -383,7 +361,7 @@ func TestClientControlStreamCancellationLifecycle(t *testing.T) {
 		}),
 		ReconnectMin: 100 * time.Millisecond,
 		ReconnectMax: time.Second,
-	})
+	}))
 	require.NoError(t, err)
 	require.NoError(t, client.Start())
 
@@ -411,11 +389,6 @@ func TestClientControlStreamCancellationLifecycle(t *testing.T) {
 	}
 
 	require.NoError(t, client.Close())
-	server.GracefulStop()
-	err = <-serverErr
-	if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-		require.NoError(t, err)
-	}
 }
 
 func TestExecuteOperationSupersedesRevisionThatBecameStaleInQueue(t *testing.T) {
@@ -423,7 +396,8 @@ func TestExecuteOperationSupersedesRevisionThatBecameStaleInQueue(t *testing.T) 
 	client, err := NewClient(Config{
 		Target:       "unused:1",
 		NodeID:       1,
-		APIKey:       "key",
+		UseTLS:       true,
+		Identity:     testIdentity(t),
 		AgentVersion: "test-agent",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.ping"}},
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
@@ -458,7 +432,7 @@ func TestExecuteOperationSupersedesRevisionThatBecameStaleInQueue(t *testing.T) 
 func TestRunningOperationCancellationCancelsHandlerAndSupersedes(t *testing.T) {
 	started := make(chan struct{})
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(ctx context.Context, _ *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			close(started)
 			<-ctx.Done()
@@ -516,7 +490,7 @@ func TestRunningOperationCancellationCancelsHandlerAndSupersedes(t *testing.T) {
 func TestQueuedOperationCancellationSkipsHandler(t *testing.T) {
 	var handled atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			handled.Add(1)
 			return nil, nil
@@ -547,7 +521,7 @@ func TestQueuedOperationCancellationSkipsHandler(t *testing.T) {
 
 func TestLateRepeatedCancellationAcknowledgesAndReplaysTerminal(t *testing.T) {
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			return json.RawMessage(`{"done":true}`), nil
 		}),
@@ -583,7 +557,7 @@ func TestLateRepeatedCancellationAcknowledgesAndReplaysTerminal(t *testing.T) {
 func TestUnknownOperationCancellationCompletesAndSuppressesLaterReplay(t *testing.T) {
 	var handled atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			handled.Add(1)
 			return nil, nil
@@ -619,7 +593,7 @@ func TestUnknownOperationCancellationCompletesAndSuppressesLaterReplay(t *testin
 func TestExpiredOperationIsFailedWithoutInvokingHandler(t *testing.T) {
 	var handled atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			handled.Add(1)
 			return json.RawMessage(`{"unexpected":true}`), nil
@@ -657,7 +631,7 @@ func TestExpiredOperationIsFailedWithoutInvokingHandler(t *testing.T) {
 func TestQueuedOperationThatExpiresSkipsHandlerAndFails(t *testing.T) {
 	var handled atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			handled.Add(1)
 			return nil, nil
@@ -688,7 +662,7 @@ func TestQueuedOperationThatExpiresSkipsHandlerAndFails(t *testing.T) {
 func TestHandlerIgnoringDeadlineCannotReportSuccess(t *testing.T) {
 	started := make(chan struct{})
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			close(started)
 			time.Sleep(100 * time.Millisecond)
@@ -729,7 +703,7 @@ func TestHandlerIgnoringCancellationCannotReportSuccess(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			close(started)
 			<-release
@@ -801,7 +775,8 @@ func TestClientRetriesFailedDial(t *testing.T) {
 	client, err := NewClient(Config{
 		Target:       "unused:1",
 		NodeID:       1,
-		APIKey:       "key",
+		UseTLS:       true,
+		Identity:     provisionedIdentity(t, 1),
 		AgentVersion: "test-agent",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.ping"}},
 		ReconnectMin: 5 * time.Millisecond,
@@ -822,7 +797,8 @@ func TestReconnectDelayUsesExponentialBackoffAndJitter(t *testing.T) {
 	client, err := NewClient(Config{
 		Target:       "unused:1",
 		NodeID:       1,
-		APIKey:       "key",
+		UseTLS:       true,
+		Identity:     testIdentity(t),
 		AgentVersion: "test-agent",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.ping"}},
 		ReconnectMin: time.Second,
@@ -849,7 +825,7 @@ func TestReconnectDelayUsesExponentialBackoffAndJitter(t *testing.T) {
 func TestSendHeartbeatMergesMetricsProviderAndFiltersInvalidValues(t *testing.T) {
 	providerCalled := make(chan struct{}, 1)
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		MetricsProvider: func(ctx context.Context) (map[string]float64, error) {
 			select {
 			case providerCalled <- struct{}{}:
@@ -887,7 +863,7 @@ func TestSendHeartbeatMergesMetricsProviderAndFiltersInvalidValues(t *testing.T)
 
 func TestSendHeartbeatContinuesWhenMetricsProviderFails(t *testing.T) {
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		MetricsProvider: func(context.Context) (map[string]float64, error) {
 			return nil, errors.New("telemetry unavailable")
 		},
@@ -904,7 +880,7 @@ func TestSendHeartbeatContinuesWhenMetricsProviderFails(t *testing.T) {
 
 func TestSendHeartbeatKeepsPartialMetricsWhenProviderReportsError(t *testing.T) {
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		MetricsProvider: func(context.Context) (map[string]float64, error) {
 			return map[string]float64{"plugin.machine-telemetry.cpu_usage_percent": 7.25}, errors.New("one plugin is unhealthy")
 		},
@@ -922,7 +898,7 @@ func TestSendHeartbeatKeepsPartialMetricsWhenProviderReportsError(t *testing.T) 
 func TestSendHeartbeatKeepsUnhealthyPluginObservationWithoutLiveFingerprint(t *testing.T) {
 	configHash := strings.Repeat("a", 64)
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		PluginObservationsProvider: func(context.Context) ([]*agentv1pb.PluginObservedState, error) {
 			return []*agentv1pb.PluginObservedState{
 				{

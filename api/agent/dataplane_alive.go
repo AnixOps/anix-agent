@@ -11,8 +11,7 @@ import (
 )
 
 // The alive list from the stream (alive.v1; PROTOCOL.md, "Alive list"):
-// every user's number of online devices across all nodes, what UniProxy
-// alivelist answers. One list may span several AliveList pages of the same
+// every user's number of online devices across all nodes. One list may span several AliveList pages of the same
 // revision; the data plane buffers them and replaces its whole list when the
 // page with last_page arrives (a user missing from it has no device
 // online). Pages of a session that ended before last_page are dropped: a

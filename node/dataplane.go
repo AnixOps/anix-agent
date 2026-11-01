@@ -373,7 +373,7 @@ func snapshotExtraProtocols(snapshot *agentv1pb.ConfigSnapshot) ([]uint64, error
 	if err := json.Unmarshal(snapshot.GetConfigJson(), &document); err != nil {
 		return nil, fmt.Errorf("decode the configuration document: %w", err)
 	}
-	runtime := document.runtimeAnswers()
+	runtime := document.Runtime
 	if runtime == nil || len(runtime.Protocols) == 0 || len(document.Protocols) == 0 {
 		return nil, nil
 	}
@@ -661,9 +661,6 @@ type snapshotDocument struct {
 		ID uint64 `json:"id"`
 	} `json:"protocols"`
 	Runtime *snapshotRuntime `json:"runtime"`
-	// LegacyPull is runtime's earlier name, which Control still sends
-	// alongside it; read when runtime is missing.
-	LegacyPull *snapshotRuntime `json:"legacy_pull"`
 }
 
 // snapshotRuntime holds the node's configuration answers: the default, by
@@ -672,13 +669,6 @@ type snapshotRuntime struct {
 	Default   json.RawMessage            `json:"default"`
 	Types     map[string]json.RawMessage `json:"types"`
 	Protocols map[string]json.RawMessage `json:"protocols"`
-}
-
-func (d snapshotDocument) runtimeAnswers() *snapshotRuntime {
-	if d.Runtime != nil {
-		return d.Runtime
-	}
-	return d.LegacyPull
 }
 
 // nodeInfoFromSnapshot returns the node configuration a controller with
@@ -696,7 +686,7 @@ func nodeInfoFromSnapshot(snapshot *agentv1pb.ConfigSnapshot, nodeType string, p
 	if document.Kind != "" && document.Kind != agentcontrol.NodeKindProxy {
 		return nil, fmt.Errorf("the configuration is of a %s node; this Agent runs proxy nodes", document.Kind)
 	}
-	runtime := document.runtimeAnswers()
+	runtime := document.Runtime
 	if runtime == nil {
 		return nil, errors.New("the configuration document has no runtime answers")
 	}

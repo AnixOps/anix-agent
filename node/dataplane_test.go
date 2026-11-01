@@ -234,12 +234,11 @@ func TestStreamConfigurationStartsTheNode(t *testing.T) {
 	assert.Equal(t, uint64(3), status.ConfigRevision)
 
 	// mTLS only: the stream that carried the configuration presented the
-	// enrolled certificate and no API key.
+	// enrolled certificate.
 	streams := fixture.control.Streams()
 	accepted := streams[len(streams)-1]
 	assert.True(t, accepted.Accepted)
 	assert.NotEmpty(t, accepted.CertificateSerial)
-	assert.False(t, accepted.APIKey)
 	hello := fixture.control.Hellos()[0]
 	assert.True(t, agentcontrol.HasCapabilityVersion(hello.Capabilities, agentcontrol.CapabilityConfig, "v1"))
 
@@ -313,7 +312,7 @@ func TestStreamConfigurationRestartRunsTheStoredSnapshotWhileControlIsDown(t *te
 }
 
 func TestStreamStartFailsWhenControlDoesNotServeTheNode(t *testing.T) {
-	fixture := newStreamNodeFixture(t, agenttest.ModeOptional)
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired)
 	node := New()
 	err := node.Start([]conf.NodeConfig{fixture.nodeConfig(t)}, fixture.core)
 	require.Error(t, err)
@@ -358,14 +357,11 @@ func TestNodeInfoFromSnapshotPicksTheControllersNodeType(t *testing.T) {
 	require.Error(t, err)
 	assert.False(t, strings.Contains(err.Error(), "do-not-log"))
 
-	// A document that names the answers legacy_pull (their earlier name)
-	// still runs.
-	older := proxyDocument(443)
-	older["legacy_pull"] = older["runtime"]
-	delete(older, "runtime")
-	info, err = nodeInfoFromSnapshot(agenttest.Snapshot(3, older), "", 0, 12)
-	require.NoError(t, err)
-	assert.Equal(t, 443, info.VAllss.ServerPort)
+	// A document without runtime answers is an error.
+	empty := proxyDocument(443)
+	delete(empty, "runtime")
+	_, err = nodeInfoFromSnapshot(agenttest.Snapshot(3, empty), "", 0, 12)
+	require.Error(t, err)
 }
 
 func TestStreamUsersStartTheNodeAndApplyDeltasWithoutARestart(t *testing.T) {
@@ -485,7 +481,7 @@ func TestStreamReportsTrafficOnlineLogsAndStatus(t *testing.T) {
 	// Every report went on the mTLS stream.
 	streams := fixture.control.Streams()
 	for _, stream := range streams {
-		assert.False(t, stream.APIKey)
+		assert.NotEmpty(t, stream.CertificateSerial, "every stream presents the certificate")
 	}
 }
 

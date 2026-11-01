@@ -18,7 +18,7 @@ func TestOperationProgressGoesOutBeforeTheTerminalAndAfterTerminalRunsLast(t *te
 	sentBeforeHook := make(chan int, 1)
 	var hookPhase atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(ctx context.Context, _ *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			require.NoError(t, ReportProgress(ctx, []byte(`{"phase":"downloading"}`)))
 			require.NoError(t, ReportProgress(ctx, []byte(`{"phase":"verifying"}`)))
@@ -59,7 +59,7 @@ func TestAfterTerminalSeesTheFailureADeadlineTurnsSuccessInto(t *testing.T) {
 	stream := &recordingAgentClientStream{}
 	var hookPhase atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(ctx context.Context, _ *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			AfterTerminal(ctx, func(phase agentv1pb.ObservedPhase) { hookPhase.Store(int32(phase)) })
 			time.Sleep(60 * time.Millisecond)
@@ -78,7 +78,7 @@ func TestAfterTerminalSeesTheFailureADeadlineTurnsSuccessInto(t *testing.T) {
 func TestAdmitRefusesAnOperationBeforeItsAcknowledgement(t *testing.T) {
 	var handled atomic.Int32
 	client, err := NewClient(Config{
-		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "unused:1", NodeID: 1, UseTLS: true, Identity: testIdentity(t), AgentVersion: "test-agent",
 		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			handled.Add(1)
 			return nil, nil

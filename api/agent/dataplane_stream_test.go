@@ -135,7 +135,7 @@ func newStreamClient(t *testing.T, control *agenttest.Control, options streamOpt
 		plane.Reports = &ReportsConfig{}
 	}
 	config := Config{
-		Target: control.Address, NodeID: int(control.NodeID), APIKey: control.APIKey, UseTLS: true, ServerName: control.ServerName,
+		Target: control.Address, NodeID: int(control.NodeID), Identity: &IdentityConfig{Dir: control.Provision(t)}, UseTLS: true, ServerName: control.ServerName,
 		RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
 		Heartbeat:    200 * time.Millisecond, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
@@ -369,7 +369,7 @@ func TestTransientReportAckKeepsTheBatchAndResendsAfterRetry(t *testing.T) {
 }
 
 func TestReportAckWithOnlyAnUnknownCodeIsARefusal(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional)
+	control := agenttest.New(t, agenttest.ModeRequired)
 	client, _ := newStreamClient(t, control, streamOptions{reports: true})
 	plane := client.DataPlane()
 	require.NoError(t, plane.SubmitTraffic(trafficReport(1)))
@@ -380,16 +380,6 @@ func TestReportAckWithOnlyAnUnknownCodeIsARefusal(t *testing.T) {
 	plane.receiveReportAck("s", &agentv1pb.ReportAck{BatchId: pending[1].BatchID, ErrorCode: "report_from_a_later_control"})
 	assert.Equal(t, 1, spooled(client), "unavailable keeps, an unknown code drops")
 	assert.Equal(t, uint64(1), plane.reports.refused.Load())
-}
-
-func TestHelloListsArtifactsOnlyWithTheClientCertificate(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityArtifacts)
-	client, _ := newStreamClient(t, control, streamOptions{artifacts: true})
-	startUsersClient(t, client)
-	assert.False(t, agentcontrol.HasCapability(control.Hellos()[0].Capabilities, agentcontrol.CapabilityArtifacts), "not on an API key session")
-	assert.Equal(t, PluginDownloadHTTP, client.PluginDownload(), "not enrolled: the HTTP download")
-	_, err := client.PluginArtifacts()
-	require.ErrorIs(t, err, ErrSessionGone)
 }
 
 // releaseFixture is a release AgentArtifacts serves.
@@ -418,7 +408,8 @@ func enrolledArtifactsClient(t *testing.T) (*agenttest.Control, *Client, string)
 	client, credential := newStreamClient(t, control, streamOptions{artifacts: true, identity: true})
 	startUsersClient(t, client)
 	require.True(t, client.Negotiated(agentcontrol.CapabilityArtifacts))
-	require.Equal(t, PluginDownloadArtifacts, client.PluginDownload())
+	_, err := client.PluginArtifacts()
+	require.NoError(t, err)
 	return control, client, credential
 }
 
@@ -488,7 +479,7 @@ func TestArtifactsCertificateRefusalDiscardsTheCertificateAndEnrollsAgain(t *tes
 	control.RefuseCertificates("")
 	require.Eventually(t, func() bool {
 		status := client.TransportStatus()
-		return status.Identity.Enrolled && status.Identity.Serial != first && client.PluginDownload() == PluginDownloadArtifacts
+		return status.Identity.Enrolled && status.Identity.Serial != first && client.Negotiated(agentcontrol.CapabilityArtifacts)
 	}, 10*time.Second, 20*time.Millisecond)
 }
 
@@ -581,11 +572,12 @@ func TestEnrollmentCredentialWrittenAfterARefusalIsUsedPromptly(t *testing.T) {
 	assert.Less(t, time.Since(start), 7*time.Second, "within the 5 s waiting retry, not a minute")
 }
 
-func TestEnrolledAgentWithoutArtifactsUsesTheHTTPDownload(t *testing.T) {
+func TestAgentCannotDownloadPluginsFromAControlWithoutArtifacts(t *testing.T) {
 	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
 	client, _ := newStreamClient(t, control, streamOptions{artifacts: true, identity: true})
 	startUsersClient(t, client)
 	require.True(t, client.TransportStatus().Identity.Enrolled)
 	assert.True(t, agentcontrol.HasCapability(control.Hellos()[0].Capabilities, agentcontrol.CapabilityArtifacts), "listed on the certificate session")
-	assert.Equal(t, PluginDownloadHTTP, client.PluginDownload(), "a Control without artifacts.v1 (4.1.x): the HTTP download")
+	_, err := client.PluginArtifacts()
+	require.ErrorIs(t, err, ErrSessionGone, "a Control without artifacts.v1")
 }

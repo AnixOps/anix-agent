@@ -13,8 +13,8 @@ import (
 )
 
 // multiProtocolDocument is a document of a node serving one vless
-// protocol per port, in order, with ids 100, 101, ...: legacy_pull.default
-// and types answer the first, legacy_pull.protocols each.
+// protocol per port, in order, with ids 100, 101, ...: runtime.default
+// and types answer the first, runtime.protocols each.
 func multiProtocolDocument(ports ...int) map[string]any {
 	document := proxyDocument(ports[0])
 	protocols := make([]any, 0, len(ports))

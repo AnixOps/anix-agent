@@ -38,12 +38,7 @@ func startClient(t *testing.T, client *Client) {
 
 // waitIssued waits until Control has issued n certificates and returns their
 // serials.
-//
-// Ready only says that a control stream is open. Under preferred mode the
-// first session can authenticate with the node API key while the enrollment
-// is still running (it may be the identity's maintenance loop that runs it,
-// which keeps the session's own attempt from starting), so Control has not
-// issued, or recorded, the certificate yet.
+
 func waitIssued(t *testing.T, fake *fakeControl, n int) []string {
 	t.Helper()
 	require.Eventually(t, func() bool {
@@ -65,17 +60,6 @@ func waitEnrolled(t *testing.T, client *Client) {
 	}, 10*time.Second, 10*time.Millisecond, "the Agent did not enroll")
 }
 
-// waitCertificateSession waits until the Agent has a control stream open that
-// authenticates with its client certificate. An Agent that enrolls over an
-// open API key session reconnects with the certificate when it is installed.
-func waitCertificateSession(t *testing.T, client *Client) {
-	t.Helper()
-	require.Eventually(t, func() bool {
-		status := client.TransportStatus()
-		return status.Connected && status.Authentication == "certificate"
-	}, 10*time.Second, 10*time.Millisecond, "the Agent did not connect with its certificate")
-}
-
 func certificateSessions(streams []fakeStreamAuth) (accepted []fakeStreamAuth) {
 	for _, stream := range streams {
 		if stream.accepted && stream.certificateSerial != "" {
@@ -85,45 +69,47 @@ func certificateSessions(streams []fakeStreamAuth) (accepted []fakeStreamAuth) {
 	return accepted
 }
 
-func TestIdentityEnrollsWithAPIKeyThenConnectsWithCertificate(t *testing.T) {
+// withCredential issues a one-time credential and writes it to a new
+// credential file of an identity rooted at root.
+func (f *fakeControl) withCredential(t *testing.T, root, credential string) *IdentityConfig {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "enroll.token")
+	f.writeCredential(t, file, credential)
+	return &IdentityConfig{Dir: root, Enroll: true, EnrollCredentialFile: file}
+}
+
+func (f *fakeControl) writeCredential(t *testing.T, file, credential string) {
+	t.Helper()
+	f.addCredential(credential)
+	require.NoError(t, os.WriteFile(file, []byte(credential+"\n"), 0o600))
+}
+
+func TestIdentityEnrollsWithCredentialThenConnectsWithCertificate(t *testing.T) {
 	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModePreferred, true)
+	fake := newFakeControl(t, fakeModeRequired, true)
 	root := t.TempDir()
-	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
+	identity := fake.withCredential(t, root, "anixagt_test-credential")
+	client := fake.client(t, identity)
 	startClient(t, client)
 	waitReady(t, client)
-	// Ready can be the API key session that is open while the enrollment
-	// runs; the certificate session follows it.
-	waitCertificateSession(t, client)
 
 	status := client.TransportStatus()
-	assert.Equal(t, "certificate", status.Authentication)
-	assert.Nil(t, status.Deprecation, "an enrolled Agent gets no deprecation signal")
 	require.NotNil(t, status.Identity)
 	assert.True(t, status.Identity.Enrolled)
 	assert.Equal(t, "spiffe://anixops/test-cluster/agent/proxy-12", status.Identity.SPIFFEID)
 
 	enrolls, _, streams, issued := fake.records()
 	require.Len(t, enrolls, 1)
-	assert.True(t, enrolls[0].apiKey, "the first enrollment bootstraps with the node API key")
+	assert.True(t, enrolls[0].credential)
 	assert.Equal(t, agentcontrol.NodeKindProxy, enrolls[0].nodeKind)
 	assert.Equal(t, codes.OK, enrolls[0].err)
 	require.NotEmpty(t, issued)
 	require.NotEmpty(t, streams)
-	// A session opened before the certificate was installed carries the API
-	// key; from the first certificate session on, the Agent presents the
-	// certificate on every stream and never sends the key again.
-	presented := false
 	for _, stream := range streams {
-		if stream.certificateSerial == "" && !presented {
-			assert.True(t, stream.apiKey, "a session before the enrollment authenticates with the node API key")
-			continue
-		}
-		presented = true
-		assert.False(t, stream.apiKey, "an enrolled Agent never sends the API key on the stream")
-		assert.Equal(t, issued[0], stream.certificateSerial)
+		assert.Equal(t, issued[0], stream.certificateSerial, "every session presents the certificate")
 	}
-	require.True(t, presented, "a session presented the certificate")
+	_, err := os.Stat(identity.EnrollCredentialFile)
+	assert.True(t, errors.Is(err, os.ErrNotExist), "the used one-time credential is removed")
 
 	dir := filepath.Join(root, "proxy-12")
 	assertPrivate(t, dir, 0o700)
@@ -135,7 +121,7 @@ func TestIdentityEnrollsWithAPIKeyThenConnectsWithCertificate(t *testing.T) {
 	inspected := store.Inspect(time.Now())
 	assert.Equal(t, pki.StateValid, inspected.State)
 	assert.Equal(t, issued[0], inspected.Serial)
-	assert.Equal(t, pki.BootstrapNodeAPIKey, inspected.Bootstrap)
+	assert.Equal(t, pki.BootstrapEnrollmentCredential, inspected.Bootstrap)
 
 	require.Eventually(t, func() bool {
 		metrics := client.transportMetrics()
@@ -143,44 +129,72 @@ func TestIdentityEnrollsWithAPIKeyThenConnectsWithCertificate(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestIdentityWaitsForACredentialWithoutOpeningAStream(t *testing.T) {
+	shortenIdentityRetries(t)
+	fake := newFakeControl(t, fakeModeRequired, true)
+	credentialFile := filepath.Join(t.TempDir(), "enroll.token")
+	client := fake.client(t, &IdentityConfig{Dir: t.TempDir(), Enroll: true, EnrollCredentialFile: credentialFile})
+	startClient(t, client)
+	require.Eventually(t, func() bool {
+		status := client.TransportStatus()
+		return status.Identity != nil && strings.Contains(status.Identity.LastError, "EnrollCredentialFile")
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.False(t, client.TransportStatus().Connected)
+	enrolls, _, streams, _ := fake.records()
+	assert.Empty(t, enrolls, "no enrollment without a credential")
+	assert.Empty(t, streams, "no stream without a certificate")
+
+	fake.writeCredential(t, credentialFile, "anixagt_late")
+	require.Eventually(t, func() bool { return client.TransportStatus().Connected }, 10*time.Second, 10*time.Millisecond)
+}
+
+func TestIdentityRejectedCredentialIsNotRetried(t *testing.T) {
+	shortenIdentityRetries(t)
+	fake := newFakeControl(t, fakeModeRequired, true)
+	credentialFile := filepath.Join(t.TempDir(), "enroll.token")
+	require.NoError(t, os.WriteFile(credentialFile, []byte("anixagt_unknown\n"), 0o600))
+	client := fake.client(t, &IdentityConfig{Dir: t.TempDir(), Enroll: true, EnrollCredentialFile: credentialFile})
+	startClient(t, client)
+	require.Eventually(t, func() bool {
+		enrolls, _, _, _ := fake.records()
+		return len(enrolls) == 1
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, codes.Unauthenticated, func() codes.Code { enrolls, _, _, _ := fake.records(); return enrolls[0].err }())
+	time.Sleep(200 * time.Millisecond)
+	enrolls, _, _, _ := fake.records()
+	assert.Len(t, enrolls, 1, "a rejected credential is not sent again")
+	assert.Contains(t, client.TransportStatus().Identity.LastError, "rejected the enrollment credential")
+
+	fake.writeCredential(t, credentialFile, "anixagt_new")
+	require.Eventually(t, func() bool { return client.TransportStatus().Connected }, 10*time.Second, 10*time.Millisecond)
+}
+
 func TestIdentityLoadsStoredCertificateAfterRestart(t *testing.T) {
 	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModePreferred, true)
+	fake := newFakeControl(t, fakeModeRequired, true)
 	root := t.TempDir()
-	first := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
+	first := fake.client(t, fake.withCredential(t, root, "anixagt_first"))
 	startClient(t, first)
 	waitReady(t, first)
-	// Ready can come before the enrollment is stored: wait for it, or the
-	// restart finds no identity to load.
-	waitEnrolled(t, first)
 	require.NoError(t, first.Close())
-	_, _, firstStreams, _ := fake.records()
 
-	// Control now requires mTLS; the restarted Agent needs no API key.
-	fake.setMode(fakeModeRequired)
+	// The restarted Agent has no credential any more: it needs none.
 	second := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, second)
 	waitReady(t, second)
-	assert.Equal(t, "certificate", second.TransportStatus().Authentication)
-	enrolls, _, streams, _ := fake.records()
+	enrolls, _, _, issued := fake.records()
 	assert.Len(t, enrolls, 1, "the stored identity is reused, not enrolled again")
-	// The first Agent's sessions may include one on the API key, from before
-	// its enrollment; the restarted Agent's sessions do not.
-	require.Greater(t, len(streams), len(firstStreams), "the restarted Agent opened a stream")
-	for _, stream := range streams[len(firstStreams):] {
-		assert.False(t, stream.apiKey)
-	}
+	assert.Equal(t, issued[0], second.TransportStatus().Identity.Serial)
 }
 
 func TestIdentityRenewsAtControlsRenewalTime(t *testing.T) {
 	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModePreferred, true)
+	fake := newFakeControl(t, fakeModeRequired, true)
 	fake.setLifetime(3 * time.Second)
 	root := t.TempDir()
-	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
+	client := fake.client(t, fake.withCredential(t, root, "anixagt_first"))
 	startClient(t, client)
 	waitReady(t, client)
-	// Ready can come before the enrollment: wait for the certificate.
 	issued := waitIssued(t, fake, 1)
 	fake.setLifetime(time.Hour)
 
@@ -190,7 +204,6 @@ func TestIdentityRenewsAtControlsRenewalTime(t *testing.T) {
 	}, 10*time.Second, 20*time.Millisecond)
 	_, renews, _, issued := fake.records()
 	assert.Equal(t, issued[0], renews[0].serial, "the renewal presents the current certificate")
-	assert.False(t, renews[0].apiKey, "a renewal never sends the API key")
 	require.Len(t, issued, 2)
 
 	require.Eventually(t, func() bool {
@@ -202,7 +215,7 @@ func TestIdentityRenewsAtControlsRenewalTime(t *testing.T) {
 	inspected := store.Inspect(time.Now())
 	assert.Equal(t, issued[1], inspected.Serial, "the renewed certificate is stored")
 	assert.False(t, inspected.RenewedAt.IsZero())
-	assert.Equal(t, pki.BootstrapNodeAPIKey, inspected.Bootstrap, "renewal keeps the enrollment's bootstrap")
+	assert.Equal(t, pki.BootstrapEnrollmentCredential, inspected.Bootstrap, "renewal keeps the enrollment's bootstrap")
 
 	// The next session presents the renewed certificate.
 	require.Eventually(t, func() bool {
@@ -218,17 +231,18 @@ func TestIdentityRenewsAtControlsRenewalTime(t *testing.T) {
 
 func TestIdentityRevokedCertificateIsDiscardedAndEnrolledAgain(t *testing.T) {
 	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModePreferred, true)
+	fake := newFakeControl(t, fakeModeRequired, true)
 	root := t.TempDir()
-	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
+	identity := fake.withCredential(t, root, "anixagt_first")
+	client := fake.client(t, identity)
 	startClient(t, client)
 	waitReady(t, client)
-	// Ready can come before the enrollment: wait for the certificate.
 	issued := waitIssued(t, fake, 1)
 
 	// Revoked while the stream is open: Control ends it at the next
 	// heartbeat; the Agent drops the certificate and enrolls again with the
-	// API key, which preferred still accepts.
+	// new credential the operator issued.
+	fake.writeCredential(t, identity.EnrollCredentialFile, "anixagt_second")
 	fake.revoke(issued[0])
 	require.Eventually(t, func() bool {
 		_, _, _, issued := fake.records()
@@ -246,7 +260,7 @@ func TestIdentityRevokedCertificateIsDiscardedAndEnrolledAgain(t *testing.T) {
 	}, 10*time.Second, 20*time.Millisecond)
 	enrolls, _, _, _ := fake.records()
 	require.Len(t, enrolls, 2)
-	assert.True(t, enrolls[1].apiKey)
+	assert.True(t, enrolls[1].credential)
 
 	store, err := pki.NewStore(root, agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: 12})
 	require.NoError(t, err)
@@ -255,9 +269,10 @@ func TestIdentityRevokedCertificateIsDiscardedAndEnrolledAgain(t *testing.T) {
 
 func TestIdentityRevokedCertificateRefusedAtRenewal(t *testing.T) {
 	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModePreferred, true)
+	fake := newFakeControl(t, fakeModeRequired, true)
 	root := t.TempDir()
-	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
+	config := fake.withCredential(t, root, "anixagt_first")
+	client := fake.client(t, config)
 	client.identity.prepare(client.ctx)
 	identity := client.identity.certificate()
 	require.NotNil(t, identity)
@@ -269,181 +284,93 @@ func TestIdentityRevokedCertificateRefusedAtRenewal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, pki.StateNotEnrolled, store.Inspect(time.Now()).State)
 
+	fake.writeCredential(t, config.EnrollCredentialFile, "anixagt_second")
 	client.identity.prepare(client.ctx)
 	renewed := client.identity.certificate()
 	require.NotNil(t, renewed)
 	assert.NotEqual(t, identity.Serial, renewed.Serial)
 }
 
-func TestIdentityRequiredModeEnrollsWithCredentialAndNeverSendsTheAPIKey(t *testing.T) {
-	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModeRequired, true)
-	root := t.TempDir()
-	credentialFile := filepath.Join(t.TempDir(), "enroll.token")
-	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true, EnrollCredentialFile: credentialFile})
-	startClient(t, client)
-
-	// Without a credential the API key is refused for the stream and for
-	// enrollment, each with agent_mtls_required.
-	require.Eventually(t, func() bool {
-		status := client.TransportStatus()
-		return status.MTLSRequiredRefusals > 0 && status.Identity != nil && status.Identity.LastError != ""
-	}, 5*time.Second, 10*time.Millisecond)
-	status := client.TransportStatus()
-	assert.False(t, status.Connected)
-	assert.Contains(t, status.LastError, agentcontrol.ErrorCodeMTLSRequired)
-	assert.Contains(t, status.Identity.LastError, "EnrollCredentialFile")
-	enrolls, _, streams, _ := fake.records()
-	require.NotEmpty(t, enrolls)
-	assert.Equal(t, codes.Unauthenticated, enrolls[0].err)
-	assert.True(t, enrolls[0].apiKey)
-	for _, stream := range streams {
-		assert.False(t, stream.accepted, "required never accepts the API key")
-	}
-	refusedEnrolls := len(enrolls)
-
-	// Once refused, the API key is not offered for enrollment again.
-	time.Sleep(200 * time.Millisecond)
-	enrolls, _, _, _ = fake.records()
-	assert.Len(t, enrolls, refusedEnrolls)
-
-	fake.addCredential("anixagt_test-credential")
-	require.NoError(t, os.WriteFile(credentialFile, []byte("anixagt_test-credential\n"), 0o600))
-	require.Eventually(t, func() bool { return client.TransportStatus().Connected }, 10*time.Second, 10*time.Millisecond)
-
-	status = client.TransportStatus()
-	assert.Equal(t, "certificate", status.Authentication)
-	enrolls, _, streams, issued := fake.records()
-	last := enrolls[len(enrolls)-1]
-	assert.True(t, last.credential)
-	assert.False(t, last.apiKey, "a credential enrollment sends no API key")
-	assert.Equal(t, codes.OK, last.err)
-	for _, stream := range streams {
-		if stream.accepted {
-			assert.False(t, stream.apiKey)
-			assert.Equal(t, issued[0], stream.certificateSerial)
-		}
-	}
-	// The enrollment removes the credential after it installed the
-	// certificate, which the next session may already present.
-	require.Eventually(t, func() bool {
-		_, err := os.Stat(credentialFile)
-		return errors.Is(err, os.ErrNotExist)
-	}, 5*time.Second, 10*time.Millisecond, "the used one-time credential is removed")
-}
-
-func TestIdentityEnrollsWithAPIKeyAgainAfterControlLeavesRequiredMode(t *testing.T) {
-	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModeRequired, true)
-	client := fake.client(t, &IdentityConfig{Dir: t.TempDir(), Enroll: true})
-	startClient(t, client)
-	require.Eventually(t, func() bool {
-		status := client.TransportStatus()
-		return status.MTLSRequiredRefusals > 0 && status.Identity != nil && status.Identity.LastError != ""
-	}, 5*time.Second, 10*time.Millisecond)
-
-	// The operator rolls Control back to preferred (H5 keeps it as an
-	// override): an API key session proves the key is accepted again, so
-	// the Agent enrolls with it instead of waiting for a credential.
-	fake.setMode(fakeModePreferred)
-	require.Eventually(t, func() bool {
-		status := client.TransportStatus()
-		return status.Connected && status.Authentication == "certificate"
-	}, 10*time.Second, 10*time.Millisecond)
-	enrolls, _, _, _ := fake.records()
-	last := enrolls[len(enrolls)-1]
-	assert.True(t, last.apiKey)
-	assert.Equal(t, codes.OK, last.err)
-}
-
-func TestIdentityKeepsAPIKeyWhenControlHasNoEnrollment(t *testing.T) {
+func TestIdentityWaitsWhenControlHasNoEnrollment(t *testing.T) {
 	shortenIdentityRetries(t)
 	enrollUnsupportedRetry = time.Hour
-	// Control v4.0: no AgentEnrollment service, legacy credentials only.
-	fake := newFakeControl(t, fakeModeOptional, false)
+	// No AgentEnrollment service.
+	fake := newFakeControl(t, fakeModeRequired, false)
 	root := t.TempDir()
-	client := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
+	client := fake.client(t, fake.withCredential(t, root, "anixagt_first"))
 	startClient(t, client)
-	waitReady(t, client)
-	// Ready can come before the enrollment attempt has failed: wait for it.
 	require.Eventually(t, func() bool {
 		status := client.TransportStatus()
 		return status.Identity != nil && strings.Contains(status.Identity.LastError, "does not serve AgentEnrollment")
 	}, 10*time.Second, 10*time.Millisecond)
 
 	status := client.TransportStatus()
-	assert.Equal(t, "api-key", status.Authentication)
-	require.NotNil(t, status.Identity)
+	assert.False(t, status.Connected)
 	assert.False(t, status.Identity.Enrolled)
-	assert.Contains(t, status.Identity.LastError, "does not serve AgentEnrollment")
 	assert.WithinDuration(t, time.Now().Add(time.Hour), status.Identity.NextEnrollment, time.Minute)
 	_, err := os.Stat(filepath.Join(root, "proxy-12", "identity.pem"))
 	assert.True(t, errors.Is(err, os.ErrNotExist))
-	enrolls, _, streams, _ := fake.records()
-	require.Len(t, enrolls, 0, "the fake records only served calls; Unimplemented never reaches it")
-	require.NotEmpty(t, streams)
-	assert.True(t, streams[len(streams)-1].apiKey)
+	_, _, streams, _ := fake.records()
+	assert.Empty(t, streams, "no stream without a certificate")
 }
 
-func TestIdentityKeepsAPIKeyWhenControlCannotEnroll(t *testing.T) {
+func TestIdentityWaitsWhenControlCannotEnroll(t *testing.T) {
 	shortenIdentityRetries(t)
 	enrollUnsupportedRetry = time.Hour
-	// Control 4.1 in preferred mode without its built-in CA: AgentEnrollment
-	// answers FailedPrecondition, and no certificate is requested.
-	fake := newFakeControl(t, fakeModePreferred, true)
+	// Control without its built-in CA: AgentEnrollment answers
+	// FailedPrecondition.
+	fake := newFakeControl(t, fakeModeRequired, true)
 	fake.mu.Lock()
 	fake.pkiEnabled = false
 	fake.mu.Unlock()
-	client := fake.client(t, &IdentityConfig{Dir: t.TempDir(), Enroll: true})
+	client := fake.client(t, fake.withCredential(t, t.TempDir(), "anixagt_first"))
 	startClient(t, client)
-	waitReady(t, client)
-	// Ready can come before the enrollment attempt has failed: wait for it.
 	require.Eventually(t, func() bool {
 		status := client.TransportStatus()
 		return status.Identity != nil && strings.Contains(status.Identity.LastError, "cannot enroll agents now")
 	}, 10*time.Second, 10*time.Millisecond)
-	status := client.TransportStatus()
-	assert.Equal(t, "api-key", status.Authentication)
-	require.NotNil(t, status.Deprecation)
-	assert.Contains(t, status.Identity.LastError, "cannot enroll agents now")
+	assert.False(t, client.TransportStatus().Connected)
 	enrolls, _, _, _ := fake.records()
-	assert.Len(t, enrolls, 1, "the deprecation signal does not retry an unavailable enrollment at once")
+	assert.Len(t, enrolls, 1, "an unavailable enrollment is not retried at once")
 }
 
-func TestIdentityFallsBackToAPIKeyWhenControlDoesNotRequestTheCertificate(t *testing.T) {
+func TestIdentityKeepsTheCertificateWhenControlDoesNotRequestIt(t *testing.T) {
 	shortenIdentityRetries(t)
-	fake := newFakeControl(t, fakeModePreferred, true)
+	fake := newFakeControl(t, fakeModeRequired, true)
 	root := t.TempDir()
-	first := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
+	first := fake.client(t, fake.withCredential(t, root, "anixagt_first"))
 	startClient(t, first)
 	waitReady(t, first)
-	// Ready can come before the enrollment is stored: wait for it, or the
-	// second client starts without an identity to keep.
-	require.Eventually(t, func() bool {
-		status := first.TransportStatus()
-		return status.Identity != nil && status.Identity.Enrolled
-	}, 5*time.Second, 10*time.Millisecond)
 	require.NoError(t, first.Close())
 
-	// The rollback switch: agent_control.mtls: off requests no certificate.
+	// agent_control.mtls: off requests no certificate: the stream has no
+	// credential, and the identity is kept for when Control asks again.
 	fake.setMode(fakeModeOff)
 	second := fake.client(t, &IdentityConfig{Dir: root, Enroll: true})
 	startClient(t, second)
-	waitReady(t, second)
+	require.Eventually(t, func() bool {
+		return strings.Contains(second.TransportStatus().LastError, "did not request the agent client certificate")
+	}, 5*time.Second, 10*time.Millisecond)
 	status := second.TransportStatus()
-	assert.Equal(t, "api-key", status.Authentication)
-	require.NotNil(t, status.Identity)
-	assert.True(t, status.Identity.Enrolled, "the identity is kept for when Control asks again")
+	assert.False(t, status.Connected)
+	assert.True(t, status.Identity.Enrolled)
+
+	fake.setMode(fakeModeRequired)
+	waitReady(t, second)
 }
 
-func TestIdentityDisabledEnrollmentUsesAPIKey(t *testing.T) {
-	fake := newFakeControl(t, fakeModePreferred, true)
-	client := fake.client(t, &IdentityConfig{Dir: t.TempDir(), Enroll: false})
+func TestIdentityDisabledEnrollmentNeverEnrolls(t *testing.T) {
+	shortenIdentityRetries(t)
+	fake := newFakeControl(t, fakeModeRequired, true)
+	identity := fake.withCredential(t, t.TempDir(), "anixagt_first")
+	identity.Enroll = false
+	client := fake.client(t, identity)
 	startClient(t, client)
-	waitReady(t, client)
-	assert.Equal(t, "api-key", client.TransportStatus().Authentication)
-	enrolls, _, _, _ := fake.records()
+	time.Sleep(200 * time.Millisecond)
+	assert.False(t, client.TransportStatus().Connected)
+	enrolls, _, streams, _ := fake.records()
 	assert.Empty(t, enrolls)
+	assert.Empty(t, streams)
 }
 
 func TestIdentityRefusesInsecureCredentialFile(t *testing.T) {
@@ -451,20 +378,25 @@ func TestIdentityRefusesInsecureCredentialFile(t *testing.T) {
 	credentialFile := filepath.Join(t.TempDir(), "enroll.token")
 	require.NoError(t, os.WriteFile(credentialFile, []byte("anixagt_x"), 0o644))
 	client := fake.client(t, &IdentityConfig{Dir: t.TempDir(), Enroll: true, EnrollCredentialFile: credentialFile})
-	_, _, err := client.identity.bootstrap()
+	_, err := client.identity.bootstrap()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "chmod 600")
 
 	require.NoError(t, os.WriteFile(credentialFile, []byte("not-a-credential"), 0o600))
 	require.NoError(t, os.Chmod(credentialFile, 0o600))
-	_, _, err = client.identity.bootstrap()
+	_, err = client.identity.bootstrap()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), agentcontrol.EnrollmentCredentialPrefix)
 }
 
+func TestClientNeedsTheIdentity(t *testing.T) {
+	_, err := NewClient(Config{Target: "127.0.0.1:1", NodeID: 1, UseTLS: true, AgentVersion: "test-agent"})
+	require.ErrorContains(t, err, "agent identity")
+}
+
 func TestIdentityNeedsTLS(t *testing.T) {
 	_, err := NewClient(Config{
-		Target: "127.0.0.1:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Target: "127.0.0.1:1", NodeID: 1, AgentVersion: "test-agent",
 		Identity: &IdentityConfig{Dir: t.TempDir(), Enroll: true},
 	})
 	require.Error(t, err)

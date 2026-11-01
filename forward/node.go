@@ -26,9 +26,8 @@ import (
 
 // NodeConfig configures a forward node's Agent.
 type NodeConfig struct {
-	// Client is the stream's configuration: Target, NodeID, APIKey (the
-	// forward node's token, used only to enroll), UseTLS, ServerName,
-	// RootCAs, Identity (required), AgentVersion, Labels. NodeKind,
+	// Client is the stream's configuration: Target, NodeID, UseTLS,
+	// ServerName, RootCAs, Identity, AgentVersion, Labels. NodeKind,
 	// DataPlane and Handler are set by StartNode.
 	Client agentapi.Config
 	// StateRoot is the data-plane state root (the stored snapshot and

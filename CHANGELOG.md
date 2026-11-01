@@ -21,6 +21,21 @@
   enrollment credential or an enrolled identity.
 - `anix-agent server -r/--re-register`.
 - Hysteria (v1) node configurations.
+- Node API key authentication in `api/agent`: `Config.APIKey`, the API key
+  stream session and enrollment bootstrap (`pki.BootstrapNodeAPIKey`), the
+  session recycle after an enrollment, Control's deprecation signal
+  (`TransportStatus.Deprecation`, the `agent_control_legacy_auth_deprecated`
+  metric), the `agent_mtls_required` handling and its
+  `agent_control_mtls_required_refusals_total` metric, and
+  `TransportStatus.Authentication`. The client needs `Config.Identity`; a
+  stream opens only with the client certificate, and an enrollment needs a
+  one-time credential or `anix-agent join`. An identity enrolled with the API
+  key by an older Agent keeps working and renewing.
+- The plugin HTTP download (`/api/v3/agent/plugin-releases` with `X-API-Key`,
+  `PluginDownload`, `RemoteInstallerConfig.BaseURL`/`APIKey`): plugin releases
+  come only from AgentArtifacts (`artifacts.v1`).
+- The `agent-control-fixture` flags `-api-key`, `-tls` (always on) and
+  `-plugin-base-url`; `-pki-dir` is required.
 - The examples `config.grpc.json`, `config_auto_register.json`,
   `config_realtime_sync.json` and `config_test_local.json`, and the UniProxy
   and WebSocket API documents. The init-config wizard writes the same
@@ -28,8 +43,8 @@
 
 ### Changed
 
-- The node reads the configuration snapshot's `runtime` answers, and
-  `legacy_pull` only when a Control does not send `runtime` yet.
+- The node reads only the configuration snapshot's `runtime` answers (Control
+  has sent them since 5.0.0-rc.28); `legacy_pull` is no longer read.
 - A node whose Control does not serve `config.v1` and `users.v1` on the
   stream no longer starts on a legacy pull: the start fails and names the
   Control upgrade. A stream that is not up within the startup wait starts the

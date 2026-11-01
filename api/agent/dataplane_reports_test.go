@@ -33,7 +33,7 @@ func newReportsClient(t *testing.T, control *agenttest.Control, root string, opt
 		plane.PackageReports = &PackageReportsConfig{Collect: options.packages, Interval: 200 * time.Millisecond}
 	}
 	client, err := NewClient(Config{
-		Target: control.Address, NodeID: int(control.NodeID), APIKey: control.APIKey, UseTLS: true, ServerName: control.ServerName,
+		Target: control.Address, NodeID: int(control.NodeID), Identity: &IdentityConfig{Dir: control.Provision(t)}, UseTLS: true, ServerName: control.ServerName,
 		RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
 		Heartbeat:    time.Second, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
@@ -64,7 +64,7 @@ func spooled(client *Client) int {
 }
 
 func TestReportsAreSpooledSentAndDroppedOnTheirAck(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
 	client := newReportsClient(t, control, t.TempDir(), reportsOptions{})
 	startUsersClient(t, client)
 	plane := client.DataPlane()
@@ -87,7 +87,7 @@ func TestReportsAreSpooledSentAndDroppedOnTheirAck(t *testing.T) {
 }
 
 func TestReportsWaitInTheSpoolWhileTheStreamIsDownAndReplayInOrder(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
 	root := t.TempDir()
 	client := newReportsClient(t, control, root, reportsOptions{})
 	startUsersClient(t, client)
@@ -110,7 +110,7 @@ func TestReportsWaitInTheSpoolWhileTheStreamIsDownAndReplayInOrder(t *testing.T)
 	require.NoError(t, client.Close())
 	restarted := newReportsClient(t, control, root, reportsOptions{})
 	assert.Equal(t, 3, spooled(restarted))
-	control.SetMode(agenttest.ModeOptional)
+	control.SetMode(agenttest.ModeRequired)
 	startUsersClient(t, restarted)
 	require.Eventually(t, func() bool { return len(control.Batches()) == 3 && spooled(restarted) == 0 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, map[uint64][2]uint64{1: {100, 1000}, 2: {200, 2000}, 3: {300, 3000}}, control.Traffic())
@@ -128,7 +128,7 @@ func TestReportsWaitInTheSpoolWhileTheStreamIsDownAndReplayInOrder(t *testing.T)
 
 func TestReportsAreResentUntilAckedAndCountOnce(t *testing.T) {
 	shortAckTimeout(t)
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
 	client := newReportsClient(t, control, t.TempDir(), reportsOptions{})
 	startUsersClient(t, client)
 	plane := client.DataPlane()
@@ -162,7 +162,7 @@ func TestReportsAreResentUntilAckedAndCountOnce(t *testing.T) {
 }
 
 func TestReportSpoolDropsTheOldestBatchesAtItsBound(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional)
+	control := agenttest.New(t, agenttest.ModeRequired)
 	client := newReportsClient(t, control, t.TempDir(), reportsOptions{trafficBytes: 600})
 	plane := client.DataPlane()
 	for id := uint64(1); id <= 20; id++ {
@@ -177,7 +177,7 @@ func TestReportSpoolDropsTheOldestBatchesAtItsBound(t *testing.T) {
 }
 
 func TestStatusAndPackageReportsAreLatestOnlyAndNeedTheirCapabilities(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
 	var observed atomic.Int64
 	observed.Store(1000)
 	packages := func(context.Context) ([]*agentv1pb.PackageReport, error) {
@@ -234,7 +234,7 @@ func newDestinationsClient(t *testing.T, control *agenttest.Control, root string
 	store, err := state.Open(root, agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: control.NodeID})
 	require.NoError(t, err)
 	client, err := NewClient(Config{
-		Target: control.Address, NodeID: int(control.NodeID), APIKey: control.APIKey, UseTLS: true, ServerName: control.ServerName,
+		Target: control.Address, NodeID: int(control.NodeID), Identity: &IdentityConfig{Dir: control.Provision(t)}, UseTLS: true, ServerName: control.ServerName,
 		RootCAs: control.ServerCAs, AgentVersion: "test-agent", InstanceID: "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
 		Heartbeat:    time.Second, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
@@ -255,7 +255,7 @@ func destinationReport(users ...uint64) *agentv1pb.DestinationReport {
 }
 
 func TestDestinationReportsAreSpooledAndSentOnlyWithTheirCapability(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityDestinations)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityDestinations)
 	client := newDestinationsClient(t, control, t.TempDir())
 	startUsersClient(t, client)
 	plane := client.DataPlane()
@@ -278,7 +278,7 @@ func TestDestinationReportsAreSpooledAndSentOnlyWithTheirCapability(t *testing.T
 }
 
 func TestDestinationReportsWaitForAControlThatServesThem(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
 	root := t.TempDir()
 	client := newDestinationsClient(t, control, root)
 	startUsersClient(t, client)
@@ -299,7 +299,7 @@ func TestDestinationReportsWaitForAControlThatServesThem(t *testing.T) {
 }
 
 func TestSubmitDestinationsNeedsTheirConfiguration(t *testing.T) {
-	control := agenttest.New(t, agenttest.ModeOptional, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityDestinations)
+	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports, agentcontrol.CapabilityDestinations)
 	client := newReportsClient(t, control, t.TempDir(), reportsOptions{})
 	assert.ErrorIs(t, client.DataPlane().SubmitDestinations(destinationReport(1)), ErrDestinationsOff)
 	startUsersClient(t, client)

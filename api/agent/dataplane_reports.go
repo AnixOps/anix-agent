@@ -23,7 +23,7 @@ import (
 // reports (package-reports.v1). Traffic and log batches carry a batch id,
 // node:proxy-<id>:<boot id>:<sequence>, kept when resent. Each is written to
 // the on-disk spool before it counts as reported, sent on the stream in
-// order, resent on the stream (never over a legacy transport) until Control
+// order, resent on the stream until Control
 // answers its ReportAck, and dropped from the spool on any ReportAck:
 // applied, recorded before, or refused for good. Control sends no ReportAck
 // for a batch it cannot record for now; the Agent resends it after
@@ -207,7 +207,7 @@ var ErrReportsOff = errors.New("agent data plane: reports are not configured")
 
 // SubmitTraffic stores a traffic report in the spool, under a new batch id,
 // and sends it when the stream carries reports.v1. Once it returns nil the
-// report belongs to the stream: it is never resent over a legacy transport.
+// report belongs to the stream and its spool.
 func (d *DataPlane) SubmitTraffic(report *agentv1pb.TrafficReport) error {
 	if d.reports.traffic == nil {
 		return ErrReportsOff
@@ -448,8 +448,7 @@ func (d *DataPlane) replay(session DataPlaneSession, now time.Time) {
 }
 
 // noteStuckBatches logs once per session that spooled batches wait for a
-// session that negotiates reports.v1: a batch never moves to a legacy
-// transport, which has no batch ids and could count it twice.
+// session that negotiates reports.v1.
 func (d *DataPlane) noteStuckBatches() {
 	d.reports.mu.Lock()
 	logged := d.reports.pending

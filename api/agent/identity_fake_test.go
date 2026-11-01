@@ -37,7 +37,6 @@ type fakeControl struct {
 
 	t        *testing.T
 	nodeID   uint32
-	apiKey   string
 	cluster  string
 	serverCA *x509.CertPool
 	address  string
@@ -59,7 +58,6 @@ type fakeControl struct {
 }
 
 type fakeEnroll struct {
-	apiKey     bool
 	credential bool
 	nodeKind   string
 	err        codes.Code
@@ -67,27 +65,25 @@ type fakeEnroll struct {
 
 type fakeRenew struct {
 	serial string
-	apiKey bool
 	err    codes.Code
 }
 
 type fakeStreamAuth struct {
 	certificateSerial string
-	apiKey            bool
 	accepted          bool
 }
 
+// agent_control.mtls modes: off neither asks for the client certificate
+// nor enrolls.
 const (
-	fakeModeOff       = "off"
-	fakeModeOptional  = "optional"
-	fakeModePreferred = "preferred"
-	fakeModeRequired  = "required"
+	fakeModeOff      = "off"
+	fakeModeRequired = "required"
 )
 
 func newFakeControl(t *testing.T, mode string, enrollment bool) *fakeControl {
 	t.Helper()
 	fake := &fakeControl{
-		t: t, nodeID: 12, apiKey: "node-api-key", cluster: "test-cluster", mode: mode,
+		t: t, nodeID: 12, cluster: "test-cluster", mode: mode,
 		lifetime: 7 * 24 * time.Hour, pkiEnabled: true,
 		credentials: map[string]bool{}, revoked: map[string]bool{},
 	}
@@ -188,7 +184,7 @@ func (f *fakeControl) records() (enrolls []fakeEnroll, renews []fakeRenew, strea
 func (f *fakeControl) client(t *testing.T, identity *IdentityConfig) *Client {
 	t.Helper()
 	client, err := NewClient(Config{
-		Target: f.address, NodeID: int(f.nodeID), APIKey: f.apiKey, UseTLS: true, ServerName: "control.test",
+		Target: f.address, NodeID: int(f.nodeID), UseTLS: true, ServerName: "control.test",
 		RootCAs: f.serverCA, AgentVersion: "test-agent", InstanceID: "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
 		Heartbeat:    time.Second, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
@@ -277,7 +273,7 @@ func (f *fakeControl) issue(csrDER []byte) (*agentv1pb.AgentCertificate, error) 
 }
 
 func (f *fakeControl) Enroll(ctx context.Context, request *agentv1pb.EnrollAgentRequest) (*agentv1pb.EnrollAgentResponse, error) {
-	record := fakeEnroll{apiKey: metadataValue(ctx, agentcontrol.MetadataAPIKey) != "", credential: request.EnrollmentCredential != "",
+	record := fakeEnroll{credential: request.EnrollmentCredential != "",
 		nodeKind: metadataValue(ctx, agentcontrol.MetadataNodeKind)}
 	response, err := f.enroll(ctx, request)
 	record.err = status.Code(err)
@@ -297,24 +293,14 @@ func (f *fakeControl) enroll(ctx context.Context, request *agentv1pb.EnrollAgent
 	if metadataValue(ctx, agentcontrol.MetadataNodeID) != strconv.FormatUint(uint64(f.nodeID), 10) {
 		return nil, status.Error(codes.Unauthenticated, "agent enrollment rejected")
 	}
-	if credential := request.EnrollmentCredential; credential != "" {
-		f.mu.Lock()
-		used, known := f.credentials[credential]
-		if known && !used {
-			f.credentials[credential] = true
-		}
-		f.mu.Unlock()
-		if !known || used {
-			return nil, status.Error(codes.Unauthenticated, "agent enrollment rejected")
-		}
-	} else {
-		if mode == fakeModeRequired {
-			_ = grpc.SetTrailer(ctx, metadata.Pairs(agentcontrol.MetadataErrorCode, agentcontrol.ErrorCodeMTLSRequired))
-			return nil, status.Error(codes.Unauthenticated, agentcontrol.ErrorCodeMTLSRequired+": an enrollment credential is required (agent_control.mtls: required)")
-		}
-		if metadataValue(ctx, agentcontrol.MetadataAPIKey) != f.apiKey {
-			return nil, status.Error(codes.Unauthenticated, "agent enrollment rejected")
-		}
+	f.mu.Lock()
+	used, known := f.credentials[request.EnrollmentCredential]
+	if known && !used {
+		f.credentials[request.EnrollmentCredential] = true
+	}
+	f.mu.Unlock()
+	if !known || used {
+		return nil, status.Error(codes.Unauthenticated, "agent enrollment rejected")
 	}
 	certificate, err := f.issue(request.CsrDer)
 	if err != nil {
@@ -324,7 +310,7 @@ func (f *fakeControl) enroll(ctx context.Context, request *agentv1pb.EnrollAgent
 }
 
 func (f *fakeControl) Renew(ctx context.Context, request *agentv1pb.RenewAgentCertificateRequest) (*agentv1pb.RenewAgentCertificateResponse, error) {
-	record := fakeRenew{apiKey: metadataValue(ctx, agentcontrol.MetadataAPIKey) != ""}
+	record := fakeRenew{}
 	response, err := f.renew(ctx, request, &record)
 	record.err = status.Code(err)
 	f.mu.Lock()
@@ -356,7 +342,7 @@ func (f *fakeControl) ControlStream(stream agentv1pb.AgentControlService_Control
 	ctx := stream.Context()
 	f.mu.Lock()
 	index := len(f.streams)
-	f.streams = append(f.streams, fakeStreamAuth{apiKey: metadataValue(ctx, agentcontrol.MetadataAPIKey) != ""})
+	f.streams = append(f.streams, fakeStreamAuth{})
 	f.mu.Unlock()
 	update := func(change func(*fakeStreamAuth)) {
 		f.mu.Lock()
@@ -377,24 +363,7 @@ func (f *fakeControl) ControlStream(stream agentv1pb.AgentControlService_Control
 			return status.Error(codes.Unauthenticated, "x-node-id does not match the client certificate")
 		}
 	} else {
-		f.mu.Lock()
-		mode := f.mode
-		f.mu.Unlock()
-		if mode == fakeModeRequired {
-			stream.SetTrailer(metadata.Pairs(agentcontrol.MetadataErrorCode, agentcontrol.ErrorCodeMTLSRequired,
-				agentcontrol.MetadataAuthDeprecated, "node API key authentication is deprecated"))
-			return status.Error(codes.Unauthenticated, agentcontrol.ErrorCodeMTLSRequired+": an agent client certificate is required (agent_control.mtls: required)")
-		}
-		if metadataValue(ctx, agentcontrol.MetadataAPIKey) != f.apiKey ||
-			metadataValue(ctx, agentcontrol.MetadataNodeID) != strconv.FormatUint(uint64(f.nodeID), 10) {
-			return status.Error(codes.Unauthenticated, "invalid node credentials")
-		}
-		if mode == fakeModePreferred {
-			deprecation := metadata.Pairs(agentcontrol.MetadataAuthDeprecated, "node API key authentication is deprecated")
-			if err := stream.SetHeader(deprecation); err != nil {
-				return err
-			}
-		}
+		return status.Error(codes.Unauthenticated, "an agent client certificate is required")
 	}
 	first, err := stream.Recv()
 	if err != nil {
