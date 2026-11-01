@@ -696,9 +696,17 @@ func (s *server) dial(client anxmgmtpb.ManagementClient, current []*anxmgmtpb.Re
 		if accept.ReverseDial == "" {
 			continue
 		}
-		// Idle 0 is anx-server's default number of idle connections.
-		dials = append(dials, &anxmgmtpb.ReverseDial{DialId: accept.Transport, Addr: accept.ReverseDial, LinkKey: accept.LinkKey,
-			Quic: accept.ReverseQUIC, Faketcp: accept.ReverseFakeTCP})
+		// Idle 0 is anx-server's default number of idle connections (1
+		// for an A2 dial-back).
+		dial := &anxmgmtpb.ReverseDial{DialId: accept.Transport, Addr: accept.ReverseDial, LinkKey: accept.LinkKey,
+			Quic: accept.ReverseQUIC, Faketcp: accept.ReverseFakeTCP}
+		if accept.L2 {
+			// The A2 dial-back (anx ANX-LINE-REVERSE §6.4): the first
+			// server name is the SNI.
+			dial.A2ServerName, _, _ = strings.Cut(accept.ServerName, ",")
+			dial.HubPublic = accept.HubPublic
+		}
+		dials = append(dials, dial)
 	}
 	sort.Slice(dials, func(i, j int) bool { return dials[i].GetDialId() < dials[j].GetDialId() })
 	same := len(dials) == len(current)

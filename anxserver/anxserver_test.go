@@ -271,6 +271,9 @@ func (h *fakeHost) SetReverseDials(_ context.Context, in *anxmgmtpb.SetReverseDi
 		if dial.GetFaketcp() {
 			entry += "+faketcp"
 		}
+		if dial.GetA2ServerName() != "" {
+			entry += "+a2(" + dial.GetA2ServerName() + "," + dial.GetHubPublic() + ")"
+		}
 		h.dials = append(h.dials, entry)
 	}
 	return &anxmgmtpb.SetReverseDialsResponse{Dials: uint32(len(in.GetDials()))}, nil
@@ -560,7 +563,7 @@ func TestAcceptsReverse(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = group([]Accept{{Transport: "t", ReverseDial: "198.51.100.30:24444", TCP: "1.2.3.4:443"}})
-	assert.ErrorContains(t, err, "no listen address and is l1")
+	assert.ErrorContains(t, err, "no listen address")
 	_, err = group([]Accept{{Transport: "t", ReverseDial: "nowhere"}})
 	assert.ErrorContains(t, err, "not host:port")
 
@@ -592,6 +595,46 @@ func TestAcceptsReverse(t *testing.T) {
 	assert.False(t, accepts[1].ReverseFakeTCP)
 	assert.Equal(t, []string{"--sni", "anx-line", "--quic-sockbuf", strconv.Itoa(QUICSocketBuffer),
 		"--quic-dgram-buf", strconv.Itoa(QUICDatagramBuffer)}, accepts[1].listener().args(), "still listens on nothing")
+}
+
+// A reverse l2 transport (anx ANX-LINE-REVERSE §6.4): the egress dials
+// back as the A2 jacket's client, to the rendezvous's server key; a relay
+// hop into a reverse l2 link opens the A2 rendezvous.
+func TestAcceptsReverseL2(t *testing.T) {
+	egress := reversePlan()
+	settings := egress.Transports[0].GetAnxLine()
+	settings.Egress, settings.ServerName, settings.ServerPublic, settings.CarrierOrder = "l2", "www.example.org", "anx1-hub", []string{"c1"}
+	accepts, err := Accepts(egress)
+	require.NoError(t, err)
+	reverse := accepts[1]
+	assert.True(t, reverse.L2)
+	assert.Equal(t, "anx1-hub", reverse.HubPublic)
+	assert.False(t, reverse.ReverseQUIC)
+	assert.Equal(t, []string{"--sni", "www.example.org"}, reverse.listener().args(), "the egress listens on nothing")
+	_, err = group(accepts)
+	require.NoError(t, err)
+	_, err = group([]Accept{{Transport: "t", ReverseDial: "198.51.100.30:24444", L2: true, ServerName: "www.example.org"}})
+	assert.ErrorContains(t, err, "server key")
+
+	host := &fakeHost{}
+	m, _ := newManager(t, host)
+	require.NoError(t, m.Apply(accepts[1:]))
+	applied(t, m, "tr-b")
+	assert.Equal(t, []string{"tr-b=198.51.100.30:24444+a2(www.example.org,anx1-hub)"}, host.reverseDials())
+
+	relay := relayPlan()
+	next := relay.Transports[3].GetAnxLine()
+	next.TcpAddr, next.Egress, next.ServerName = "", "l2", "www.example.org,cdn.example.org"
+	next.Reverse, next.ReverseListen, next.CarrierOrder = true, "0.0.0.0:24444", []string{"c1"}
+	accepts, err = Accepts(relay)
+	require.NoError(t, err)
+	assert.Equal(t, "www.example.org,cdn.example.org", accepts[0].ReverseA2SNI)
+	args := strings.Join(accepts[0].listener().args(), " ")
+	assert.Contains(t, args, "--reverse-a2-listen 0.0.0.0:24444 --reverse-a2-sni www.example.org,cdn.example.org --reverse-a2-dest www.example.org:443")
+	assert.NotContains(t, args, "--reverse-listen")
+	next.ServerName = ""
+	_, err = Accepts(relay)
+	assert.ErrorContains(t, err, "needs a server name")
 }
 
 // The egress process keeps the reverse dials of its accepts, again after a

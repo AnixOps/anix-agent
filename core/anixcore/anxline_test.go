@@ -235,6 +235,27 @@ func TestReverseDialLinks(t *testing.T) {
 	if !line.links["tr-jp"].GetReverse() || core.reverse.Listen != "" {
 		t.Fatalf("links = %v, reverse listen = %q", line.links, core.reverse.Listen)
 	}
+
+	// A reverse l2 link (anx ANX-LINE-REVERSE §6.4) takes the A2
+	// rendezvous, with the link's server names; it cannot share the bare
+	// listener's address.
+	l2 := proto.Clone(plan).(*networkv1.NetworkPlan)
+	l2.Transports[0].GetAnxLine().Egress, l2.Transports[0].GetAnxLine().ServerName = "l2", "www.example.org"
+	links, listen, err = dialLinks(l2)
+	if err != nil || listen != (reverseListener{A2Listen: "0.0.0.0:24444", A2SNI: "www.example.org"}) || links["tr-jp"].GetEgress() != "l2" {
+		t.Fatalf("listen = %+v, err = %v", listen, err)
+	}
+	mixed := proto.Clone(l2).(*networkv1.NetworkPlan)
+	bare := proto.Clone(plan.Transports[0]).(*networkv1.Transport)
+	bare.Id = "tr-kr"
+	mixed.Transports = append(mixed.Transports, bare)
+	if _, _, err := dialLinks(mixed); err == nil || !strings.Contains(err.Error(), "is the A2 one") {
+		t.Fatalf("err = %v", err)
+	}
+	l2.Transports[0].GetAnxLine().ServerName = ""
+	if _, _, err := dialLinks(l2); err == nil || !strings.Contains(err.Error(), "server name") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 // A link whose from egress moves to another uplink is dialed again; the
