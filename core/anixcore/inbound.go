@@ -210,6 +210,10 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node.MaxStreams > 0 {
 			inbound["max_streams"] = node.MaxStreams
 		}
+		// The wg jacket listens on its own UDP port, beside the A2 TCP port.
+		if node.WGListenPort > 0 {
+			inbound["wg_listen_port"] = node.WGListenPort
+		}
 	default:
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}

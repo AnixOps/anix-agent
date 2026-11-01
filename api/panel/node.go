@@ -188,6 +188,9 @@ type AnxNode struct {
 	ShapePlain bool `json:"shape_plain"`
 	// MaxStreams caps the streams of one session; 0 = anx-node's default.
 	MaxStreams int `json:"max_streams"`
+	// WGListenPort is the UDP port of the wg jacket (WireGuard-shaped UDP,
+	// for users dialing a domestic entry); 0 = off.
+	WGListenPort int `json:"wg_listen_port"`
 }
 
 type WireGuardRelay struct {
