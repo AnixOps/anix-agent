@@ -183,7 +183,7 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 			return nil, errors.New("anx node info is missing")
 		}
 		names := node.ServerNames
-		if len(names) == 0 {
+		if len(names) == 0 && !node.AllowNoSNI {
 			return nil, errors.New("anx node needs server names")
 		}
 		key, err := anxKeyFile()
@@ -198,6 +198,17 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		}
 		if len(node.ALPN) > 0 {
 			inbound["alpn"] = node.ALPN
+		}
+		// Only when set: anx-node refuses keys it does not know, so a node
+		// on an older anx-node keeps working until it uses them.
+		if node.AllowNoSNI {
+			inbound["allow_no_sni"] = true
+		}
+		if node.ShapePlain {
+			inbound["shape_plain"] = true
+		}
+		if node.MaxStreams > 0 {
+			inbound["max_streams"] = node.MaxStreams
 		}
 	default:
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)

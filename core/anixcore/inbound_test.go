@@ -301,9 +301,26 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}
 	}
+	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams"} {
+		if _, set := inbound[key]; set {
+			t.Fatalf("anx inbound sets %s while the node leaves it at the default", key)
+		}
+	}
 	info.Anx.ServerNames = nil
 	if _, err := inboundConfig("anx-1", info, &conf.Options{}); err == nil {
 		t.Fatal("an anx node without server names was accepted")
+	}
+
+	// The A2 no-SNI mode needs no server names; shaping and streams pass through.
+	info.Anx.AllowNoSNI, info.Anx.ShapePlain, info.Anx.MaxStreams = true, true, 512
+	inbound, err = inboundConfig("anx-1", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{"allow_no_sni": true, "shape_plain": true, "max_streams": 512} {
+		if !reflect.DeepEqual(inbound[key], want) {
+			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
+		}
 	}
 }
 
