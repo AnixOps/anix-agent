@@ -301,7 +301,7 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}
 	}
-	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams"} {
+	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams", "wg_listen_port"} {
 		if _, set := inbound[key]; set {
 			t.Fatalf("anx inbound sets %s while the node leaves it at the default", key)
 		}
@@ -312,12 +312,12 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 	}
 
 	// The A2 no-SNI mode needs no server names; shaping and streams pass through.
-	info.Anx.AllowNoSNI, info.Anx.ShapePlain, info.Anx.MaxStreams = true, true, 512
+	info.Anx.AllowNoSNI, info.Anx.ShapePlain, info.Anx.MaxStreams, info.Anx.WGListenPort = true, true, 512, 51820
 	inbound, err = inboundConfig("anx-1", info, &conf.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for key, want := range map[string]any{"allow_no_sni": true, "shape_plain": true, "max_streams": 512} {
+	for key, want := range map[string]any{"allow_no_sni": true, "shape_plain": true, "max_streams": 512, "wg_listen_port": 51820} {
 		if !reflect.DeepEqual(inbound[key], want) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}

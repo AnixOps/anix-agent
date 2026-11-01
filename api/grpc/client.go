@@ -900,5 +900,12 @@ func parseAnxNode(common panel.CommonNode, extra map[string]string) (*panel.AnxN
 		}
 		node.MaxStreams = n
 	}
+	if value := strings.TrimSpace(extra["wg_listen_port"]); value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("anx wg_listen_port %q is invalid", value)
+		}
+		node.WGListenPort = n
+	}
 	return node, nil
 }
