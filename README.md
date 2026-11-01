@@ -24,10 +24,10 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 - 可选的官方签名插件 Supervisor（官方插件现只剩 `machine-telemetry`）
 - Linux、Windows 和 macOS 构建
 
-## 5.0.0-rc.26 范围
+## 5.0.0-rc.27 范围
 
-`v5.0.0-rc.26` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
-5.0.0-rc.26 使用同一版本号（H25）。rc.26 起 Agent 把 Control 的流量优先级与按用户分类限速（QoS）下发给 anixcore（`PUT /v1/qos`），ANX 协议支持 A2 无 SNI、整形与最大流数选项和 wg 外衣 UDP 端口（W1，需要 anx-node 0.1.0-alpha.9），旧配置里退役的内核名改用已安装的 anx-node，并认识热修复版本号（`<release>.hf.N`）。rc.25 起双网卡入口按 Control 选定的上联网卡拨出 ANX 中转链路（目标地址策略路由）。rc.24 起 Agent 运行面板反向代理（anixcore `reverse_proxy` 入站，需要 anx-node 0.1.0-alpha.6）。相对 rc.21：Agent 只运行 anixcore（anx-node）与 WireGuard，移除 Xray、sing-box、Hysteria 2 与 nftables 转发（启动时清理遗留的 inet anixops_fwd 表），新增 ANX-A 节点协议、ANX-Line C2/C3 回拨与中转链路 RTT/丢包上报。rc.21 起：老 Agent 装的内核缺 anx-server 时，同版本内核会重新安装（补上 ANX-Line 接收端），网络状态可以携带 anx-server 约 2.5KB 的混合公钥（此前超过 1KB 文本上限，经它的转发一直等待）。rc.20 起网络状态上报本机网卡、地址和默认网关（Control 节点页据此给出网络设置选项）。rc.19 起 anixcore 带 anx-node 时声明 hop 出口（rc.18 升级因此回滚），并支持 ANX-Line 反向回拨。rc.17 起：端口转发上报目标健康状态（ANX 路由的端到端健康、延迟与 DNS 入口切换），装了 anx-node 的 Agent 不再因 anixcore 运行目录只读而启动失败（rc.16 升级因此回滚）。rc.16 起内核升级时一并安装 anx-server（ANX-Line 接收端），跨境 l2 外衣带回落目标（`--dest`），转发 sysctl 的套接字缓冲提到 8 MiB，并认识 dev 构建版本号（`vX.Y.Z-rc.N.dev.M`）。rc.13 起 Xray 把 network 为空的 VMess/VLESS 节点按 tcp 处理（rc.12 升级因此回滚）。rc.12 起 Control 推送的升级会一并安装 AnixOps 自研内核 anx-node（含 ANX，验证 anx 发布签名），未列出内核的节点默认用它作为 anixcore 内核并启用 ANX-Line。rc.12 起 Agent 在 anixcore 上运行设备网络模型（`network.v1`：
+`v5.0.0-rc.27` 提供 AnixOps 官方签名软件包与 Agent 二进制，与 AnixOps Control
+5.0.0-rc.27 使用同一版本号（H25）。rc.27 起 Agent 把 Control 的流量优先级与按用户分类限速（QoS）下发给 anixcore（`PUT /v1/qos`），ANX 协议支持 A2 无 SNI、整形与最大流数选项和 wg 外衣 UDP 端口（W1，需要 anx-node 0.1.0-alpha.9），旧配置里退役的内核名改用已安装的 anx-node，并认识热修复版本号（`<release>.hf.N`）。rc.25 起双网卡入口按 Control 选定的上联网卡拨出 ANX 中转链路（目标地址策略路由）。rc.24 起 Agent 运行面板反向代理（anixcore `reverse_proxy` 入站，需要 anx-node 0.1.0-alpha.6）。相对 rc.21：Agent 只运行 anixcore（anx-node）与 WireGuard，移除 Xray、sing-box、Hysteria 2 与 nftables 转发（启动时清理遗留的 inet anixops_fwd 表），新增 ANX-A 节点协议、ANX-Line C2/C3 回拨与中转链路 RTT/丢包上报。rc.21 起：老 Agent 装的内核缺 anx-server 时，同版本内核会重新安装（补上 ANX-Line 接收端），网络状态可以携带 anx-server 约 2.5KB 的混合公钥（此前超过 1KB 文本上限，经它的转发一直等待）。rc.20 起网络状态上报本机网卡、地址和默认网关（Control 节点页据此给出网络设置选项）。rc.19 起 anixcore 带 anx-node 时声明 hop 出口（rc.18 升级因此回滚），并支持 ANX-Line 反向回拨。rc.17 起：端口转发上报目标健康状态（ANX 路由的端到端健康、延迟与 DNS 入口切换），装了 anx-node 的 Agent 不再因 anixcore 运行目录只读而启动失败（rc.16 升级因此回滚）。rc.16 起内核升级时一并安装 anx-server（ANX-Line 接收端），跨境 l2 外衣带回落目标（`--dest`），转发 sysctl 的套接字缓冲提到 8 MiB，并认识 dev 构建版本号（`vX.Y.Z-rc.N.dev.M`）。rc.13 起 Xray 把 network 为空的 VMess/VLESS 节点按 tcp 处理（rc.12 升级因此回滚）。rc.12 起 Control 推送的升级会一并安装 AnixOps 自研内核 anx-node（含 ANX，验证 anx 发布签名），未列出内核的节点默认用它作为 anixcore 内核并启用 ANX-Line。rc.12 起 Agent 在 anixcore 上运行设备网络模型（`network.v1`：
 ANX 中转线路、端口转发及其策略、出口策略路由），不再带 gost（转发引擎、gost-mesh 与 WireGuard gost
 中转均已移除，升级时自动清理旧的 gost 单元）；装有 anixcore 时优先用它承载节点，不支持的节点逐个回落到
 Xray/sing-box。rc.8 起 anixcore 内核承载 Panabit iWAN
@@ -58,7 +58,7 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.26 发布范围）
+## 历史 v4 Alpha 运行时预览（非 5.0.0-rc.27 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。`nftables-forward`
 与 `nat-egress` 插件已随 nftables 转发引擎一起删除：中转走网络模型（ANX），出口网卡、
@@ -97,7 +97,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v5.0.0-rc.26
+export VERSION=v5.0.0-rc.27
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
