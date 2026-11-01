@@ -181,10 +181,8 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("start nodes: %w", err)
 	}
 	log.Info("Nodes started")
-	xdns := os.Getenv("XRAY_DNS_PATH")
-	sdns := os.Getenv("SING_DNS_PATH")
 	if watch {
-		err = c.Watch(config, xdns, sdns, func() {
+		err = c.Watch(config, func() {
 			migrateLegacyPaths(c)
 			nodes.Close()
 			err = vc.Close()

@@ -66,7 +66,7 @@ print_help() {
     echo "Examples:"
     echo "  $0                      # Build for current platform"
     echo "  $0 -p linux -a amd64    # Build for Linux amd64"
-    echo "  $0 -t \"xray\"           # Build with only xray core"
+    echo "  $0 -t \"anixcore\"       # Build with the given tags"
     echo "  $0 --all                # Build for all platforms"
 }
 
