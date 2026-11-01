@@ -100,6 +100,23 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+	if *pluginRoot != "" {
+		// Plugin releases download from AgentArtifacts, which a session
+		// negotiates as artifacts.v1 of the data plane.
+		if dataPlane == nil {
+			streamDir, err := os.MkdirTemp("", "agent-control-fixture-stream-")
+			if err != nil {
+				fatal(err)
+			}
+			defer func() { _ = os.RemoveAll(streamDir) }()
+			store, err := state.Open(streamDir, agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(*nodeID)}) // #nosec G115 -- node IDs are uint32 on the wire.
+			if err != nil {
+				fatal(err)
+			}
+			dataPlane = &agentapi.DataPlaneConfig{State: store}
+		}
+		dataPlane.Artifacts = true
+	}
 	if dataPlane != nil && *reports {
 		dataPlane.Reports = &agentapi.ReportsConfig{Status: func(context.Context) (*agentv1pb.NodeStatus, error) {
 			return &agentv1pb.NodeStatus{CpuUsagePercent: 1.5, MemoryUsagePercent: 2.5, DiskUsagePercent: 3.5, UptimeSeconds: 60, RuntimeHealthy: true, ObservedAtUnixMs: time.Now().UnixMilli()}, nil
@@ -130,7 +147,7 @@ func main() {
 	if plane := client.DataPlane(); plane != nil {
 		// As a restarted Agent: run the stored snapshot, then take every
 		// later one as it arrives.
-		if persisted := plane.PersistedConfig(); persisted != nil {
+		if persisted := plane.PersistedConfig(); persisted != nil && dataPlane.Config != nil {
 			if err := dataPlane.Config.ApplyConfig(context.Background(), persisted); err != nil {
 				plane.DiscardPersistedConfig()
 			} else {
