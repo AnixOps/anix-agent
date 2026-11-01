@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -14,8 +13,6 @@ import (
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
-	apiclient "github.com/AnixOps/anix-agent/v5/api/client"
-	grpcapi "github.com/AnixOps/anix-agent/v5/api/grpc"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/maintenance"
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -45,28 +42,6 @@ func New() *Node {
 	return &Node{supervisorFactory: plugin.NewSupervisor}
 }
 
-func createAPIClient(apiCfg *conf.ApiConfig) (apiclient.NodeAPI, error) {
-	var (
-		client apiclient.NodeAPI
-		err    error
-	)
-	switch strings.ToLower(strings.TrimSpace(apiCfg.Transport)) {
-	case "", "http", "https", "rest":
-		client, err = panel.New(apiCfg)
-	case "grpc":
-		client, err = grpcapi.NewFromAPIConfig(apiCfg)
-	default:
-		return nil, fmt.Errorf("unsupported api transport %q", apiCfg.Transport)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if apiCfg.NodeType != "" {
-		client.SetNodeType(apiCfg.NodeType)
-	}
-	return client, nil
-}
-
 func initialNodeType(nodeType, coreType string) string {
 	if strings.TrimSpace(nodeType) != "" {
 		return nodeType
@@ -94,155 +69,90 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 		n.supervisorFactory = plugin.NewSupervisor
 	}
 
-	// Phase 1: the API clients (auto-registration may replace a
-	// placeholder node ID), the controllers and the node-scoped
-	// Supervisors. Nothing is pulled from Control yet.
+	// Phase 1: the controllers and the node-scoped Supervisors.
 	//
 	// A node may appear more than once in the configuration (for example
 	// with different protocol/core settings). Only one control stream is
-	// started per final node ID, after all controllers have had a chance
-	// to attach their node-scoped Supervisor.
+	// started per node ID, after all controllers have had a chance to
+	// attach their node-scoped Supervisor.
 	agentNodes := make(map[int]agentNodeStart)
 	agentNodeOrder := make([]int, 0, len(nodes))
 	controllerIdentities := make(map[*Controller]string)
 	for i := range nodes {
-		nodes[i].ApiConfig.NodeType = initialNodeType(nodes[i].ApiConfig.NodeType, nodes[i].Options.Core)
-		client, err := createAPIClient(&nodes[i].ApiConfig)
-		if err != nil {
-			return n.failStart(err)
+		api := &nodes[i].ApiConfig
+		api.NodeType = initialNodeType(api.NodeType, nodes[i].Options.Core)
+		nodeID := api.NodeID
+		if nodeID <= 0 {
+			return n.failStart(fmt.Errorf("node %d: NodeID (or AgentNode proxy-<id>) is required", i))
 		}
-		n.controllers[i] = NewController(core, client, &nodes[i].Options)
-		n.controllers[i].nodeType = nodes[i].ApiConfig.NodeType
-		nodeID := client.GetNodeID()
-		// Auto-registration may replace the configured zero/placeholder ID.
-		// Keep the in-memory configuration aligned with the credential that the
-		// controller and its Supervisor now use.
-		nodes[i].ApiConfig.NodeID = nodeID
-		nodes[i].ApiConfig.Key = client.GetAPIKey()
-		identity := nodeControlIdentity(nodes[i].ApiConfig)
+		n.controllers[i] = NewController(core, nodeID, api.APIHost, &nodes[i].Options)
+		n.controllers[i].nodeType = api.NodeType
+		identity := nodeControlIdentity(*api)
 		controllerIdentities[n.controllers[i]] = identity
 		var supervisor *plugin.Supervisor
-		if nodes[i].ApiConfig.PluginSupervisorEnabled {
-			supervisor, err = n.supervisorForNode(nodeID, nodes[i].ApiConfig)
+		if api.PluginSupervisorEnabled {
+			var err error
+			supervisor, err = n.supervisorForNode(nodeID, *api)
 			if err != nil {
 				return n.failStart(err)
 			}
 			n.controllers[i].SetPluginSupervisor(supervisor)
 		}
-		if nodes[i].ApiConfig.AgentControlEnabled {
-			candidate := agentNodeStart{
-				apiConfig:  nodes[i].ApiConfig,
-				controller: n.controllers[i],
-				supervisor: supervisor,
-				identity:   identity,
+		candidate := agentNodeStart{
+			apiConfig:  *api,
+			controller: n.controllers[i],
+			supervisor: supervisor,
+			identity:   identity,
+		}
+		// Prefer the duplicate configuration that has the Supervisor so the
+		// single stream advertises plugin capabilities whenever any duplicate
+		// opts into the official runtime.
+		if previous, ok := agentNodes[nodeID]; ok {
+			if previous.identity != candidate.identity {
+				return n.failStart(fmt.Errorf("node %d has multiple Agent control endpoints; refusing to share Supervisor state", nodeID))
 			}
-			// Prefer the duplicate configuration that has the Supervisor so the
-			// single stream advertises plugin capabilities whenever any duplicate
-			// opts into the official runtime.
-			if previous, ok := agentNodes[nodeID]; ok {
-				if previous.identity != candidate.identity {
-					return n.failStart(fmt.Errorf("node %d has multiple Agent control endpoints; refusing to share Supervisor state", nodeID))
-				}
-				if previous.supervisor == nil && supervisor != nil {
-					agentNodes[nodeID] = candidate
-				}
-			} else {
+			if previous.supervisor == nil && supervisor != nil {
 				agentNodes[nodeID] = candidate
-				agentNodeOrder = append(agentNodeOrder, nodeID)
 			}
+		} else {
+			agentNodes[nodeID] = candidate
+			agentNodeOrder = append(agentNodeOrder, nodeID)
 		}
 	}
 
-	// Phase 2: the control streams whose data plane is on start first and
-	// bring their controllers up from the stream (or from the stored
-	// snapshot), so a node whose configuration Control serves on the
-	// stream never pulls it over a legacy transport.
-	type pendingClient struct {
-		nodeID int
-		client *agentapi.Client
-	}
-	var operationsOnly []pendingClient
+	// Phase 2: one control stream per node, which brings its controllers
+	// up from Control's snapshot (or from the stored one).
 	networkClaimed := false
 	for _, nodeID := range agentNodeOrder {
 		candidate := agentNodes[nodeID]
 		if candidate.supervisor == nil {
-			// A duplicate entry may opt into AgentControl while another entry for
-			// the same physical node opts into the Supervisor.  Bind the stream to
-			// the controller that owns the node-scoped runtime instead of silently
-			// advertising a plugin-less handler.
+			// A duplicate entry may run without the Supervisor while another
+			// entry for the same physical node opts into it. Bind the stream
+			// to the controller that owns the node-scoped runtime instead of
+			// silently advertising a plugin-less handler.
 			if controller := findNodeSupervisorController(n.controllers, controllerIdentities, nodeID, candidate.identity); controller != nil {
 				candidate.controller = controller
 				candidate.supervisor = controller.pluginSupervisor
 			}
 		}
-		var dataPlane *nodeDataPlane
-		if dataPlaneEnabled(candidate.apiConfig) {
-			dataPlane = newNodeDataPlane(nodeID, nodeControllers(n.controllers, controllerIdentities, nodeID, candidate.identity))
-			if n.forward != nil && nodeID == n.forwardNodeID {
-				dataPlane.forward = n.forward
-			}
-			if !networkClaimed {
-				// The core runs one plan: the first node with a data
-				// plane drives it.
-				dataPlane.network = newNetworkComponent(nodeID, core)
-				networkClaimed = dataPlane.network != nil
-			}
-			dataPlane.streamOnly = strings.TrimSpace(candidate.apiConfig.Key) == ""
+		dataPlane := newNodeDataPlane(nodeID, nodeControllers(n.controllers, controllerIdentities, nodeID, candidate.identity))
+		if n.forward != nil && nodeID == n.forwardNodeID {
+			dataPlane.forward = n.forward
 		}
-		agentClient, agentErr := newAgentControlClientForSupervisor(&candidate.apiConfig, candidate.controller, core, candidate.supervisor, dataPlane)
-		if agentErr != nil {
-			if dataPlane != nil {
-				dataPlane.detach()
-			}
-			logAgentControlUnavailable(nodeID, agentErr)
-			continue
+		if !networkClaimed {
+			// The core runs one plan: the first node drives it.
+			dataPlane.network = newNetworkComponent(nodeID, core)
+			networkClaimed = dataPlane.network != nil
 		}
-		if dataPlane == nil {
-			operationsOnly = append(operationsOnly, pendingClient{nodeID: nodeID, client: agentClient})
-			continue
+		agentClient, err := newAgentControlClientForSupervisor(&candidate.apiConfig, candidate.controller, core, candidate.supervisor, dataPlane)
+		if err != nil {
+			return n.failStart(fmt.Errorf("node %d: Agent control stream: %w", nodeID, err))
 		}
 		n.agentClients = append(n.agentClients, agentClient)
 		n.dataPlanes = append(n.dataPlanes, dataPlane)
 		if err := dataPlane.start(context.Background()); err != nil {
 			return n.failStart(err)
 		}
-	}
-
-	// Phase 3: every other controller on the legacy transports.
-	for i, controller := range n.controllers {
-		if controller.isStarted() {
-			continue
-		}
-		if controller.stream != nil && controller.stream.waitingForStream() {
-			// A stream-only node starts from its stream (nodeDataPlane.awaitStream).
-			continue
-		}
-		if err := controller.Start(); err != nil {
-			startErr := fmt.Errorf("start node controller [%s-%d] error: %s",
-				nodes[i].ApiConfig.APIHost,
-				nodes[i].ApiConfig.NodeID,
-				err)
-			return n.failStart(startErr)
-		}
-	}
-	for _, controller := range n.controllers {
-		if controller.pluginSupervisor == nil {
-			continue
-		}
-		if err := controller.attachMaintenanceTransport(controller.pluginSupervisor); err != nil {
-			return n.failStart(err)
-		}
-	}
-
-	// The operations-only streams start after their controllers, as
-	// before the data plane: their operations act on running nodes.
-	for _, pending := range operationsOnly {
-		if agentErr := pending.client.Start(); agentErr != nil {
-			_ = pending.client.Close()
-			logAgentControlUnavailable(pending.nodeID, agentErr)
-			continue
-		}
-		n.agentClients = append(n.agentClients, pending.client)
 	}
 	return nil
 }
@@ -252,7 +162,7 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 func nodeControllers(controllers []*Controller, identities map[*Controller]string, nodeID int, identity string) []*Controller {
 	var result []*Controller
 	for _, controller := range controllers {
-		if controller != nil && controller.apiClient.GetNodeID() == nodeID && identities[controller] == identity {
+		if controller != nil && controller.nodeID == nodeID && identities[controller] == identity {
 			result = append(result, controller)
 		}
 	}
@@ -261,7 +171,7 @@ func nodeControllers(controllers []*Controller, identities map[*Controller]strin
 
 func findNodeSupervisorController(controllers []*Controller, identities map[*Controller]string, nodeID int, identity string) *Controller {
 	for _, controller := range controllers {
-		if controller != nil && controller.apiClient.GetNodeID() == nodeID &&
+		if controller != nil && controller.nodeID == nodeID &&
 			identities[controller] == identity && controller.pluginSupervisor != nil {
 			return controller
 		}
@@ -277,9 +187,7 @@ func (n *Node) Close() {
 	}
 }
 
-// failStart releases every resource created before a startup error.  In
-// particular, a Supervisor must never outlive a controller whose final node
-// ID could not be established.
+// failStart releases every resource created before a startup error.
 func (n *Node) failStart(startErr error) error {
 	return errors.Join(startErr, n.closeResources())
 }
@@ -346,15 +254,13 @@ func countPluginSupervisorNodes(nodes []conf.NodeConfig) int {
 		if !api.PluginSupervisorEnabled {
 			continue
 		}
-		identity := fmt.Sprintf("%s|node=%d|credential=%s|name=%s",
-			nodeControlIdentity(api), api.NodeID, strings.TrimSpace(api.CredentialFile), strings.TrimSpace(api.NodeName))
+		identity := fmt.Sprintf("%s|node=%d", nodeControlIdentity(api), api.NodeID)
 		identities[identity] = struct{}{}
 	}
 	return len(identities)
 }
 
-// supervisorForNode creates (or reuses) the Supervisor for the final panel
-// node ID.  Base paths from configuration are deliberately namespaced below
+// supervisorForNode creates (or reuses) the Supervisor for the node ID.  Base paths from configuration are deliberately namespaced below
 // nodes/<id>; this makes state, installed artifacts, and Unix sockets
 // impossible to collide across nodes in one Agent process.
 func (n *Node) supervisorForNode(nodeID int, api conf.ApiConfig) (*plugin.Supervisor, error) {
@@ -469,8 +375,7 @@ func pluginSupervisorSpecForNodeMode(nodeID int, api conf.ApiConfig, allowLegacy
 func nodeControlIdentity(api conf.ApiConfig) string {
 	apiHost := strings.ToLower(strings.TrimRight(strings.TrimSpace(api.APIHost), "/"))
 	grpcHost := strings.ToLower(strings.TrimSpace(api.GRPCHost))
-	keyDigest := sha256.Sum256([]byte(strings.TrimSpace(api.Key)))
-	return fmt.Sprintf("%s|%s|%s|%t|%x", apiHost, grpcHost, strings.TrimSpace(api.GRPCServerName), api.GRPCUseTLS, keyDigest[:])
+	return fmt.Sprintf("%s|%s|%s|%t", apiHost, grpcHost, strings.TrimSpace(api.GRPCServerName), api.GRPCUseTLS)
 }
 
 // rejectLegacyPluginSupervisorLayout prevents a namespace rollout from

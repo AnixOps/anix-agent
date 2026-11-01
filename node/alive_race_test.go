@@ -33,9 +33,9 @@ func startingController(t *testing.T, name string, core *gateCore) (*Controller,
 	t.Helper()
 	limiter.Init()
 	controller := &Controller{
-		apiClient: &errorTestNodeAPI{alive: map[int]int{}},
-		server:    core,
-		Options:   &conf.Options{Name: name},
+		nodeID: 1, apiHost: "https://control.test",
+		server:  core,
+		Options: &conf.Options{Name: name},
 	}
 	t.Cleanup(func() { _ = controller.Close() })
 	info := vlessNode(443)

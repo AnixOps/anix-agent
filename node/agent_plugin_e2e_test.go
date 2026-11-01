@@ -320,7 +320,7 @@ func TestAgentClientControllerSupervisorMachineTelemetryE2E(t *testing.T) {
 	require.NoError(t, err)
 
 	controller := &Controller{
-		apiClient: &errorTestNodeAPI{}, server: &errorTestCore{}, Options: &conf.Options{}, pluginSupervisor: supervisor,
+		nodeID: 1, apiHost: "https://control.test", server: &errorTestCore{}, Options: &conf.Options{}, pluginSupervisor: supervisor,
 	}
 	var handlerCalls atomic.Int32
 	control := newE2EControlServer(gate)

@@ -1,50 +1,16 @@
 package node
 
 import (
-	"context"
 	"errors"
-	"strings"
 	"testing"
 
-	apiclient "github.com/AnixOps/anix-agent/v5/api/client"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
-	"github.com/AnixOps/anix-agent/v5/common/monitor"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/limiter"
-	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 
-var _ apiclient.NodeAPI = (*errorTestNodeAPI)(nil)
 var _ vCore.Core = (*errorTestCore)(nil)
-
-type errorTestNodeAPI struct {
-	node     *panel.NodeInfo
-	users    []panel.UserInfo
-	alive    map[int]int
-	nodeErr  error
-	usersErr error
-	aliveErr error
-	nodeType string
-}
-
-func (f *errorTestNodeAPI) GetNodeInfo() (*panel.NodeInfo, error)         { return f.node, f.nodeErr }
-func (f *errorTestNodeAPI) GetUserList() ([]panel.UserInfo, error)        { return f.users, f.usersErr }
-func (f *errorTestNodeAPI) GetUserAlive() (map[int]int, error)            { return f.alive, f.aliveErr }
-func (f *errorTestNodeAPI) ReportUserTraffic([]panel.UserTraffic) error   { return nil }
-func (f *errorTestNodeAPI) ReportNodeOnlineUsers(*map[int][]string) error { return nil }
-func (f *errorTestNodeAPI) ReportNodeStatus(*monitor.SystemInfo, int, int64, int64) error {
-	return nil
-}
-func (f *errorTestNodeAPI) ReportNodeLogs([]panel.NodeLogEntry) error { return nil }
-func (f *errorTestNodeAPI) GetNodeID() int                            { return 1 }
-func (f *errorTestNodeAPI) GetAPIHost() string                        { return "http://127.0.0.1" }
-func (f *errorTestNodeAPI) GetAPIKey() string                         { return "test-key" }
-func (f *errorTestNodeAPI) GetSecret() string                         { return "" }
-func (f *errorTestNodeAPI) IsSignEnabled() bool                       { return false }
-func (f *errorTestNodeAPI) SetNodeType(nodeType string)               { f.nodeType = nodeType }
-func (f *errorTestNodeAPI) SupportsSync() bool                        { return false }
-func (f *errorTestNodeAPI) Close() error                              { return nil }
 
 type errorTestCore struct {
 	addNodeErr   error
@@ -70,58 +36,19 @@ func (f *errorTestCore) DelUsers([]panel.UserInfo, string, *panel.NodeInfo) erro
 func (f *errorTestCore) Protocols() []string { return nil }
 func (f *errorTestCore) Type() string        { return "test" }
 
-func TestNodeInfoMonitorReturnsFetchErrors(t *testing.T) {
-	nodeErr := errors.New("node fetch failed")
-	usersErr := errors.New("users fetch failed")
-	aliveErr := errors.New("alive fetch failed")
-
-	tests := []struct {
-		name string
-		api  *errorTestNodeAPI
-		want error
-	}{
-		{name: "node info", api: &errorTestNodeAPI{nodeErr: nodeErr}, want: nodeErr},
-		{name: "user list", api: &errorTestNodeAPI{usersErr: usersErr}, want: usersErr},
-		{name: "alive list", api: &errorTestNodeAPI{aliveErr: aliveErr}, want: aliveErr},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			controller := &Controller{
-				apiClient: tt.api,
-				server:    &errorTestCore{},
-				Options:   &conf.Options{},
-			}
-			if err := controller.nodeInfoMonitor(); !errors.Is(err, tt.want) {
-				t.Fatalf("nodeInfoMonitor() error = %v, want wrapping %v", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestControllerEarlyStartFailureClosesWithoutDeletingMissingCoreNode(t *testing.T) {
-	fetchErr := errors.New("node fetch failed")
-	controller := &Controller{
-		apiClient: &errorTestNodeAPI{nodeErr: fetchErr},
-		server:    &errorTestCore{delNodeErr: errors.New("DelNode must not run")},
-		Options:   &conf.Options{},
-	}
-
-	if err := controller.Start(); err == nil || !strings.Contains(err.Error(), fetchErr.Error()) {
-		t.Fatalf("Controller.Start() error = %v, want containing %v", err, fetchErr)
-	}
-	if err := controller.Close(); err != nil {
-		t.Fatalf("Controller.Close() after early failure = %v, want nil", err)
-	}
+// reconcile runs one reconciliation, as a snapshot or a user delta does.
+func reconcile(controller *Controller, newN *panel.NodeInfo, newU []panel.UserInfo) error {
+	controller.reconcileMu.Lock()
+	defer controller.reconcileMu.Unlock()
+	return controller.reconcileLocked(newN, newU, nil)
 }
 
 func TestControllerReloadFailureDoesNotDeleteMissingCoreNodeTwice(t *testing.T) {
 	limiter.Init()
 	addErr := errors.New("replacement add failed")
 	core := &errorTestCore{addNodeErr: addErr}
-	api := &errorTestNodeAPI{node: &panel.NodeInfo{Id: 1, Type: "vless"}, alive: map[int]int{}}
 	controller := &Controller{
-		apiClient: api,
+		nodeID: 1, apiHost: "https://control.test",
 		server:    core,
 		tag:       "fixed-tag",
 		Options:   &conf.Options{Name: "fixed-tag"},
@@ -132,9 +59,9 @@ func TestControllerReloadFailureDoesNotDeleteMissingCoreNodeTwice(t *testing.T) 
 	controller.limiter = limiter.AddLimiter(controller.tag, &controller.LimitConfig, controller.userList, controller.aliveMap)
 	controller.limiterAdded = true
 
-	err := controller.reloadNode(&panel.NodeInfo{Id: 1, Type: "vless"})
+	err := reconcile(controller, &panel.NodeInfo{Id: 1, Type: "vless"}, nil)
 	if !errors.Is(err, addErr) {
-		t.Fatalf("reloadNode() error = %v, want %v", err, addErr)
+		t.Fatalf("reconcile() error = %v, want %v", err, addErr)
 	}
 	if core.delNodeCalls != 1 {
 		t.Fatalf("DelNode calls after reload failure = %d, want 1", core.delNodeCalls)
@@ -147,30 +74,26 @@ func TestControllerReloadFailureDoesNotDeleteMissingCoreNodeTwice(t *testing.T) 
 	}
 }
 
-func TestNodeInfoMonitorReturnsDeleteErrorWithoutPanic(t *testing.T) {
+func TestReconcileReturnsDeleteErrorWithoutPanic(t *testing.T) {
 	delErr := errors.New("delete failed")
 	controller := &Controller{
-		apiClient: &errorTestNodeAPI{
-			node:  &panel.NodeInfo{Id: 1, Type: "vless"},
-			alive: map[int]int{},
-		},
+		nodeID: 1, apiHost: "https://control.test",
 		server:    &errorTestCore{delNodeErr: delErr},
 		tag:       "test-node",
 		Options:   &conf.Options{},
 		nodeAdded: true,
+		info:      &panel.NodeInfo{Id: 1, Type: "vmess"},
 	}
 
-	if err := controller.nodeInfoMonitor(); !errors.Is(err, delErr) {
-		t.Fatalf("nodeInfoMonitor() error = %v, want wrapping %v", err, delErr)
+	if err := reconcile(controller, &panel.NodeInfo{Id: 1, Type: "vless"}, nil); !errors.Is(err, delErr) {
+		t.Fatalf("reconcile() error = %v, want wrapping %v", err, delErr)
 	}
 }
 
-func TestNodeInfoMonitorReturnsDeleteUsersError(t *testing.T) {
+func TestReconcileReturnsDeleteUsersError(t *testing.T) {
 	delErr := errors.New("delete users failed")
 	controller := &Controller{
-		apiClient: &errorTestNodeAPI{
-			users: []panel.UserInfo{},
-		},
+		nodeID: 1, apiHost: "https://control.test",
 		server:   &errorTestCore{delUsersErr: delErr},
 		tag:      "test-node",
 		info:     &panel.NodeInfo{Id: 1, Type: "vless"},
@@ -178,24 +101,7 @@ func TestNodeInfoMonitorReturnsDeleteUsersError(t *testing.T) {
 		Options:  &conf.Options{},
 	}
 
-	if err := controller.nodeInfoMonitor(); !errors.Is(err, delErr) {
-		t.Fatalf("nodeInfoMonitor() error = %v, want wrapping %v", err, delErr)
-	}
-}
-
-func TestAgentReloadOperationReportsReconcileFailure(t *testing.T) {
-	fetchErr := errors.New("control reload fetch failed")
-	controller := &Controller{
-		apiClient: &errorTestNodeAPI{nodeErr: fetchErr},
-		server:    &errorTestCore{},
-		Options:   &conf.Options{},
-	}
-	controller.started.Store(true)
-
-	_, err := controller.handleAgentOperation(context.Background(), &agentv1pb.DesiredOperation{
-		Kind: "node.reload",
-	})
-	if !errors.Is(err, fetchErr) {
-		t.Fatalf("handleAgentOperation() error = %v, want wrapping %v", err, fetchErr)
+	if err := reconcile(controller, nil, []panel.UserInfo{}); !errors.Is(err, delErr) {
+		t.Fatalf("reconcile() error = %v, want wrapping %v", err, delErr)
 	}
 }

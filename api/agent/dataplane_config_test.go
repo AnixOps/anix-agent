@@ -84,7 +84,7 @@ func newDataPlaneClient(t *testing.T, control *agenttest.Control, root string, a
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.control", Version: "v1"}},
 		Heartbeat:    time.Second, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond,
 		DialTimeout: 2 * time.Second,
-		DataPlane:   &agentapi.DataPlaneConfig{State: openState(t, root), Config: applier, LegacyGrace: grace},
+		DataPlane:   &agentapi.DataPlaneConfig{State: openState(t, root), Config: applier, PendingGrace: grace},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
@@ -312,7 +312,7 @@ func TestDataPlaneWithoutConfigServedKeepsTheLegacyTransport(t *testing.T) {
 	require.NoError(t, client.Start())
 	session := waitSession(t, client)
 	assert.False(t, session.Has(agentcontrol.CapabilityConfig))
-	assert.Equal(t, agentapi.DataPlaneLegacy, client.DataPlane().Mode(agentcontrol.CapabilityConfig))
+	assert.Equal(t, agentapi.DataPlaneOff, client.DataPlane().Mode(agentcontrol.CapabilityConfig))
 	assert.False(t, client.Negotiated(agentcontrol.CapabilityConfig))
 	hellos := control.Hellos()
 	require.Len(t, hellos, 1)
@@ -331,7 +331,7 @@ func TestDataPlaneModeIsPendingWithinTheGraceAndLegacyAfter(t *testing.T) {
 	control.DropSessions()
 	require.Eventually(t, func() bool { return !client.IsConnected() }, 5*time.Second, 5*time.Millisecond)
 	assert.Equal(t, agentapi.DataPlanePending, plane.Mode(agentcontrol.CapabilityConfig))
-	require.Eventually(t, func() bool { return plane.Mode(agentcontrol.CapabilityConfig) == agentapi.DataPlaneLegacy }, 5*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return plane.Mode(agentcontrol.CapabilityConfig) == agentapi.DataPlaneOff }, 5*time.Second, 20*time.Millisecond)
 }
 
 func TestDataPlaneStartsPendingAfterARestartWhenTheLastSessionCarriedConfig(t *testing.T) {
@@ -351,7 +351,7 @@ func TestDataPlaneStartsPendingAfterARestartWhenTheLastSessionCarriedConfig(t *t
 		DataPlane: &agentapi.DataPlaneConfig{State: openState(t, root), Config: &recordingApplier{}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, agentapi.DataPlaneLegacy, other.DataPlane().Mode(agentcontrol.CapabilityConfig))
+	assert.Equal(t, agentapi.DataPlaneOff, other.DataPlane().Mode(agentcontrol.CapabilityConfig))
 	assert.Nil(t, other.DataPlane().PersistedConfig())
 }
 

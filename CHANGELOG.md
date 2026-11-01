@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Removed
+
+- Every legacy transport: the UniProxy REST client (`api/panel` keeps only
+  the configuration and user types), the v2board gRPC client (`api/grpc`,
+  its proto and generated code), the WebSocket sync manager, node
+  auto-registration and its stored credentials, request signing and the API
+  debug dump. A proxy node runs only on the mTLS Agent control stream: its
+  configuration, users, alive list, reports and maintenance events ride the
+  stream's data plane, and plugin releases download only from
+  AgentArtifacts. Control has served nothing else since 5.0.0-rc.28.
+- The node settings of those transports: `ApiKey`, `Transport`, `Timeout`,
+  `ApiSendIP`, `AutoRegister`, `AuthKey`, `NodeName`, `NodeHost`, `NodePort`,
+  `CredentialFile`, `HeartbeatInterval`, `EnableSign`, `EncryptCredential`,
+  `EnableDebug`, `DebugOutputDir`, `AgentControlEnabled`,
+  `AgentStream.DataPlane` and `Options.SyncConfig`. Configurations that still
+  carry them load; the fields are ignored. Every proxy node needs TLS and an
+  enrollment credential or an enrolled identity.
+- `anix-agent server -r/--re-register`.
+- Hysteria (v1) node configurations.
+- The examples `config.grpc.json`, `config_auto_register.json`,
+  `config_realtime_sync.json` and `config_test_local.json`, and the UniProxy
+  and WebSocket API documents. The init-config wizard writes the same
+  credential-only configuration as Control's installer.
+
+### Changed
+
+- The node reads the configuration snapshot's `runtime` answers, and
+  `legacy_pull` only when a Control does not send `runtime` yet.
+- A node whose Control does not serve `config.v1` and `users.v1` on the
+  stream no longer starts on a legacy pull: the start fails and names the
+  Control upgrade. A stream that is not up within the startup wait starts the
+  node in the background once it is.
+- Reports stay in the spool while the stream is down, however long; the
+  data-plane mode after the grace period is now called `off`.
+
 ## 5.0.0-rc.28 - 2026-11-01
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.28 and

@@ -217,7 +217,7 @@ func TestFreshSingleNodeSupervisorStartsNamespaced(t *testing.T) {
 
 func TestCountPluginSupervisorNodesDeduplicatesSameConfiguredNode(t *testing.T) {
 	api := conf.ApiConfig{
-		APIHost: "https://panel.example", NodeID: 7, Key: "node-key",
+		APIHost: "https://panel.example", NodeID: 7,
 		PluginSupervisorEnabled: true,
 	}
 	if got := countPluginSupervisorNodes([]conf.NodeConfig{{ApiConfig: api}, {ApiConfig: api}}); got != 1 {
@@ -275,14 +275,14 @@ func TestNodePluginSupervisorRejectsSameNodeIDFromDifferentControls(t *testing.T
 	root := t.TempDir()
 	n := New()
 	_, err = n.supervisorForNode(1, conf.ApiConfig{
-		APIHost: "https://panel-a.example", Key: "node-key-a", PluginRoot: root,
+		APIHost: "https://panel-a.example", PluginRoot: root,
 		PluginOfficialPublicKey: key, PluginSupervisorEnabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = n.supervisorForNode(1, conf.ApiConfig{
-		APIHost: "https://panel-b.example", Key: "node-key-b", PluginRoot: root,
+		APIHost: "https://panel-b.example", PluginRoot: root,
 		PluginOfficialPublicKey: key, PluginSupervisorEnabled: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), "conflicting plugin-supervisor configuration") {
@@ -294,8 +294,8 @@ func TestNodePluginSupervisorRejectsSameNodeIDFromDifferentControls(t *testing.T
 }
 
 func TestFindNodeSupervisorControllerRequiresControlIdentity(t *testing.T) {
-	first := &Controller{apiClient: &errorTestNodeAPI{}, pluginSupervisor: &plugin.Supervisor{}}
-	second := &Controller{apiClient: &errorTestNodeAPI{}, pluginSupervisor: &plugin.Supervisor{}}
+	first := &Controller{nodeID: 1, apiHost: "https://control.test", pluginSupervisor: &plugin.Supervisor{}}
+	second := &Controller{nodeID: 1, apiHost: "https://control.test", pluginSupervisor: &plugin.Supervisor{}}
 	identities := map[*Controller]string{first: "panel-a", second: "panel-b"}
 	controllers := []*Controller{first, second}
 	if got := findNodeSupervisorController(controllers, identities, 1, "panel-a"); got != first {

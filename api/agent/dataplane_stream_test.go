@@ -277,7 +277,7 @@ func TestMaintenanceStaysInTheOutboxWhenControlDoesNotServeIt(t *testing.T) {
 	startUsersClient(t, client)
 	assert.True(t, agentcontrol.HasCapabilityVersion(control.Hellos()[0].Capabilities, agentcontrol.CapabilityMaintenance, "v1"), "advertised")
 	assert.False(t, client.Negotiated(agentcontrol.CapabilityMaintenance))
-	assert.Equal(t, DataPlaneLegacy, client.DataPlane().Mode(agentcontrol.CapabilityMaintenance))
+	assert.Equal(t, DataPlaneOff, client.DataPlane().Mode(agentcontrol.CapabilityMaintenance))
 	time.Sleep(300 * time.Millisecond)
 	assert.Empty(t, control.MaintenanceBatches(), "never sent unnegotiated")
 	assert.Equal(t, []string{"event-1"}, outbox.pending())

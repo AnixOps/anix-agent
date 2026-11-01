@@ -283,7 +283,7 @@ func TestDestinationReportsWaitForAControlThatServesThem(t *testing.T) {
 	client := newDestinationsClient(t, control, root)
 	startUsersClient(t, client)
 	plane := client.DataPlane()
-	assert.Equal(t, DataPlaneLegacy, plane.Mode(agentcontrol.CapabilityDestinations))
+	assert.Equal(t, DataPlaneOff, plane.Mode(agentcontrol.CapabilityDestinations))
 
 	// Spooled directly (the node only submits in stream mode): it is not
 	// sent on a session without destinations.v1, and traffic still is.

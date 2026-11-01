@@ -65,24 +65,24 @@ func forwardNode(cfg *conf.ForwardConfig, nodes []conf.NodeConfig) (agentcontrol
 		var candidates []int
 		seen := map[int]bool{}
 		for _, n := range nodes {
-			if dataPlaneEnabled(n.ApiConfig) && n.ApiConfig.NodeID > 0 && !seen[n.ApiConfig.NodeID] {
+			if n.ApiConfig.NodeID > 0 && !seen[n.ApiConfig.NodeID] {
 				seen[n.ApiConfig.NodeID] = true
 				candidates = append(candidates, n.ApiConfig.NodeID)
 			}
 		}
 		if len(candidates) != 1 {
-			return agentcontrol.AgentNode{}, 0, fmt.Errorf("forwarding on a proxy node needs Forward.ProxyNodeID: %d nodes carry the stream data plane", len(candidates))
+			return agentcontrol.AgentNode{}, 0, fmt.Errorf("forwarding on a proxy node needs Forward.ProxyNodeID: %d proxy nodes are configured", len(candidates))
 		}
 		id = candidates[0]
 	}
 	found := false
 	for _, n := range nodes {
-		if n.ApiConfig.NodeID == id && dataPlaneEnabled(n.ApiConfig) {
+		if n.ApiConfig.NodeID == id {
 			found = true
 		}
 	}
 	if !found {
-		return agentcontrol.AgentNode{}, 0, fmt.Errorf("forwarding needs proxy node %d with AgentControlEnabled and the stream data plane", id)
+		return agentcontrol.AgentNode{}, 0, fmt.Errorf("forwarding needs proxy node %d, which is not configured", id)
 	}
 	return agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(id)}, id, nil // #nosec G115 -- node IDs are uint32 on the wire
 }
@@ -118,7 +118,7 @@ func StartForward(cfg *conf.ForwardConfig, component *forward.Component) (*forwa
 		Component: component,
 		Upgrader:  upgrade.Shared(panel.Version),
 		Client: agentapi.Config{
-			Target: target, NodeID: api.NodeID, APIKey: api.Key, UseTLS: true, ServerName: serverName,
+			Target: target, NodeID: api.NodeID, UseTLS: true, ServerName: serverName,
 			AgentVersion: panel.Version, InstanceID: agentapi.InstanceID(hostname, "forward-"+strconv.Itoa(api.NodeID)),
 			KeepaliveTime: time.Duration(api.GRPCKeepalive) * time.Second, RootCAs: agentControlRootCAs,
 			Labels: map[string]string{"node_kind": agentcontrol.NodeKindForward},

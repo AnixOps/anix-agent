@@ -138,7 +138,7 @@ name. Keep the two nodes' WSS paths identical.
 
 ### 用户列表扩展字段
 
-WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户带上：
+WireGuard 节点的用户（控制流 `UserDelta` 的 `extra_json`）必须带上：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -717,33 +717,17 @@ xray x25519
 
 ## 用户配置
 
-### 用户信息接口
-
-**请求**: `GET /api/v2/server/UniProxy/user`
-
-**响应**:
-
-```json
-{
-  "users": [
-    {
-      "id": 1,
-      "uuid": "550e8400-e29b-41d4-a716-446655440000",
-      "speed_limit": 0,
-      "device_limit": 3
-    }
-  ]
-}
-```
-
 ### 用户字段
+
+用户由控制流的 `UserDelta`（`users.v1`）下发，每个 `NodeUser`：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `id` | int | ✅ | 用户 ID |
+| `user_id` | uint64 | ✅ | 用户 ID |
 | `uuid` | string | ✅ | 用户 UUID (用于认证) |
-| `speed_limit` | int | ❌ | 速度限制 (字节/秒)，0 = 无限制 |
-| `device_limit` | int | ❌ | 设备限制，0 = 无限制 |
+| `speed_limit_mbps` | uint32 | ❌ | 速度限制 (Mbps)，0 = 无限制 |
+| `device_limit` | uint32 | ❌ | 设备限制，0 = 无限制 |
+| `extra_json` | bytes | ❌ | 协议附加字段（如 WireGuard peer） |
 
 ### 协议用户映射
 
@@ -840,10 +824,9 @@ xray x25519
   - [ ] `server_key` 非空
   - [ ] `server_key` 是正确长度的 base64 编码密钥
 
-### 用户接口
+### 用户
 
-- [ ] `users` 数组格式正确
-- [ ] 每个用户包含 `id` 和 `uuid`
+- [ ] 每个用户包含 `user_id` 和 `uuid`
 - [ ] `uuid` 是有效的 UUID 格式
 
 ---

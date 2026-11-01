@@ -181,8 +181,8 @@ func TestJoinStoresTheIdentityAndPrintsJSON(t *testing.T) {
 	// `anix-agent identity --json` with the configuration the installer
 	// writes next.
 	config := filepath.Join(f.dir, "config.json")
-	document := `{"Cores": [], "Nodes": [{"ApiHost": "` + testControlURL + `", "Transport": "grpc", "GRPCHost": "` + f.control.Address + `",
-		"GRPCUseTLS": true, "AgentControlEnabled": true, "AgentNode": "` + output.Node + `",
+	document := `{"Cores": [], "Nodes": [{"ApiHost": "` + testControlURL + `", "GRPCHost": "` + f.control.Address + `",
+		"GRPCUseTLS": true, "AgentNode": "` + output.Node + `",
 		"AgentIdentity": {"Enroll": "auto", "CertDir": "` + f.pkiDir + `"}}]}`
 	require.NoError(t, os.WriteFile(config, []byte(document), 0o600))
 	useConfig(t, config)

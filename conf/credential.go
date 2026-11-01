@@ -9,17 +9,11 @@ import (
 	"strings"
 )
 
-// Credential-only proxy nodes (the O1 installer's configuration): a node
-// with no ApiKey authenticates to Control with its client certificate only.
+// A proxy node authenticates to Control with its client certificate only.
 // It enrolls with a one-time credential (AgentIdentity.EnrollCredentialFile)
 // or already holds an enrolled identity, and its configuration, users and
 // reports go over the stream's data plane (AgentStream); the cores are
 // configured from the stream's configuration (core.NewForConfig).
-
-// KeyLess tells whether the node has no API key and does not register one.
-func (a ApiConfig) KeyLess() bool {
-	return strings.TrimSpace(a.Key) == "" && !a.AutoRegister
-}
 
 // UsesTLS tells whether the control stream runs over TLS.
 func (a ApiConfig) UsesTLS() bool {
@@ -40,22 +34,10 @@ func (a ApiConfig) IdentityEnrolled() bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// StreamCredentialOnly tells whether the node is credential-only and can
-// run: no ApiKey, the control stream with its data plane, over TLS, and an
-// enrollment credential or an enrolled identity.
-func (a ApiConfig) StreamCredentialOnly() bool {
-	return a.KeyLess() && a.validateKeyLess() == nil
-}
-
-// validateKeyLess checks what a node without an ApiKey needs.
-func (a ApiConfig) validateKeyLess() error {
+// validateCredentials checks what a node needs to reach Control: TLS, and
+// an enrollment credential or an enrolled identity.
+func (a ApiConfig) validateCredentials() error {
 	var problems []string
-	if !a.AgentControlEnabled {
-		problems = append(problems, "AgentControlEnabled must be true")
-	}
-	if a.AgentStream.DataPlaneMode() != AgentStreamDataPlaneAuto {
-		problems = append(problems, `AgentStream.DataPlane must be "auto"`)
-	}
 	if !a.UsesTLS() {
 		problems = append(problems, "the control stream must use TLS (GRPCUseTLS or an https ApiHost): the client certificate is the only credential")
 	}
@@ -73,21 +55,16 @@ func (a ApiConfig) validateKeyLess() error {
 	return nil
 }
 
-// validateNodeCredentials checks every proxy node that speaks to Control
-// without an ApiKey (AgentNode set or AgentControlEnabled): it needs the
-// stream's data plane over TLS and an enrollment credential or an enrolled
-// identity. Older configurations with an ApiKey are not affected.
+// validateNodeCredentials checks every proxy node: a NodeID, the stream over
+// TLS, and an enrollment credential or an enrolled identity.
 func (p *Conf) validateNodeCredentials() error {
 	for i := range p.NodeConfig {
 		api := p.NodeConfig[i].ApiConfig
-		if !api.KeyLess() || (strings.TrimSpace(api.AgentNode) == "" && !api.AgentControlEnabled) {
-			continue
-		}
 		if api.NodeID <= 0 {
-			return fmt.Errorf("node %d: a node without ApiKey needs NodeID (or AgentNode proxy-<id>)", i)
+			return fmt.Errorf("node %d: NodeID (or AgentNode proxy-<id>) is required", i)
 		}
-		if err := api.validateKeyLess(); err != nil {
-			return fmt.Errorf("node %d has no ApiKey, so it authenticates with its agent identity only: %w", i, err)
+		if err := api.validateCredentials(); err != nil {
+			return fmt.Errorf("node %d authenticates with its agent identity: %w", i, err)
 		}
 	}
 	return nil

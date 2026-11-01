@@ -1,8 +1,6 @@
 package panel
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -36,7 +34,6 @@ type NodeInfo struct {
 	Trojan      *TrojanNode
 	Tuic        *TuicNode
 	AnyTls      *AnyTlsNode
-	Hysteria    *HysteriaNode
 	Hysteria2   *Hysteria2Node
 	WireGuard   *WireGuardNode
 	Iwan        *IwanNode
@@ -126,13 +123,6 @@ type TuicNode struct {
 type AnyTlsNode struct {
 	CommonNode
 	PaddingScheme []string `json:"padding_scheme,omitempty"`
-}
-
-type HysteriaNode struct {
-	CommonNode
-	UpMbps   int    `json:"up_mbps"`
-	DownMbps int    `json:"down_mbps"`
-	Obfs     string `json:"obfs"`
 }
 
 type Hysteria2Node struct {
@@ -256,74 +246,9 @@ type Rules struct {
 	Protocol []string
 }
 
-func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
-	const path = "/api/v2/server/UniProxy/config"
-	r, err := c.client.
-		R().
-		SetHeader("If-None-Match", c.nodeEtag).
-		ForceContentType("application/json").
-		Get(path)
-
-	if r.StatusCode() == 304 {
-		return nil, nil
-	}
-	hash := sha256.Sum256(r.Body())
-	newBodyHash := hex.EncodeToString(hash[:])
-	if c.responseBodyHash == newBodyHash {
-		return nil, nil
-	}
-	c.responseBodyHash = newBodyHash
-	c.nodeEtag = r.Header().Get("ETag")
-	if err = c.checkResponse(r, path, err); err != nil {
-		return nil, err
-	}
-
-	if r != nil {
-		defer func() {
-			if r.RawBody() != nil {
-				r.RawBody().Close()
-			}
-		}()
-	} else {
-		return nil, fmt.Errorf("received nil response")
-	}
-
-	// 调试: 保存原始响应
-	if c.Debugger != nil && c.Debugger.IsEnabled() {
-		if err := c.Debugger.DumpNodeConfig(r.Body(), c.NodeId); err != nil {
-			log.WithError(err).Warn("Failed to dump node config")
-		}
-	}
-
-	// 调试：打印原始响应内容
-	log.WithField("response", string(r.Body())).Debug("Raw node config response")
-
-	node, nodeCategory, err := ParseNodeInfo(r.Body(), c.NodeId)
-	if err != nil {
-		return nil, err
-	}
-
-	// 更新客户端状态
-	c.NodeType = nodeCategory
-	c.ProtocolType = node.Type
-
-	// 更新全局查询参数，确保后续请求带上 node_type
-	c.client.SetQueryParam("node_type", c.NodeType)
-
-	// 调试: 保存解析后的节点信息
-	if c.Debugger != nil && c.Debugger.IsEnabled() {
-		if err := c.Debugger.DumpParsedNodeInfo(node, c.NodeId); err != nil {
-			log.WithError(err).Warn("Failed to dump parsed node info")
-		}
-	}
-
-	return node, nil
-}
-
-// ParseNodeInfo parses a UniProxy node configuration answer: the body of
-// GET /api/v2/server/UniProxy/config, or one entry of a configuration
-// snapshot's legacy_pull (the same document, delivered on the Agent
-// control stream). nodeCategory is the node_type the answer names.
+// ParseNodeInfo parses a node configuration answer: one entry of a
+// configuration snapshot's runtime answers, delivered on the Agent control
+// stream. nodeCategory is the node_type the answer names.
 func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string, err error) {
 	// 先解析基础信息获取节点类型
 	var baseInfo struct {
@@ -429,15 +354,6 @@ func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string
 		}
 		cm = &rsp.CommonNode
 		node.AnyTls = rsp
-		node.Security = Tls
-	case "hysteria":
-		rsp := &HysteriaNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode hysteria params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.Hysteria = rsp
 		node.Security = Tls
 	case "hysteria2":
 		rsp := &Hysteria2Node{}

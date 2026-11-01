@@ -3,51 +3,29 @@
     "Level": "info",
     "Output": ""
   },
-  "Cores": [
-    {
-      "Type": "anixcore",
-      "Log": {
-        "Level": "info",
-        "Timestamp": true
-      },
-      "NTP": {
-        "Enable": false,
-        "Server": "time.apple.com",
-        "ServerPort": 0
-      },
-      "OriginalPath": "/etc/anixops/agent/sing_origin.json"
-    }
-  ],
+  "Cores": [],
   "Nodes": [
     {
-      "Core": "anixcore",
-      "ApiHost": "http://127.0.0.1",
-      "Transport": "http",
-      "AgentControlEnabled": true,
-      "AgentControlAllowInsecure": false,
+      "ApiHost": "https://control.example.com",
+      "GRPCHost": "control.example.com:50051",
+      "GRPCUseTLS": true,
       "PluginSupervisorEnabled": true,
       "PluginRoot": "/var/lib/anixops-agent/plugins",
       "PluginSocketDir": "/run/anixops-agent/plugins",
       "PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
-      "ApiKey": "your-api-key",
+      "AgentNode": "proxy-33",
       "NodeID": 33,
-      "Timeout": 30,
+      "AgentIdentity": {
+        "Enroll": "auto",
+        "CertDir": "/var/lib/anixops-agent/pki",
+        "EnrollCredentialFile": "/var/lib/anixops-agent/enroll.credential"
+      },
+      "AgentStream": {"StateDir": "/var/lib/anixops-agent/stream"},
       "ListenIP": "0.0.0.0",
       "SendIP": "0.0.0.0",
       "DeviceOnlineMinTraffic": 200,
-      "MinReportTraffic": 0,
-      "TCPFastOpen": false,
-      "SniffEnabled": true,
       "CertConfig": {
-        "CertMode": "self",
-        "RejectUnknownSni": false,
-        "CertDomain": "example.com",
-        "CertFile": "/etc/anixops/agent/fullchain.cer",
-        "KeyFile": "/etc/anixops/agent/cert.key",
-        "Provider": "cloudflare",
-        "DNSEnv": {
-          "EnvName": "env1"
-        }
+        "CertMode": "self"
       }
     }
   ]

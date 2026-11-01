@@ -18,7 +18,7 @@ func TestIdentityForwardNode(t *testing.T) {
 	dir := t.TempDir()
 	certDir := filepath.Join(dir, "pki")
 	path := filepath.Join(dir, "config.json")
-	document := `{"Cores": [], "Nodes": [{"GRPCHost": "control.anixops.net:50051", "GRPCUseTLS": true, "AgentControlEnabled": true,
+	document := `{"Cores": [], "Nodes": [{"GRPCHost": "control.anixops.net:50051", "GRPCUseTLS": true,
 		"AgentNode": "forward-41", "AgentIdentity": {"Enroll": "auto", "CertDir": "` + certDir + `", "EnrollCredentialFile": "/var/lib/anixops-agent/enroll.credential"}}]}`
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)

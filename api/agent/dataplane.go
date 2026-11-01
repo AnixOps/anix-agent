@@ -18,30 +18,27 @@ import (
 // The data plane of the control stream (PROTOCOL.md, "Data plane";
 // node-ops-service.md 5.5 and 5.7). With a DataPlaneConfig the client
 // advertises the capabilities it has handlers for and carries the node's
-// configuration (config.v1) on the stream in place of UniProxy, the v2board
-// gRPC services and the WebSocket.
+// configuration (config.v1), users and reports on the stream.
 //
-// What a capability's data rides on is its DataPlaneMode:
+// Whether a capability's data rides on the stream is its DataPlaneMode:
 //
 //   - stream: the current session negotiated it;
 //   - pending: a session negotiated it (or the last one before a restart
-//     did) and the stream has been down for less than LegacyGrace; the
-//     legacy transports stay off;
-//   - legacy: Control does not serve it on the current session, or the
-//     stream has been down for longer than LegacyGrace, or never
+//     did) and the stream has been down for less than PendingGrace;
+//   - off: Control does not serve it on the current session, or the
+//     stream has been down for longer than PendingGrace, or never
 //     negotiated it.
 
-// DataPlaneMode says which transport carries a data-plane capability's data.
+// DataPlaneMode says whether the stream carries a data-plane capability.
 type DataPlaneMode int
 
 const (
-	// DataPlaneLegacy: the legacy transports (UniProxy, v2board gRPC,
-	// WebSocket) carry the data.
-	DataPlaneLegacy DataPlaneMode = iota
+	// DataPlaneOff: the stream does not carry the capability.
+	DataPlaneOff DataPlaneMode = iota
 	// DataPlaneStream: the current session negotiated the capability.
 	DataPlaneStream
 	// DataPlanePending: the stream carried the capability and is down for
-	// less than the grace period; the legacy transports stay off.
+	// less than the grace period.
 	DataPlanePending
 )
 
@@ -52,13 +49,13 @@ func (m DataPlaneMode) String() string {
 	case DataPlanePending:
 		return "pending"
 	default:
-		return "legacy"
+		return "off"
 	}
 }
 
-// DefaultLegacyGrace is how long the legacy transports stay off after the
-// stream that carried a capability went down (node-ops-service.md 5.5).
-const DefaultLegacyGrace = 5 * time.Minute
+// DefaultPendingGrace is how long a capability counts as pending after the
+// stream that carried it went down (node-ops-service.md 5.5).
+const DefaultPendingGrace = 5 * time.Minute
 
 // ConfigFormatNodeConfigV1 is the ConfigSnapshot format this Agent applies
 // (PROTOCOL.md, "Configuration").
@@ -153,8 +150,8 @@ type DataPlaneConfig struct {
 	// "Agent upgrades"). It adds no payload; set it only when that handler
 	// runs and the updater is installed (package upgrade, Available).
 	Upgrade bool
-	// LegacyGrace defaults to DefaultLegacyGrace.
-	LegacyGrace time.Duration
+	// PendingGrace defaults to DefaultPendingGrace.
+	PendingGrace time.Duration
 	// Now defaults to time.Now (tests).
 	Now func() time.Time
 }
@@ -274,8 +271,8 @@ func newDataPlane(client *Client, config DataPlaneConfig) (*DataPlane, error) {
 	if config.Network != nil && config.Config == nil {
 		return nil, errors.New("agent data plane: network.v1 needs a ConfigApplier: the device's plan rides in config.v1")
 	}
-	if config.LegacyGrace <= 0 {
-		config.LegacyGrace = DefaultLegacyGrace
+	if config.PendingGrace <= 0 {
+		config.PendingGrace = DefaultPendingGrace
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -479,12 +476,12 @@ func (d *DataPlane) modeLocked(capability string) DataPlaneMode {
 		if d.session.Has(capability) {
 			return DataPlaneStream
 		}
-		return DataPlaneLegacy
+		return DataPlaneOff
 	}
-	if until, ok := d.streamUntil[capability]; ok && d.now().Sub(until) < d.config.LegacyGrace {
+	if until, ok := d.streamUntil[capability]; ok && d.now().Sub(until) < d.config.PendingGrace {
 		return DataPlanePending
 	}
-	return DataPlaneLegacy
+	return DataPlaneOff
 }
 
 // WaitSession waits for a session with Control and returns it.

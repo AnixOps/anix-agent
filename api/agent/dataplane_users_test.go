@@ -238,7 +238,7 @@ func TestUsersNotServedStayOnTheLegacyTransport(t *testing.T) {
 	users := &recordingUsers{}
 	client := newUsersClient(t, control, t.TempDir(), users)
 	startUsersClient(t, client)
-	assert.Equal(t, DataPlaneLegacy, client.DataPlane().Mode(agentcontrol.CapabilityUsers))
+	assert.Equal(t, DataPlaneOff, client.DataPlane().Mode(agentcontrol.CapabilityUsers))
 	assert.Equal(t, DataPlaneStream, client.DataPlane().Mode(agentcontrol.CapabilityConfig))
 	_, count := users.last()
 	assert.Zero(t, count)

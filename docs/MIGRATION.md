@@ -39,10 +39,10 @@ encrypted registration credentials.
 Do not overwrite the current configuration with the wizard until field mapping
 is complete. Compare a separate copy with `../example/config.json` and check:
 
-- `ApiHost`, `ApiKey`, `NodeID`, and `NodeType`
+- `ApiHost`, `GRPCHost`, `NodeID` (or `AgentNode`), `NodeType`, and
+  `AgentIdentity` (the node enrolls; there is no `ApiKey`)
 - Core type and core-specific settings
-- HTTP versus legacy gRPC data-plane fields, plus `AgentControlEnabled`,
-  `GRPCHost`, and Agent Control TLS settings
+- Agent Control TLS settings (`GRPCUseTLS`, `GRPCServerName`)
 - Certificates, DNS provider environment, and file ownership
 - Traffic thresholds, device/online settings, and send/listen IPs
 - Custom inbound/outbound, DNS, route, and geo data paths

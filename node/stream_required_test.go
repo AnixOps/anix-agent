@@ -8,16 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/api/agent/agenttest"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/maintenance"
@@ -86,14 +82,12 @@ func observedPhase(control *agenttest.Control, operationID string) (agentv1pb.Ob
 	return phase, message
 }
 
-// TestEnrolledAgentUnderRequiredNeedsNoLegacyPath runs an enrolled Agent
+// TestEnrolledAgentRunsTheWholeDataPlaneOnTheStream runs an enrolled Agent
 // with the plugin supervisor against a Control in agent_control.mtls:
 // required that serves the whole data plane: configuration, users, reports,
 // the maintenance outbox, the alive list and a plugin install all ride the
-// mTLS stream (and AgentArtifacts), and the legacy side sees not one
-// request: no UniProxy, no node or agent WebSocket (also none for the
-// maintenance outbox), no HTTP plugin download.
-func TestEnrolledAgentUnderRequiredNeedsNoLegacyPath(t *testing.T) {
+// mTLS stream (and AgentArtifacts).
+func TestEnrolledAgentRunsTheWholeDataPlaneOnTheStream(t *testing.T) {
 	previousInterval := streamMaintenanceInterval
 	streamMaintenanceInterval = 100 * time.Millisecond
 	t.Cleanup(func() { streamMaintenanceInterval = previousInterval })
@@ -168,16 +162,7 @@ func TestEnrolledAgentUnderRequiredNeedsNoLegacyPath(t *testing.T) {
 	fixture.core.setWindow([]panel.UserTraffic{{UID: 1, Upload: 10, Download: 20}}, []panel.OnlineUser{{UID: 1, IP: "198.51.100.9"}})
 	require.NoError(t, controller.reportUserTrafficTask())
 	require.Eventually(t, func() bool { return len(control.Batches()) >= 1 && len(control.NodeStatuses()) >= 1 }, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, controller.nodeInfoMonitor())
 
-	// Not one legacy request: no UniProxy, no /api/v2/node/ws or
-	// /api/v2/agent/ws (maintenance included), no
-	// /api/v3/agent/plugin-releases download, no heartbeat or runtime
-	// health route.
-	assert.Empty(t, fixture.legacy.requests())
-	controller.syncMu.Lock()
-	assert.Nil(t, controller.syncManager, "no WebSocket, not even for maintenance")
-	controller.syncMu.Unlock()
 	for _, stream := range control.Streams() {
 		assert.False(t, stream.APIKey, "never the node API key")
 	}
@@ -212,7 +197,7 @@ func TestRuntimeHealthChangeSendsAStatusWithTheSystemUsage(t *testing.T) {
 	// The runtime fails between two system samples (the status interval is
 	// a minute): a NodeStatus goes out at once, with the usage too.
 	core.healthy.Store(false)
-	require.NoError(t, controller.nodeInfoMonitor())
+	controller.reportRuntimeHealth()
 	require.Eventually(t, func() bool { return len(fixture.control.NodeStatuses()) == 2 }, 5*time.Second, 10*time.Millisecond)
 	status := fixture.control.NodeStatuses()[1]
 	assert.False(t, status.RuntimeHealthy)
@@ -221,118 +206,7 @@ func TestRuntimeHealthChangeSendsAStatusWithTheSystemUsage(t *testing.T) {
 	assert.Positive(t, status.UptimeSeconds+1)
 
 	// No change: nothing more before the interval.
-	require.NoError(t, controller.nodeInfoMonitor())
+	controller.reportRuntimeHealth()
 	time.Sleep(300 * time.Millisecond)
 	assert.Len(t, fixture.control.NodeStatuses(), 2)
-	assert.Empty(t, fixture.legacy.requests())
-}
-
-func TestMaintenanceWebSocketStopsWhenALaterSessionNegotiatesMaintenance(t *testing.T) {
-	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
-	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
-	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	config := fixture.nodeConfig(t)
-	config.ApiConfig.PluginSupervisorEnabled = true
-	config.ApiConfig.PluginRoot = filepath.Join(t.TempDir(), "plugins")
-	config.ApiConfig.PluginOfficialPublicKey = base64.StdEncoding.EncodeToString(publicKey)
-	node := fixture.start(t, config)
-	controller := node.controllers[0]
-	controller.syncMu.Lock()
-	running := controller.syncManager
-	controller.syncMu.Unlock()
-	require.NotNil(t, running, "Control without maintenance.v1: the maintenance WebSocket runs")
-	assert.True(t, running.config.MaintenanceOnly)
-
-	fixture.control.Serve(agentcontrol.CapabilityMaintenance, true)
-	fixture.control.DropSessions()
-	client := controller.stream.client
-	require.Eventually(t, func() bool { return client.Negotiated(agentcontrol.CapabilityMaintenance) }, 5*time.Second, 10*time.Millisecond)
-	// Negotiated turns true when the client records the session; the data
-	// plane's mode, which retireLegacySync reads, follows a moment later.
-	// The monitor is called once (its periodic run is a PullInterval away),
-	// so it must not run before the controller sees maintenance.v1.
-	require.Eventually(t, controller.streamCarriesMaintenance, 5*time.Second, 10*time.Millisecond)
-	require.NoError(t, controller.nodeInfoMonitor())
-	require.Eventually(t, func() bool {
-		controller.syncMu.Lock()
-		defer controller.syncMu.Unlock()
-		return controller.syncManager == nil
-	}, 5*time.Second, 10*time.Millisecond)
-}
-
-// An enrolled Agent whose Control predates AgentArtifacts (4.1.x, the
-// v4.2 upgrade runs the new Agent first) installs plugins over the HTTP
-// download with the node API key; a Control that refuses the key there
-// (agent_mtls_required) is named in the failure.
-func TestEnrolledAgentWithoutArtifactsFallsBackToTheHTTPDownload(t *testing.T) {
-	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
-	control := fixture.control
-	control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
-	release := newSignedRelease(t, "wireguard", "4.0.0", []byte("plugin release over HTTP"))
-	var refuse atomic.Bool
-	var keys []string
-	var keysMu sync.Mutex
-	fixture.legacy.mu.Lock()
-	fixture.legacy.extra = func(w http.ResponseWriter, r *http.Request) bool {
-		prefix := "/api/v3/agent/plugin-releases/wireguard/4.0.0/"
-		if !strings.HasPrefix(r.URL.Path, prefix) {
-			return false
-		}
-		keysMu.Lock()
-		keys = append(keys, r.Header.Get("X-API-Key"))
-		keysMu.Unlock()
-		if refuse.Load() {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"code":"agent_mtls_required"}`))
-			return true
-		}
-		if strings.HasSuffix(r.URL.Path, "/manifest") {
-			_, _ = w.Write(release.release.Manifest)
-		} else {
-			_, _ = w.Write(release.release.Artifact)
-		}
-		return true
-	}
-	fixture.legacy.mu.Unlock()
-	config := fixture.nodeConfig(t)
-	config.ApiConfig.PluginSupervisorEnabled = true
-	config.ApiConfig.PluginRoot = filepath.Join(t.TempDir(), "plugins")
-	config.ApiConfig.PluginOfficialPublicKey = base64.StdEncoding.EncodeToString(release.publicKey)
-	node := fixture.start(t, config)
-	controller := node.controllers[0]
-	client := controller.stream.client
-	require.Eventually(t, func() bool { return client.IsConnected() }, 5*time.Second, 10*time.Millisecond)
-	require.True(t, client.TransportStatus().Identity.Enrolled)
-	require.False(t, client.Negotiated(agentcontrol.CapabilityArtifacts))
-	assert.Equal(t, agentapi.PluginDownloadHTTP, client.PluginDownload())
-
-	install := func() (agentv1pb.ObservedPhase, string) {
-		operationID := control.SendOperation("plugin.install", func(sessionID, operationID string, revision uint64) []byte {
-			return e2eOperationEnvelope(operationID, operationID, sessionID, revision, "wireguard", "4.0.0", release.installConfig())
-		})
-		require.Eventually(t, func() bool {
-			phase, _ := observedPhase(control, operationID)
-			return phase == agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED || phase == agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED
-		}, 10*time.Second, 20*time.Millisecond)
-		return observedPhase(control, operationID)
-	}
-
-	// A Control that refuses the key names agent_mtls_required.
-	refuse.Store(true)
-	phase, message := install()
-	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED, phase)
-	assert.Contains(t, message, "agent_mtls_required")
-
-	// A 4.1.x Control serves the HTTP download with the key.
-	refuse.Store(false)
-	phase, message = install()
-	require.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED, phase, message)
-	assert.Empty(t, control.ArtifactCalls())
-	keysMu.Lock()
-	defer keysMu.Unlock()
-	require.NotEmpty(t, keys)
-	for _, key := range keys {
-		assert.Equal(t, control.APIKey, key)
-	}
 }

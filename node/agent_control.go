@@ -13,7 +13,6 @@ import (
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
-	"github.com/AnixOps/anix-agent/v5/api/agent/pki"
 	"github.com/AnixOps/anix-agent/v5/api/agent/state"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -25,11 +24,10 @@ import (
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
-	log "github.com/sirupsen/logrus"
 )
 
 // newAgentControlClientForSupervisor binds the control stream to the
-// node-scoped Supervisor selected after registration.  The pointer is kept in
+// node-scoped Supervisor. The pointer is kept in
 // the controller's operation handler as well, so a duplicate configuration
 // for another node can never route plugin operations through a shared runtime.
 func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *Controller, core vCore.Core, supervisor *plugin.Supervisor, dataPlane *nodeDataPlane) (*agentapi.Client, error) {
@@ -42,48 +40,41 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	if apiConfig == nil || controller == nil {
 		return nil, fmt.Errorf("agent control node configuration is missing")
 	}
-	nodeID := controller.apiClient.GetNodeID()
-	apiKey := controller.apiClient.GetAPIKey()
+	nodeID := controller.nodeID
 	if nodeID <= 0 {
-		return nil, fmt.Errorf("agent control requires registered node credentials")
+		return nil, fmt.Errorf("agent control requires the node ID")
 	}
 	target, useTLS, serverName, err := resolveAgentControlTarget(apiConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	identity, err := agentControlIdentity(apiConfig, nodeID, useTLS)
+	if !useTLS {
+		// The client certificate is the only credential (an enrollment
+		// credential, then the enrolled identity), and it needs TLS.
+		return nil, fmt.Errorf("agent control needs TLS (GRPCUseTLS or an https ApiHost): the agent identity is the node's only credential")
+	}
+	identity, err := agentControlIdentity(apiConfig)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(apiKey) == "" && identity == nil {
-		// Without an API key the client certificate is the only
-		// credential (the O1 installer's configuration: an enrollment
-		// credential, then the enrolled identity), and it needs TLS.
-		return nil, fmt.Errorf("agent control requires registered node credentials: an ApiKey, or an agent identity over TLS")
+	if dataPlane == nil {
+		return nil, fmt.Errorf("agent control node %d has no data plane", nodeID)
 	}
-
-	var dataPlaneConfig *agentapi.DataPlaneConfig
-	if dataPlane != nil {
-		dataPlaneConfig, err = agentControlDataPlane(apiConfig, nodeID, target, dataPlane)
-		if err != nil {
-			return nil, err
-		}
+	dataPlaneConfig, err := agentControlDataPlane(apiConfig, nodeID, target, dataPlane)
+	if err != nil {
+		return nil, err
 	}
 
 	// Control-pushed upgrades (upgrade.v1): listed only when the
 	// privileged updater is installed.
 	controller.upgrader = agentUpgrader()
-	if dataPlaneConfig != nil && controller.upgrader != nil {
+	if controller.upgrader != nil {
 		dataPlaneConfig.Upgrade = controller.upgrader.Available(context.Background())
 	}
 
 	capabilities := agentCapabilities(core, supervisor != nil)
-	var forwardComponent *forward.Component
-	if dataPlane != nil {
-		forwardComponent = dataPlane.forward
-	}
-	controller.diagnostics = proxyNodeDiagnostics(forwardComponent)
+	controller.diagnostics = proxyNodeDiagnostics(dataPlane.forward)
 	capabilities = append(capabilities, forward.DiagnosticCapabilities(capabilities)...)
 	// The proxy node probes Reality targets from its own network.
 	capabilities = append(capabilities, &agentv1pb.Capability{Name: realityprobe.Capability, Version: agentcontrol.CapabilityVersionV1})
@@ -93,7 +84,6 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	client, err := agentapi.NewClient(agentapi.Config{
 		Target:       target,
 		NodeID:       nodeID,
-		APIKey:       apiKey,
 		UseTLS:       useTLS,
 		ServerName:   serverName,
 		Identity:     identity,
@@ -103,7 +93,6 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		Labels: map[string]string{
 			"core":      core.Type(),
 			"node_type": apiConfig.NodeType,
-			"transport": apiConfig.Transport,
 		},
 		KeepaliveTime: keepaliveTime,
 		RootCAs:       agentControlRootCAs,
@@ -126,14 +115,12 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	if err != nil {
 		return nil, err
 	}
-	if dataPlane != nil {
-		dataPlane.client = client
-		if dataPlane.forward != nil {
-			attachForward(dataPlane.forward, client)
-		}
-		if dataPlane.network != nil {
-			dataPlane.network.attach(client)
-		}
+	dataPlane.client = client
+	if dataPlane.forward != nil {
+		attachForward(dataPlane.forward, client)
+	}
+	if dataPlane.network != nil {
+		dataPlane.network.attach(client)
 	}
 	controller.agentClient = client
 	return client, nil
@@ -166,18 +153,8 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 	if err != nil {
 		return nil, err
 	}
-	if apiConfig.ForceReRegister {
-		if err := store.DiscardConfig(); err != nil {
-			log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the stored configuration snapshot on re-registration")
-		}
-	}
-	if apiConfig.ForceReRegister {
-		if err := store.DiscardUsers(); err != nil {
-			log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the stored user set on re-registration")
-		}
-	}
 	config := &agentapi.DataPlaneConfig{
-		State: store, Control: target, Config: dataPlane, Users: dataPlane, Alive: dataPlane, LegacyGrace: streamLegacyGrace,
+		State: store, Control: target, Config: dataPlane, Users: dataPlane, Alive: dataPlane, PendingGrace: streamPendingGrace,
 		Reports: &agentapi.ReportsConfig{
 			TrafficMaxBytes: settings.SpoolBytes(), LogsMaxBytes: settings.LogSpoolBytes(), MaxAge: settings.SpoolMaxAge(),
 			Status: dataPlane.nodeStatus,
@@ -208,12 +185,6 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 	return config, nil
 }
 
-// dataPlaneEnabled tells whether the node's data rides the control stream
-// when Control serves it.
-func dataPlaneEnabled(apiConfig conf.ApiConfig) bool {
-	return apiConfig.AgentControlEnabled && apiConfig.AgentStream.DataPlaneMode() == conf.AgentStreamDataPlaneAuto
-}
-
 // agentUpgrader answers the process's agent.upgrade handler (tests
 // replace it; nil turns upgrades off).
 var agentUpgrader = func() *upgrade.Agent { return upgrade.Shared(panel.Version) }
@@ -231,30 +202,11 @@ func (c *Controller) admitAgentOperation(operation *agentv1pb.DesiredOperation) 
 // system roots. Tests point it at their in-process Control's CA.
 var agentControlRootCAs *x509.CertPool
 
-// agentControlIdentity is the stream's mTLS identity configuration (AG-2),
-// nil when the stream is not on TLS: a client certificate needs TLS, and an
-// enrollment must never send the node API key in the clear. A forced
-// re-registration drops the stored identity, as it drops the node
-// credentials.
-func agentControlIdentity(apiConfig *conf.ApiConfig, nodeID int, useTLS bool) (*agentapi.IdentityConfig, error) {
+// agentControlIdentity is the stream's mTLS identity configuration (AG-2).
+func agentControlIdentity(apiConfig *conf.ApiConfig) (*agentapi.IdentityConfig, error) {
 	settings := apiConfig.AgentIdentity
 	if err := settings.Validate(); err != nil {
 		return nil, err
-	}
-	if !useTLS {
-		log.WithFields(log.Fields{"component": "agent-identity", "node_id": nodeID}).
-			Warn("Agent control stream is not on TLS; the Agent cannot enroll or present a client certificate and authenticates with the node API key. Control 4.2 (agent_control.mtls: required) refuses it")
-		return nil, nil
-	}
-	if apiConfig.ForceReRegister && nodeID > 0 {
-		store, err := pki.NewStore(settings.Dir(), agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: uint32(nodeID)}) // #nosec G115 -- node IDs are uint32 on the wire.
-		if err == nil {
-			if err := store.Discard(); err != nil {
-				log.WithError(err).WithField("dir", store.Dir()).Warn("Could not remove the agent identity on re-registration")
-			} else {
-				log.WithField("dir", store.Dir()).Info("Force re-register: removed the stored agent identity")
-			}
-		}
 	}
 	return &agentapi.IdentityConfig{
 		Dir:                  settings.Dir(),
@@ -419,22 +371,19 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 		return c.diagnostics.Handle(ctx, operation)
 	case "agent.ping":
 		return json.Marshal(map[string]any{
-			"node_id": c.apiClient.GetNodeID(),
+			"node_id": c.nodeID,
 			"tag":     c.tag,
 			"time":    time.Now().UnixMilli(),
 		})
 	case "node.reload", "users.reload":
 		if !c.isStarted() {
-			return nil, fmt.Errorf("node %d is still starting", c.apiClient.GetNodeID())
+			return nil, fmt.Errorf("node %d is still starting", c.nodeID)
 		}
-		// While the stream carries the configuration (config.v1), a
-		// reload re-pulls nothing over the legacy transport: Control
-		// pushes snapshots instead (nodeInfoMonitor skips the pull).
-		if err := c.nodeInfoMonitor(); err != nil {
-			return nil, err
-		}
+		// Control pushes the configuration and users on the stream; a
+		// reload re-pulls nothing and reports the runtime health again.
+		c.reportRuntimeHealth()
 		return json.Marshal(map[string]any{
-			"node_id":  c.apiClient.GetNodeID(),
+			"node_id":  c.nodeID,
 			"tag":      c.tag,
 			"revision": operation.Revision,
 			"config":   c.stream.mode(agentcontrol.CapabilityConfig).String(),
@@ -445,35 +394,14 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 }
 
 // pluginInstaller downloads plugin releases from AgentArtifacts by the
-// client certificate when the session negotiated artifacts.v1 (the API key
-// is never sent then), and over HTTP with the node API key otherwise: an
-// Agent that is not enrolled, or whose Control predates AgentArtifacts
-// (4.1.x; the v4.2 upgrade runs the new Agent before the new Control).
+// client certificate (artifacts.v1).
 func (c *Controller) pluginInstaller() (*plugin.RemoteInstaller, error) {
-	download := agentapi.PluginDownloadHTTP
-	if c.agentClient != nil {
-		download = c.agentClient.PluginDownload()
+	if c.agentClient == nil {
+		return nil, fmt.Errorf("plugin downloads need the Agent control stream")
 	}
-	switch download {
-	case agentapi.PluginDownloadArtifacts:
-		artifacts, err := c.agentClient.PluginArtifacts()
-		if err != nil {
-			return nil, err
-		}
-		return plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{Supervisor: c.pluginSupervisor, Artifacts: artifacts})
-	default:
-		return plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
-			Supervisor: c.pluginSupervisor,
-			BaseURL:    c.apiClient.GetAPIHost(),
-			APIKey:     c.apiClient.GetAPIKey(),
-		})
+	artifacts, err := c.agentClient.PluginArtifacts()
+	if err != nil {
+		return nil, err
 	}
-}
-
-func logAgentControlUnavailable(nodeID int, err error) {
-	log.WithFields(log.Fields{
-		"component": "agent-control",
-		"node_id":   strconv.Itoa(nodeID),
-		"error":     err,
-	}).Warn("Agent control stream is unavailable; legacy transport remains active")
+	return plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{Supervisor: c.pluginSupervisor, Artifacts: artifacts})
 }

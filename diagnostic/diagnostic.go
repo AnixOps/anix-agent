@@ -1,7 +1,6 @@
 // Package diagnostic runs the agent.diagnostic operation of the Agent
 // Control stream (anix-control sdk/api/agent/v1/PROTOCOL.md, "Diagnostic
-// operation"): Control's whitelisted diagnostic tasks, which replace the
-// WebSocket's task.assign.
+// operation"): Control's whitelisted diagnostic tasks.
 //
 //   - The generic actions of the administrator routes: service_status,
 //     service_restart and log_tail, for the services the Executor lists:

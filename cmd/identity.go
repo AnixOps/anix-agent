@@ -62,9 +62,6 @@ func identityRoots() ([]string, map[string][]agentcontrol.AgentNode) {
 	var roots []string
 	for _, node := range loaded.NodeConfig {
 		api := node.ApiConfig
-		if !api.AgentControlEnabled {
-			continue
-		}
 		root := api.AgentIdentity.Dir()
 		if !seen[root] {
 			seen[root] = true
