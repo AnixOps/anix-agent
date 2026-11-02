@@ -52,8 +52,8 @@ type TrafficRollbacker interface {
 }
 
 // DestinationProvider is implemented by cores that count each user's
-// traffic by destination (destinations.v1): the sing-box, Xray and
-// Hysteria 2 cores. GetDestinationTraffic returns tag's traffic since the
+// traffic by destination (destinations.v1): anixcore, when the kernel has
+// the `destinations` feature. GetDestinationTraffic returns tag's traffic since the
 // last call.
 type DestinationProvider interface {
 	GetDestinationTraffic(tag string) ([]destinations.Traffic, error)

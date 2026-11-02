@@ -138,6 +138,15 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 				{"address": "a.example", "port": 443, "state": "circuit_open", "consecutive_failures": 3, "circuit_open_until_unix_ms": 1761800030000, "rtt_us": 0, "checked_at_unix_ms": 1761800000000},
 				{"address": "", "port": 443, "state": "healthy"},
 			}})
+		case r.Method == "GET" && rest == "destinations":
+			reply(200, map[string]any{"destinations": []map[string]any{
+				{"name": "7", "host": "www.youtube.com", "protocol": "tls", "up": 10, "down": 100, "connections": 1},
+				{"name": "7", "host": "i.ytimg.com", "protocol": "tls", "up": 1, "down": 2, "connections": 1},
+				{"name": "7", "host": "m.youtube.com", "protocol": "tls", "up": 5, "down": 50, "connections": 2},
+				{"name": "7", "host": "198.51.100.7", "protocol": "", "up": 3, "down": 4, "connections": 1},
+				{"name": "8", "host": "", "protocol": "", "up": 1, "down": 1, "connections": 1},
+				{"name": "not-a-panel-user", "host": "example.com", "up": 5, "down": 5, "connections": 1},
+			}})
 		case r.Method == "GET" && rest == "online":
 			reply(200, map[string]any{"online": []map[string]any{
 				{"name": "7", "ip": "203.0.113.9", "connections": 2},

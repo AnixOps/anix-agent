@@ -78,6 +78,9 @@ type client struct {
 	reverseProxy atomic.Bool
 	// qos is whether the kernel takes traffic priorities (PUT /v1/qos).
 	qos atomic.Bool
+	// destinationStats is whether the kernel counts each user's traffic by
+	// destination (GET /v1/inbounds/{tag}/destinations).
+	destinationStats atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -142,6 +145,7 @@ func (c *client) status(ctx context.Context) error {
 	c.blockRules.Store(slices.Contains(status.Features, "block_rules"))
 	c.reverseProxy.Store(slices.Contains(status.Features, reverseProxyFeature))
 	c.qos.Store(slices.Contains(status.Features, qosFeature))
+	c.destinationStats.Store(slices.Contains(status.Features, destinationsFeature))
 	return nil
 }
 
