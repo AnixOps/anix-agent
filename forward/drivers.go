@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
-	"github.com/AnixOps/anix-control/sdk/forward/driver"
-	"github.com/AnixOps/anix-control/sdk/forward/leastconn"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -23,36 +21,29 @@ type NftablesSettings struct {
 	NFT, TC string
 }
 
-// Drivers is what BuildDrivers found on the host: everything Options needs
-// besides the node, the state directory and the version.
-type Drivers struct {
-	Registry    *driver.Registry
-	Unavailable []*forwardv1.EngineCapabilities
-	Retired     *Retired
-	Sources     map[forwardv1.Engine]leastconn.Source
+// retiredEngines are the forward engines the Agent had drivers for. Every
+// one was removed: routes run on the network model (anx-node). The Hello
+// lists them as unavailable so Control never plans a hop on them.
+var retiredEngines = []struct {
+	engine forwardv1.Engine
+	reason string
+}{
+	{forwardv1.Engine_ENGINE_NFTABLES, "removed: nftables routes run on the network model"},
+	{forwardv1.Engine_ENGINE_GOST, "removed: gost routes run on the network model"},
+	{forwardv1.Engine_ENGINE_ANIXOPS, "removed: anixops relay routes run on the network model"},
 }
 
-// BuildDrivers probes the host once (anixops.Probe), at start,
-// and registers each engine the host can run. An engine it cannot run is
-// listed in Unavailable with the reason, so Control knows before planning.
-// The probes change nothing on the host.
-func BuildDrivers(ctx context.Context, settings Settings) (*Drivers, error) {
-	out := &Drivers{Registry: driver.NewRegistry(), Retired: NewRetired(), Sources: map[forwardv1.Engine]leastconn.Source{}}
-	logger := log.WithField("component", "forward")
-	unavailable := func(engine forwardv1.Engine, reason string) {
-		out.Unavailable = append(out.Unavailable, &forwardv1.EngineCapabilities{Engine: engine, UnavailableReason: reason})
-		logger.WithFields(log.Fields{"engine": engine.String(), "reason": reason}).Warn("Forward engine unavailable on this host")
-	}
+// removedEngineMessage is the hop error of a hop on engine: no driver runs
+// it on the Agent.
+func removedEngineMessage(engine forwardv1.Engine) string {
+	return "no driver for engine " + engine.String() + ": the Agent runs forwarding on the network model"
+}
 
+// Prepare cleans up after the removed nftables driver and checks the
+// kernel's forwarding sysctls, once at start. It changes nothing else.
+func Prepare(ctx context.Context, settings Settings) {
 	RetireNftables(ctx, settings.Nftables)
-	unavailable(forwardv1.Engine_ENGINE_NFTABLES, "removed: nftables routes run on the network model")
-
-	unavailable(forwardv1.Engine_ENGINE_GOST, "removed: gost routes run on the network model")
-
-	unavailable(forwardv1.Engine_ENGINE_ANIXOPS, "removed: anixops relay routes run on the network model")
-
-	checkIPForwarding(logger)
-	return out, nil
+	checkIPForwarding(log.WithField("component", "forward"))
 }
 
 // checkIPForwarding warns when the kernel does not forward: a forwarding

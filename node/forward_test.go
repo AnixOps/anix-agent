@@ -11,8 +11,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/forward"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
-	"github.com/AnixOps/anix-control/sdk/forward/driver"
-	"github.com/AnixOps/anix-control/sdk/forward/driver/fake"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,10 +18,7 @@ import (
 func TestProxyNodeStreamCarriesForwarding(t *testing.T) {
 	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
 	proxy := agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: fixture.control.NodeID}
-	host := fake.NewHost(nil)
-	registry := driver.NewRegistry()
-	require.NoError(t, registry.Register(fake.New(host, fake.Options{})))
-	component, err := forward.New(forward.Options{Node: proxy, Registry: registry, StateDir: filepath.Join(t.TempDir(), "forward"), ReportMinGap: 10 * time.Millisecond})
+	component, err := forward.New(forward.Options{Node: proxy, StateDir: filepath.Join(t.TempDir(), "forward"), ReportMinGap: 10 * time.Millisecond})
 	require.NoError(t, err)
 	require.NoError(t, component.Start(context.Background()))
 	t.Cleanup(component.Close)

@@ -16,13 +16,11 @@ import (
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
-	"github.com/AnixOps/anix-control/sdk/forward/driver"
-	"github.com/AnixOps/anix-control/sdk/forward/driver/fake"
 	"github.com/AnixOps/anix-control/sdk/forward/wire"
 )
 
 // streamAgent is a forward node's Agent on the in-process Control: the
-// forward component with the fake driver behind the control stream.
+// forward component behind the control stream.
 type streamAgent struct {
 	h      *harness
 	client *agentapi.Client
@@ -38,16 +36,16 @@ func newForwardControl(t *testing.T, serves ...string) *agenttest.Control {
 
 // startStreamAgent starts the component (re-applying its persisted state),
 // then the client; root keeps the state and the identity across restarts.
-func startStreamAgent(t *testing.T, control *agenttest.Control, root string, host *fake.Host, mutate ...func(*Options)) *streamAgent {
+func startStreamAgent(t *testing.T, control *agenttest.Control, root string, mutate ...func(*Options)) *streamAgent {
 	t.Helper()
-	return startUpgradableStreamAgent(t, control, root, host, nil, mutate...)
+	return startUpgradableStreamAgent(t, control, root, nil, mutate...)
 }
 
 // startUpgradableStreamAgent is startStreamAgent with an agent.upgrade
 // handler (nil: none).
-func startUpgradableStreamAgent(t *testing.T, control *agenttest.Control, root string, host *fake.Host, upgrader *upgrade.Agent, mutate ...func(*Options)) *streamAgent {
+func startUpgradableStreamAgent(t *testing.T, control *agenttest.Control, root string, upgrader *upgrade.Agent, mutate ...func(*Options)) *streamAgent {
 	t.Helper()
-	h := &harness{t: t, host: host, dial: newDialer(), sent: &sender{}, dir: filepath.Join(root, "forward")}
+	h := &harness{t: t, dial: newDialer(), sent: &sender{}, dir: filepath.Join(root, "forward")}
 	h.start(mutate...)
 	credential := filepath.Join(root, "enroll.token")
 	if _, err := os.Stat(credential); err != nil {
@@ -83,8 +81,7 @@ func TestForwardNodeOnTheStream(t *testing.T) {
 	control := newForwardControl(t, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward,
 		agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
 	root := t.TempDir()
-	host := fake.NewHost(nil)
-	agent := startStreamAgent(t, control, root, host)
+	agent := startStreamAgent(t, control, root)
 
 	// The forward node enrolls, and its certificate session negotiates
 	// forward.v1 with config.v1 and package-reports.v1 (no users or
@@ -104,7 +101,7 @@ func TestForwardNodeOnTheStream(t *testing.T) {
 		t.Fatalf("heartbeats %v", hb)
 	}
 	caps := control.NodeCapabilities()
-	if caps == nil || caps.GetNodeRef() != testNode.String() || len(caps.GetEngines()) != 1 || !caps.GetEngines()[0].GetAvailable() {
+	if caps == nil || caps.GetNodeRef() != testNode.String() || len(caps.GetEngines()) != len(retiredEngines) || caps.GetEngines()[0].GetAvailable() {
 		t.Fatalf("node capabilities %v", caps)
 	}
 
@@ -115,7 +112,8 @@ func TestForwardNodeOnTheStream(t *testing.T) {
 	}
 
 	// Control pushes the node's state; the Agent applies it, answers the
-	// snapshot and reports the generation and counters.
+	// snapshot and reports the generation (each hop a hop error: no engine
+	// runs one on the Agent).
 	one := state(1, hashOf(1), hop("R1", 0, 30001, rr, up("192.0.2.10", 443, 0)))
 	control.SetDesiredConfig(agenttest.ForwardSnapshot(10, map[string]any{"kind": "forward"}, one), true)
 	eventually(t, "the state applied", func() bool { return agent.h.c.Status().Generation == 1 })
@@ -127,23 +125,12 @@ func TestForwardNodeOnTheStream(t *testing.T) {
 		}
 		return false
 	})
-	if err := host.AddTraffic(driver.HopKey{RouteID: "R1"}, fake.Traffic{UpBytes: 500, DownBytes: 700}); err != nil {
-		t.Fatal(err)
-	}
 	two := state(2, hashOf(2), hop("R1", 0, 30001, rr, up("192.0.2.10", 443, 0)), hop("R2", 0, 30002, rr, up("192.0.2.20", 80, 0)))
 	control.SetDesiredConfig(agenttest.ForwardSnapshot(11, map[string]any{"kind": "forward"}, two), true)
-	eventually(t, "a report of generation 2 with counters", func() bool {
+	eventually(t, "a report of generation 2", func() bool {
 		reports := control.ForwardReports()
 		r := reports[len(reports)-1]
-		if r.GetGeneration() != 2 || !r.GetApplied() || r.GetStateHash() != hashOf(2) {
-			return false
-		}
-		for _, c := range r.GetCounters() {
-			if c.GetRouteId() == "R1" && c.GetUpBytes() == 500 && c.GetDownBytes() == 700 {
-				return true
-			}
-		}
-		return false
+		return r.GetGeneration() == 2 && r.GetApplied() && r.GetStateHash() == hashOf(2) && len(r.GetErrors()) == 2
 	})
 	// Stop after revision 11 is stored: a stop mid-apply restarts at revision 10.
 	eventually(t, "ConfigStatus of revision 11", func() bool {
@@ -158,23 +145,19 @@ func TestForwardNodeOnTheStream(t *testing.T) {
 		t.Fatalf("Control refused forward reports: %v", refused)
 	}
 
-	// Restart with Control unreachable: the Agent re-applies the persisted
-	// state before connecting (a reboot lost the host's rules).
+	// Restart with Control unreachable: the Agent loads the persisted
+	// state before connecting.
 	agent.stop()
 	control.RefuseStreams(true)
-	rebooted := fake.NewHost(nil)
-	agent = startStreamAgent(t, control, root, rebooted)
-	if st := agent.h.c.Status(); st.Generation != 2 || !st.Applied || st.Hops != 2 || rebooted.Applies() != 1 {
-		t.Fatalf("after restart without Control: %+v, applies %d", st, rebooted.Applies())
+	agent = startStreamAgent(t, control, root)
+	if st := agent.h.c.Status(); st.Generation != 2 || !st.Applied || st.Hops != 2 {
+		t.Fatalf("after restart without Control: %+v", st)
 	}
 	// Control back: Hello reports the revision it runs, no snapshot is
 	// re-applied, and reports resume.
 	before := len(control.ForwardReports())
 	control.RefuseStreams(false)
 	eventually(t, "reports after the reconnect", func() bool { return len(control.ForwardReports()) > before })
-	if rebooted.Applies() != 1 {
-		t.Fatalf("applies %d after the reconnect", rebooted.Applies())
-	}
 	hellos := control.Hellos()
 	if last := hellos[len(hellos)-1]; last.GetConfigRevision() != 11 {
 		t.Fatalf("Hello config_revision %d, want 11", last.GetConfigRevision())
@@ -185,7 +168,7 @@ func TestForwardNotServedKeepsReportsBack(t *testing.T) {
 	// A Control that does not serve forward.v1 (or refuses the attribute):
 	// no forward.v1, no package-reports.v1 for a forward node, no reports.
 	control := newForwardControl(t, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports)
-	agent := startStreamAgent(t, control, t.TempDir(), fake.NewHost(nil))
+	agent := startStreamAgent(t, control, t.TempDir())
 	eventually(t, "the session", func() bool { return agent.client.Negotiated(agentcontrol.CapabilityConfig) })
 	time.Sleep(200 * time.Millisecond)
 	if agent.client.Negotiated(agentcontrol.CapabilityForward) || agent.client.Negotiated(agentcontrol.CapabilityPackageReports) {
@@ -211,12 +194,7 @@ func TestProxyNodeCarriesForwarding(t *testing.T) {
 	// reports, next to its users and reports.v1.
 	control := agenttest.New(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
 	node := agentcontrol.AgentNode{Kind: agentcontrol.NodeKindProxy, ID: control.NodeID}
-	registry := driver.NewRegistry()
-	host := fake.NewHost(nil)
-	if err := registry.Register(fake.New(host, fake.Options{})); err != nil {
-		t.Fatal(err)
-	}
-	c, err := New(Options{Node: node, Registry: registry, StateDir: t.TempDir() + "/forward", ReportMinGap: 10 * time.Millisecond})
+	c, err := New(Options{Node: node, StateDir: t.TempDir() + "/forward", ReportMinGap: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +245,7 @@ func TestProxyNodeCarriesForwarding(t *testing.T) {
 // hop it holds and answers the generic state with the check's result.
 func TestForwardNodeRunsDiagnosticChecks(t *testing.T) {
 	control := newForwardControl(t, agentcontrol.CapabilityConfig, agentcontrol.CapabilityPackageReports, agentcontrol.CapabilityForward)
-	agent := startStreamAgent(t, control, t.TempDir(), fake.NewHost(nil))
+	agent := startStreamAgent(t, control, t.TempDir())
 	eventually(t, "the forward.v1 session", func() bool { return agent.client.Negotiated(agentcontrol.CapabilityForward) })
 	hellos := control.Hellos()
 	listed := map[string]bool{}
@@ -342,7 +320,7 @@ func TestForwardNodeAnswersAgentUpgrades(t *testing.T) {
 		Dir: filepath.Join(root, "upgrade"), LibDir: filepath.Join(root, "lib"), Version: "v4.2.0",
 		UpdaterActive: func(context.Context) bool { return true },
 	}
-	agent := startUpgradableStreamAgent(t, control, root, fake.NewHost(nil), upgrader)
+	agent := startUpgradableStreamAgent(t, control, root, upgrader)
 	eventually(t, "the upgrade.v1 session", func() bool { return agent.client.Negotiated(agentcontrol.CapabilityUpgrade) })
 
 	request := func(target string) []byte {
