@@ -4,7 +4,7 @@
 
 ## 启动和配置
 
-使用 GitHub Release 附件安装 Agent，运行 `anix-agent server -c /etc/anixops/agent/config.json`。兼容脚本命令仍为 `v2bx-anixops`。不在生产节点编译发行产物。首次安装优先写入 `example/config.production.json` 对应的生产模板，但不会自动启动；所有 `REPLACE` 值由部署者在节点本地填写。
+使用 GitHub Release 附件安装 Agent，运行 `anix-agent server -c /etc/anixops/agent/config.json`。管理命令为 `anix-agent`（旧名 `v2bx-anixops` 仅为老节点迁移保留）。不在生产节点编译发行产物。首次安装优先写入 `example/config.production.json` 对应的生产模板，但不会自动启动；所有 `REPLACE` 值由部署者在节点本地填写。
 
 启动前必须执行：
 

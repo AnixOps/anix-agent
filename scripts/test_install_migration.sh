@@ -143,8 +143,6 @@ grep -Fq 'ln -s anix-agent build_assets/V2bX' "${repo_root}/.github/workflows/re
 grep -Fq 'zip -9vyr ../anix-agent-' "${repo_root}/.github/workflows/release.yml"
 grep -Fq "\"V2bX-\${asset_suffix}.zip\"" "${repo_root}/scripts/install.sh"
 grep -Fq 'credential.json.enc' "${repo_root}/scripts/install.sh"
-grep -Fq 'ANIX_AGENT_CONFIG:-/etc/anixops/agent/config.json' "${repo_root}/Dockerfile"
-grep -Fq '[ -e /etc/V2bX/config.json ]' "${repo_root}/Dockerfile"
 
 ensure_plugin_layout
 [[ "$(stat -c '%a' "${STATE_ROOT}")" == "700" ]]

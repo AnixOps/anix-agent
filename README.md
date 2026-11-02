@@ -2,7 +2,7 @@
 
 维护入口：[Agent 运维手册](docs/MAINTENANCE_P0.md)
 
-Agent 分批交付与验收状态：[docs/P4_EXECUTION_STATUS.md](docs/P4_EXECUTION_STATUS.md)；维护事件契约：[docs/contracts/maintenance-event.schema.json](docs/contracts/maintenance-event.schema.json)
+维护事件契约：[docs/contracts/maintenance-event.schema.json](docs/contracts/maintenance-event.schema.json)
 
 AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，只通过 mTLS 的
 `anix.agent.v1` 控制流连接 AnixOps Control；它执行节点配置同步、用户认证、
@@ -329,19 +329,6 @@ Agent 在 Hello 中声明 `config.v1`，节点配置由控制流的 `ConfigSnaps
 
 注册凭证与接入令牌属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 
-## Docker
-
-```bash
-docker run -d \
-  --name anix-agent \
-  --restart unless-stopped \
-  -v /etc/anixops/agent:/etc/anixops/agent \
-  ghcr.io/anixops/anix-agent:latest
-```
-
-容器入口默认读取 `/etc/anixops/agent/config.json`，并保留容器内 `V2bX`
-二进制别名供旧编排配置过渡。
-
 ## 开发构建
 
 要求 Go 1.26.10，并设置 `GOEXPERIMENT=jsonv2`。发行产物必须由 GitHub Actions
@@ -351,19 +338,11 @@ docker run -d \
 ALLOW_LOCAL_BUILD=1 ./build.sh -p linux -a amd64
 ```
 
-Windows PowerShell：
-
-```powershell
-$env:ALLOW_LOCAL_BUILD="1"
-.\build.ps1 -Platform windows -Arch amd64
-```
-
 测试：
 
 ```bash
 GOEXPERIMENT=jsonv2 GOWORK=off go test ./...
-cd sdk && bash api/grpc/gen.sh && git diff --exit-code -- api/grpc/agent/v1
-cd .. && bash api/anxmgmt/gen.sh && git diff --exit-code -- api/anxmgmt
+bash api/anxmgmt/gen.sh && git diff --exit-code -- api/anxmgmt
 ```
 
 ## 文档
