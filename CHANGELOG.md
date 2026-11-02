@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- On Linux the Agent sets `net.ipv4.tcp_notsent_lowat = 131072` and switches
+  the congestion control from the kernel default (cubic / reno) to BBR at
+  start, keeping any value an operator chose; `ANIXOPS_TCP_TUNE=0` turns it
+  off. Loaded latency under a full download drops from hundreds of ms to the
+  idle level (anx FUTURE-IMPROVEMENTS F-26 / F-33). See docs/INSTALL.md.
+
 ## 5.0.0-rc.29 - 2026-11-02
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.29 and

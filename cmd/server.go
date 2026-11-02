@@ -6,10 +6,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/hosttune"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/forward"
@@ -106,6 +108,7 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	limiter.Init()
 	log.Info("Start AnixOps Agent...")
 	migrateLegacyPaths(c)
+	tuneHostTCP()
 	// The outcome of the last Control-pushed upgrade, which restarted us.
 	upgrade.Shared(panel.Version).LogLastResult()
 
@@ -230,4 +233,19 @@ func waitForExitSignal() {
 	osSignals := make(chan os.Signal, 1)
 	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
 	<-osSignals
+}
+
+// tuneHostTCP applies hosttune's TCP settings on Linux unless
+// ANIXOPS_TCP_TUNE=0; a failure is only logged.
+func tuneHostTCP() {
+	if runtime.GOOS != "linux" || os.Getenv("ANIXOPS_TCP_TUNE") == "0" {
+		return
+	}
+	changed, err := hosttune.ApplyTCP("/proc/sys")
+	if len(changed) > 0 {
+		log.WithField("changed", strings.Join(changed, " ")).Info("Applied host TCP settings")
+	}
+	if err != nil {
+		log.WithField("err", err).Warn("Apply host TCP settings failed")
+	}
 }
