@@ -10,6 +10,15 @@
   off. Loaded latency under a full download drops from hundreds of ms to the
   idle level (anx FUTURE-IMPROVEMENTS F-26 / F-33). See docs/INSTALL.md.
 
+### Fixed
+
+- Destination statistics (panel 访问统计, `destinations.v1`) report again:
+  since the Agent runs only anx-node nothing counted destinations, so the
+  panel showed no data. anixcore now reads each user's traffic by host from
+  anx-node (`GET /v1/inbounds/{tag}/destinations`, kernel feature
+  `destinations`) and folds hosts into registrable domains. Needs an
+  anx-node release with that feature; older kernels report nothing.
+
 ## 5.0.0-rc.29 - 2026-11-02
 
 The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.29 and
