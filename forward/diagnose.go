@@ -221,34 +221,6 @@ func protocols(listen *forwardv1.Listen) []string {
 	return []string{"tcp"}
 }
 
-// hopProtocols answers the socket protocols a hop's listener holds: the
-// route's, except for an anixops carrier listener, whose sockets are the
-// carrier's (TCP for TLS_TCP and PLAIN, UDP for QUIC, both for AUTO).
-func hopProtocols(hop *forwardv1.NodeHop) []string {
-	if hop.GetEngine() == forwardv1.Engine_ENGINE_ANIXOPS && hop.GetIngress().GetSecurity() == forwardv1.LinkSecurity_LINK_SECURITY_ANIXOPS {
-		switch hop.GetIngress().GetCarrier() {
-		case forwardv1.AnixOpsCarrier_ANIXOPS_CARRIER_QUIC:
-			return []string{"udp"}
-		case forwardv1.AnixOpsCarrier_ANIXOPS_CARRIER_TLS_TCP, forwardv1.AnixOpsCarrier_ANIXOPS_CARRIER_PLAIN:
-			return []string{"tcp"}
-		}
-		return []string{"tcp", "udp"}
-	}
-	return protocols(hop.GetListen())
-}
-
-// socketProcess answers the process name whose sockets an engine's hops are,
-// or "" for an engine without sockets of its own.
-func socketProcess(engine forwardv1.Engine) string {
-	switch engine {
-	case forwardv1.Engine_ENGINE_GOST:
-		return "gost"
-	case forwardv1.Engine_ENGINE_ANIXOPS:
-		return "anixops-relay"
-	}
-	return ""
-}
-
 func listenTarget(listen *forwardv1.Listen) string {
 	address := listen.GetAddress()
 	if address == "" {
@@ -268,78 +240,30 @@ func (c *Component) hopError(hop *forwardv1.NodeHop) string {
 	return ""
 }
 
-// checkListen: the hop's own listener holds its port. An engine without a
-// socket of its own is listened for by the driver running the hop. gost's
-// and the anixops relay's listeners are sockets on the port (hopProtocols
-// says which).
-func (c *Component) checkListen(ctx context.Context, hop *forwardv1.NodeHop, result *CheckResult) {
-	if message := c.hopError(hop); message != "" {
-		result.Status, result.Code, result.Message = VerdictFailed, "hop_error", message
-		return
+// checkListen: the hop's listener holds its port. No engine runs a hop on
+// the Agent any more (every forward driver was removed), so a hop in the
+// state always carries a hop error, which is the answer.
+func (c *Component) checkListen(_ context.Context, hop *forwardv1.NodeHop, result *CheckResult) {
+	message := c.hopError(hop)
+	if message == "" {
+		message = removedEngineMessage(hop.GetEngine())
 	}
-	target := listenTarget(hop.GetListen())
-	if process := socketProcess(hop.GetEngine()); process != "" {
-		socks, err := c.sockets(ctx, false)
-		if err != nil {
-			result.Status, result.Code, result.Message = VerdictInconclusive, "ss_unavailable", err.Error()
-			return
-		}
-		for _, proto := range hopProtocols(hop) {
-			item := CheckItem{Target: target, Protocol: proto, Status: VerdictFailed, Code: "not_listening", Message: "no socket is bound to the port"}
-			for _, s := range socks {
-				if s.matches(proto, hop.GetListen()) {
-					item = CheckItem{Target: target, Protocol: proto, Status: VerdictOK, Code: "listening", Message: process + " listens"}
-					break
-				}
-			}
-			result.Items = append(result.Items, item)
-		}
-		return
-	}
-	d, ok := c.opts.Registry.Get(hop.GetEngine())
-	if !ok {
-		result.Status, result.Code, result.Message = VerdictFailed, "hop_error", "no driver runs "+hop.GetEngine().String()+" on this node"
-		return
-	}
-	obs, err := d.Observe(ctx)
-	if err != nil {
-		result.Status, result.Code, result.Message = VerdictInconclusive, "observe_failed", err.Error()
-		return
-	}
-	running := false
-	for _, counter := range obs.Counters {
-		if counter.GetRouteId() == hop.GetRouteId() && counter.GetHopIndex() == hop.GetHopIndex() {
-			running = true
-			break
-		}
-	}
-	for _, proto := range protocols(hop.GetListen()) {
-		item := CheckItem{Target: target, Protocol: proto, Status: VerdictOK, Code: "listening", Message: "the driver runs the hop"}
-		if !obs.Applied || !running {
-			item.Status, item.Code, item.Message = VerdictFailed, "not_listening", "the driver does not run the hop"
-		}
-		result.Items = append(result.Items, item)
-	}
+	result.Status, result.Code, result.Message = VerdictFailed, "hop_error", message
 }
 
-// checkPortConflict: no socket of another process and no rule of another
-// nftables table claims the hop's listen port (a rule an earlier Agent's
+// checkPortConflict: no socket and no nftables rule claims the hop's listen
+// port (no engine on the Agent owns one any more) (a rule an earlier Agent's
 // retired table left counts).
 func (c *Component) checkPortConflict(ctx context.Context, hop *forwardv1.NodeHop, result *CheckResult) {
 	listen := hop.GetListen()
 	port := listen.GetPort()
-	socks, err := c.sockets(ctx, true)
+	socks, err := c.sockets(ctx)
 	if err != nil {
 		result.Items = append(result.Items, CheckItem{Target: listenTarget(listen), Status: VerdictInconclusive, Code: "ss_unavailable", Message: err.Error()})
 	}
-	for _, proto := range hopProtocols(hop) {
+	for _, proto := range protocols(listen) {
 		for _, s := range socks {
 			if !s.matches(proto, listen) {
-				continue
-			}
-			if own := socketProcess(hop.GetEngine()); own != "" && (s.process == "" || s.process == own) {
-				// The engine's own socket (or one ss cannot name, which its
-				// driver already refused to share on its apply).
 				continue
 			}
 			who := s.process
@@ -350,7 +274,7 @@ func (c *Component) checkPortConflict(ctx context.Context, hop *forwardv1.NodeHo
 				Message: fmt.Sprintf("%s listens on %s port %d", who, proto, port)})
 		}
 	}
-	rules, err := c.foreignNATRules(ctx, port, hopProtocols(hop))
+	rules, err := c.foreignNATRules(ctx, port, protocols(listen))
 	if err != nil {
 		result.Items = append(result.Items, CheckItem{Target: listenTarget(listen), Status: VerdictInconclusive, Code: "nft_unavailable", Message: err.Error()})
 	}
@@ -587,13 +511,10 @@ func (s hostSocket) matches(proto string, listen *forwardv1.Listen) bool {
 	return err == nil && a.Unmap() == s.addr
 }
 
-// sockets lists the host's listening sockets (ss -H -l -n -t -u, with -p
-// for the process names ss may show).
-func (c *Component) sockets(ctx context.Context, processes bool) ([]hostSocket, error) {
-	args := []string{"-H", "-l", "-n", "-t", "-u"}
-	if processes {
-		args = append(args, "-p")
-	}
+// sockets lists the host's listening sockets with the process names ss may
+// show (ss -H -l -n -t -u -p).
+func (c *Component) sockets(ctx context.Context) ([]hostSocket, error) {
+	args := []string{"-H", "-l", "-n", "-t", "-u", "-p"}
 	ss := c.opts.SS
 	if ss == "" {
 		ss = "ss"

@@ -10,7 +10,6 @@ import (
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
 	"github.com/AnixOps/anix-control/sdk/forward/wire"
-	"google.golang.org/protobuf/proto"
 )
 
 // HostInfo is what NodeCapabilities says about the host besides the
@@ -47,13 +46,10 @@ func truncate(s string, n int) string {
 // capabilitiesTimeout bounds the drivers' Capabilities calls.
 const capabilitiesTimeout = 10 * time.Second
 
-// NodeCapabilities answers what the node can forward: every registered
-// driver's capabilities, the engines the host lacks (Options.Unavailable,
-// listed with available false and the reason), the host and the Agent's
-// version.
-func (c *Component) NodeCapabilities(ctx context.Context) (*forwardv1.NodeCapabilities, error) {
-	ctx, cancel := context.WithTimeout(ctx, capabilitiesTimeout)
-	defer cancel()
+// NodeCapabilities answers what the node can forward: no engine (every
+// forward driver was removed; the retired engines are listed with available
+// false and the reason), the host and the Agent's version.
+func (c *Component) NodeCapabilities(context.Context) (*forwardv1.NodeCapabilities, error) {
 	caps := &forwardv1.NodeCapabilities{
 		NodeRef:       c.nodeRef,
 		KernelVersion: c.opts.Host.KernelVersion,
@@ -61,25 +57,8 @@ func (c *Component) NodeCapabilities(ctx context.Context) (*forwardv1.NodeCapabi
 		Ipv6:          c.opts.Host.IPv6,
 		AgentVersion:  truncate(c.opts.AgentVersion, wire.MaxTextBytes),
 	}
-	seen := map[forwardv1.Engine]bool{}
-	for _, engine := range c.opts.Registry.Engines() {
-		d, _ := c.opts.Registry.Get(engine)
-		ec, err := d.Capabilities(ctx)
-		if err != nil {
-			return nil, err
-		}
-		caps.Engines = append(caps.Engines, ec)
-		seen[engine] = true
-	}
-	for _, ec := range c.opts.Unavailable {
-		if ec == nil || seen[ec.GetEngine()] {
-			continue
-		}
-		unavailable := proto.Clone(ec).(*forwardv1.EngineCapabilities)
-		unavailable.Available = false
-		unavailable.UnavailableReason = truncate(unavailable.GetUnavailableReason(), 512)
-		caps.Engines = append(caps.Engines, unavailable)
-		seen[ec.GetEngine()] = true
+	for _, retired := range retiredEngines {
+		caps.Engines = append(caps.Engines, &forwardv1.EngineCapabilities{Engine: retired.engine, UnavailableReason: retired.reason})
 	}
 	slices.SortFunc(caps.Engines, func(a, b *forwardv1.EngineCapabilities) int { return int(a.GetEngine()) - int(b.GetEngine()) })
 	return caps, nil

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -15,40 +14,22 @@ import (
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
-	"github.com/AnixOps/anix-control/sdk/forward/driver"
-	"github.com/AnixOps/anix-control/sdk/forward/leastconn"
-	"github.com/AnixOps/anix-control/sdk/forward/model"
 	"github.com/AnixOps/anix-control/sdk/forward/wire"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
 
-// Cadences (forward-sdk.md sections 7 and 8; owner decision H21).
+// Cadences (forward-sdk.md section 8).
 const (
 	// DefaultReportInterval: a report every 60 s ...
 	DefaultReportInterval = 60 * time.Second
-	// DefaultReportMinGap: ... and after an apply or a health change, at
+	// DefaultReportMinGap: ... and after an apply or a vantage change, at
 	// most one every 10 s.
 	DefaultReportMinGap = 10 * time.Second
-	// DefaultReconcileInterval is how often the component observes the
-	// drivers, enforces soft quotas and re-asserts the health loop's
-	// rotation (after a changing apply or a gost restart put every
-	// upstream back). It is the default health-check interval, so a soft
-	// quota holds within one check interval.
-	DefaultReconcileInterval = model.DefaultHealthInterval
-	// DefaultRetryInterval spaces out new attempts to apply a state an
-	// earlier apply could not: Control does not send a snapshot again for
-	// the revision the Agent reported, so the component retries itself.
-	DefaultRetryInterval = 30 * time.Second
-	// defaultHealthTick is the health scheduler's resolution: each
-	// upstream is probed every health.interval_ms of its hop.
-	defaultHealthTick = time.Second
-	// maxProbes bounds the health probes in flight.
+	// defaultProbeTick is the vantage scheduler's resolution.
+	defaultProbeTick = time.Second
+	// maxProbes bounds the vantage probes in flight.
 	maxProbes = 32
-	// applyTimeout and observeTimeout bound one apply and one observation
-	// of every driver.
-	applyTimeout   = 2 * time.Minute
-	observeTimeout = 20 * time.Second
 )
 
 // Options configure a Component.
@@ -56,29 +37,15 @@ type Options struct {
 	// Node is the node the Agent speaks for: its state's node_ref and its
 	// reports' (forward-41, proxy-7).
 	Node agentcontrol.AgentNode
-	// Registry holds the drivers the host can run, already probed
-	// (nftables.Probe, gost.Probe). Engines the host lacks are not
-	// registered: their hops come back as hop errors (no driver).
-	Registry *driver.Registry
-	// Unavailable lists the engines the host lacks with the reason, for
-	// the Hello's NodeCapabilities.
-	Unavailable []*forwardv1.EngineCapabilities
-	// Retired is the buffer the drivers' WithRetiredCounters hook fills;
-	// nil for drivers without one.
-	Retired *Retired
-	// Sources supply live connections for LEAST_CONN re-weighting per
-	// engine, besides drivers that are a leastconn.Source themselves
-	// (gost, fake): the conntrack source for nftables.
-	Sources map[forwardv1.Engine]leastconn.Source
 	// StateDir holds the persisted state (absolute; the Agent's own state
-	// directory, never gost's).
+	// directory).
 	StateDir string
 	// AgentVersion goes into NodeCapabilities.
 	AgentVersion string
 	// Host is the rest of NodeCapabilities; ProbeHost reads it.
 	Host HostInfo
-	// Dial probes upstreams (TCP connect, and UDP for the forward
-	// diagnostic checks); nil uses net.Dialer.
+	// Dial runs the vantage probes and the forward diagnostic checks (TCP
+	// connect, and UDP for the checks); nil uses net.Dialer.
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
 	// Lookup resolves a target name for the diagnostic checks; nil uses
 	// the system resolver.
@@ -90,14 +57,10 @@ type Options struct {
 	SS, NFT string
 
 	// Cadences; zero means the default. Tests shorten them.
-	ReportInterval    time.Duration
-	ReportMinGap      time.Duration
-	ReconcileInterval time.Duration
-	ReweightInterval  time.Duration
-	RetryInterval     time.Duration
-	// HealthTick is the health scheduler's resolution (1 s).
-	HealthTick  time.Duration
-	RetiredKeep time.Duration
+	ReportInterval time.Duration
+	ReportMinGap   time.Duration
+	// ProbeTick is the vantage scheduler's resolution (1 s).
+	ProbeTick time.Duration
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -120,29 +83,22 @@ type Component struct {
 	mu      sync.Mutex
 	started bool
 	// desired is the state last accepted from Control (persisted), nil
-	// before the first; applied tells whether every engine runs it.
+	// before the first.
 	desired   *forwardv1.NodeForwardState
-	applied   bool
 	hopErrors []*forwardv1.HopError
-	retryAt   time.Time
 	// Reports.
 	sender        func(*agentv1pb.PackageReport) error
 	negotiated    bool
 	reportPending bool
 	lastReport    time.Time
 	reportsSent   uint64
-	// Health loop: per upstream of each hop, the breaker; per hop, the
-	// selection the loop keeps in rotation and the rotation last observed.
-	health    map[upstreamKey]*upstreamState
-	selection map[driver.HopKey][]driver.Upstream
-	rotation  map[driver.HopKey][]driver.Upstream
-	logged    map[string]string
+	// logged holds the last value of each condition logChange logs.
+	logged map[string]string
 	// Vantage probes (vantage.go): per probe, its hysteresis.
 	vantage map[vantageKey]*vantageState
 
-	reportWake    chan struct{}
-	reconcileWake chan struct{}
-	probes        chan struct{}
+	reportWake chan struct{}
+	probes     chan struct{}
 }
 
 // New answers a component. Start it before the Agent connects to Control.
@@ -150,29 +106,14 @@ func New(opts Options) (*Component, error) {
 	if !opts.Node.Valid() {
 		return nil, fmt.Errorf("forward: invalid node %q", opts.Node.String())
 	}
-	if opts.Registry == nil {
-		return nil, errors.New("forward: a driver registry is required")
-	}
 	if opts.ReportInterval <= 0 {
 		opts.ReportInterval = DefaultReportInterval
 	}
 	if opts.ReportMinGap <= 0 {
 		opts.ReportMinGap = DefaultReportMinGap
 	}
-	if opts.ReconcileInterval <= 0 {
-		opts.ReconcileInterval = DefaultReconcileInterval
-	}
-	if opts.ReweightInterval <= 0 {
-		opts.ReweightInterval = model.DefaultLeastConnReweight
-	}
-	if opts.RetryInterval <= 0 {
-		opts.RetryInterval = DefaultRetryInterval
-	}
-	if opts.HealthTick <= 0 {
-		opts.HealthTick = defaultHealthTick
-	}
-	if opts.RetiredKeep <= 0 {
-		opts.RetiredKeep = DefaultRetiredKeep
+	if opts.ProbeTick <= 0 {
+		opts.ProbeTick = defaultProbeTick
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -181,9 +122,6 @@ func New(opts Options) (*Component, error) {
 		var dialer net.Dialer
 		opts.Dial = dialer.DialContext
 	}
-	if opts.Retired == nil {
-		opts.Retired = NewRetired()
-	}
 	nodeRef := opts.Node.String()
 	store, err := openStateStore(opts.StateDir, nodeRef)
 	if err != nil {
@@ -191,16 +129,12 @@ func New(opts Options) (*Component, error) {
 	}
 	c := &Component{
 		opts: opts, nodeRef: nodeRef, store: store,
-		logger:    log.WithFields(log.Fields{"component": "forward", "node": nodeRef}),
-		health:    map[upstreamKey]*upstreamState{},
-		vantage:   map[vantageKey]*vantageState{},
-		selection: map[driver.HopKey][]driver.Upstream{},
-		rotation:  map[driver.HopKey][]driver.Upstream{},
-		logged:    map[string]string{},
+		logger:  log.WithFields(log.Fields{"component": "forward", "node": nodeRef}),
+		vantage: map[vantageKey]*vantageState{},
+		logged:  map[string]string{},
 		// Buffered: a wake never blocks and never gets lost.
-		reportWake:    make(chan struct{}, 1),
-		reconcileWake: make(chan struct{}, 1),
-		probes:        make(chan struct{}, maxProbes),
+		reportWake: make(chan struct{}, 1),
+		probes:     make(chan struct{}, maxProbes),
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	return c, nil
@@ -209,10 +143,9 @@ func New(opts Options) (*Component, error) {
 // NodeRef answers the node's reference (forward-41).
 func (c *Component) NodeRef() string { return c.nodeRef }
 
-// Start re-applies the persisted state, before the Agent connects to
-// Control (nftables rules do not survive a reboot; forwarding goes on
-// while Control is down), then runs the health, report and re-weighting
-// loops until Close.
+// Start loads the persisted state, before the Agent connects to Control,
+// so the vantage probes go on while Control is down, then runs the probe
+// and report loops until Close.
 func (c *Component) Start(ctx context.Context) error {
 	c.mu.Lock()
 	if c.started {
@@ -221,34 +154,41 @@ func (c *Component) Start(ctx context.Context) error {
 	}
 	c.started = true
 	c.mu.Unlock()
-	state, applied, err := c.store.load()
+	state, _, err := c.store.load()
 	if err != nil {
 		c.logger.WithError(err).Warn("Could not use the persisted forwarding state; waiting for Control's")
 	}
 	if state != nil {
-		c.mu.Lock()
-		c.desired, c.applied = state, applied
-		c.mu.Unlock()
-	}
-	if state != nil {
 		c.logger.WithFields(log.Fields{"generation": state.GetGeneration(), "hops": len(state.GetHops())}).
-			Info("Re-applying the persisted forwarding state before connecting to Control")
+			Info("Loaded the persisted forwarding state before connecting to Control")
 		c.applyMu.Lock()
-		c.apply(ctx, state)
+		c.apply(state)
 		c.applyMu.Unlock()
 	}
-	c.wg.Add(3)
-	go func() { defer c.wg.Done(); c.runHealth() }()
+	c.wg.Add(2)
+	go func() { defer c.wg.Done(); c.runProbes() }()
 	go func() { defer c.wg.Done(); c.runReports() }()
-	go func() { defer c.wg.Done(); c.runReweight() }()
 	return nil
 }
 
-// Close stops the loops. Forwarding keeps running: nftables rules stay in
-// the kernel and gost is a unit of its own (H20); nothing is removed.
+// Close stops the loops.
 func (c *Component) Close() {
 	c.cancel()
 	c.wg.Wait()
+}
+
+// runProbes starts the vantage probes that are due every ProbeTick.
+func (c *Component) runProbes() {
+	ticker := time.NewTicker(c.opts.ProbeTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		c.scheduleVantage(c.opts.Now())
+	}
 }
 
 // SetSender sets how reports reach Control: the data plane's
@@ -290,14 +230,13 @@ func wake(ch chan struct{}) {
 //   - An older generation is ignored; the same generation is compared by
 //     state_hash, never by content: equal and applied is nothing to do,
 //     another hash is a conflict and ignored.
-//   - A newer generation is applied (an empty state removes everything the
-//     drivers own) and persisted.
+//   - A newer generation is taken and persisted.
 //
 // It answers an error only when the document cannot be applied as a whole
 // (a malformed member, another node's state): ConfigStatus applied false.
-// A hop a driver cannot run, or an engine whose Apply fails, goes in the
-// report, and a failed apply is retried.
-func (c *Component) ApplySnapshot(ctx context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
+// No engine runs a hop on the Agent any more, so every hop the state holds
+// goes in the report as a hop error.
+func (c *Component) ApplySnapshot(_ context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
 	state, found, err := wire.StateFromNodeConfig(snapshot.GetFormat(), snapshot.GetConfigJson())
 	if err != nil {
 		return agentapi.InvalidConfig(err)
@@ -316,7 +255,7 @@ func (c *Component) ApplySnapshot(ctx context.Context, snapshot *agentv1pb.Confi
 	c.applyMu.Lock()
 	defer c.applyMu.Unlock()
 	c.mu.Lock()
-	current, applied := c.desired, c.applied
+	current := c.desired
 	c.mu.Unlock()
 	if current != nil {
 		switch {
@@ -326,89 +265,57 @@ func (c *Component) ApplySnapshot(ctx context.Context, snapshot *agentv1pb.Confi
 		case state.GetGeneration() == current.GetGeneration() && state.GetStateHash() != current.GetStateHash():
 			entry.WithField("running_state_hash", current.GetStateHash()).Error("Control sent the running forwarding generation with another state_hash; ignoring it")
 			return nil
-		case state.GetGeneration() == current.GetGeneration() && applied:
+		case state.GetGeneration() == current.GetGeneration():
 			return nil
 		}
 	}
-	c.apply(ctx, state)
+	c.apply(state)
 	return nil
 }
 
-// apply renders state with every driver, applies each engine's artifact,
-// enforces soft quotas, records the outcome and persists the state. The
-// caller holds applyMu.
-func (c *Component) apply(parent context.Context, state *forwardv1.NodeForwardState) {
-	ctx, cancel := context.WithTimeout(parent, applyTimeout)
-	defer cancel()
+// apply takes state: every hop it holds is a hop error (no engine runs it
+// on the Agent), and its vantage probes run from now on. It records the
+// outcome and persists the state. The caller holds applyMu.
+func (c *Component) apply(state *forwardv1.NodeForwardState) {
 	entry := c.logger.WithFields(log.Fields{"generation": state.GetGeneration(), "state_hash": state.GetStateHash()})
-	allApplied, changed := true, false
-	var hopErrors []*forwardv1.HopError
-	artifacts, renderErrors, err := c.opts.Registry.Render(state)
-	if err != nil {
-		allApplied = false
-		hopErrors = hopErrorsFor(state, nil, func(forwardv1.Engine) bool { return true }, fmt.Errorf("render: %w", err))
-		entry.WithError(err).Error("Could not render the forwarding state")
-	} else {
-		failed := map[driver.HopKey]bool{}
-		for _, he := range renderErrors {
-			failed[he.Key] = true
-			hopErrors = append(hopErrors, he.ToProto())
-		}
-		engines := make([]forwardv1.Engine, 0, len(artifacts))
-		for engine := range artifacts {
-			engines = append(engines, engine)
-		}
-		slices.Sort(engines)
-		for _, engine := range engines {
-			d, _ := c.opts.Registry.Get(engine)
-			result, err := d.Apply(ctx, artifacts[engine])
-			if err != nil {
-				allApplied = false
-				hopErrors = append(hopErrors, hopErrorsFor(state, failed, func(e forwardv1.Engine) bool { return e == engine }, fmt.Errorf("apply: %w", err))...)
-				entry.WithError(err).WithField("engine", engine.String()).Error("Could not apply the forwarding state")
-				continue
-			}
-			changed = changed || result.Changed
-		}
-	}
-	c.enforceQuotas(ctx)
-	sortHopErrors(hopErrors)
+	hopErrors := removedHopErrors(state)
 	now := c.opts.Now()
 	c.mu.Lock()
-	c.desired, c.applied, c.hopErrors = state, allApplied, hopErrors
-	if allApplied {
-		c.retryAt = time.Time{}
-	} else {
-		c.retryAt = now.Add(c.opts.RetryInterval)
-	}
+	c.desired, c.hopErrors = state, hopErrors
 	c.reportPending = true
 	c.mu.Unlock()
-	if err := c.store.save(state, allApplied, now); err != nil {
+	if err := c.store.save(state, true, now); err != nil {
 		entry.WithError(err).Warn("Could not persist the forwarding state; a restart while Control is unreachable starts without it")
 	}
-	fields := log.Fields{"hops": len(state.GetHops()), "changed": changed, "hop_errors": len(hopErrors)}
-	if allApplied {
-		entry.WithFields(fields).Info("Applied the forwarding state")
+	fields := log.Fields{"hops": len(state.GetHops()), "vantage_probes": len(state.GetVantageProbes()), "hop_errors": len(hopErrors)}
+	if len(hopErrors) == 0 {
+		entry.WithFields(fields).Info("Took the forwarding state")
 	} else {
-		entry.WithFields(fields).Warn("The forwarding state is not fully applied; retrying")
+		entry.WithFields(fields).Warn("The forwarding state holds hops no engine on the Agent runs")
 	}
 	wake(c.reportWake)
-	wake(c.reconcileWake)
 }
 
-// hopErrorsFor answers err for every hop of state whose engine matches and
-// that is not in skip.
-func hopErrorsFor(state *forwardv1.NodeForwardState, skip map[driver.HopKey]bool, engine func(forwardv1.Engine) bool, err error) []*forwardv1.HopError {
-	seen := map[driver.HopKey]bool{}
+// removedHopErrors answers one hop error per hop of state, sorted.
+func removedHopErrors(state *forwardv1.NodeForwardState) []*forwardv1.HopError {
+	type hopKey struct {
+		route string
+		hop   uint32
+	}
+	seen := map[hopKey]bool{}
 	var out []*forwardv1.HopError
 	for _, hop := range state.GetHops() {
-		key := driver.KeyOf(hop)
-		if skip[key] || seen[key] || !engine(hop.GetEngine()) {
+		key := hopKey{hop.GetRouteId(), hop.GetHopIndex()}
+		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		out = append(out, (&driver.HopError{Key: key, Engine: hop.GetEngine(), Err: err}).ToProto())
+		out = append(out, &forwardv1.HopError{
+			RouteId: hop.GetRouteId(), HopIndex: hop.GetHopIndex(), Engine: hop.GetEngine(),
+			Message: removedEngineMessage(hop.GetEngine()),
+		})
 	}
+	sortHopErrors(out)
 	return out
 }
 
@@ -420,49 +327,6 @@ func sortHopErrors(errs []*forwardv1.HopError) {
 		}
 		return a.GetHopIndex() < b.GetHopIndex()
 	})
-}
-
-// enforceQuotas calls every soft-quota driver's EnforceQuotas (gost): after
-// every Observe and every Apply (driver.QuotaEnforcer).
-func (c *Component) enforceQuotas(ctx context.Context) {
-	for _, engine := range c.opts.Registry.Engines() {
-		d, _ := c.opts.Registry.Get(engine)
-		enforcer, ok := d.(driver.QuotaEnforcer)
-		if !ok {
-			continue
-		}
-		held, err := enforcer.EnforceQuotas(ctx)
-		if err != nil {
-			c.logChange("quota/"+engine.String(), err.Error(), func(e *log.Entry) { e.WithError(err).Warn("Could not enforce the soft quotas") })
-			continue
-		}
-		c.logChange("quota/"+engine.String(), fmt.Sprint(held), func(e *log.Entry) {
-			if len(held) > 0 {
-				e.WithField("hops", held).Info("Hops hold new connections for their quota")
-			}
-		})
-	}
-}
-
-// observeAll observes every driver and enforces the soft quotas after.
-func (c *Component) observeAll(parent context.Context) map[forwardv1.Engine]driver.Observation {
-	ctx, cancel := context.WithTimeout(parent, observeTimeout)
-	defer cancel()
-	out := map[forwardv1.Engine]driver.Observation{}
-	for _, engine := range c.opts.Registry.Engines() {
-		d, _ := c.opts.Registry.Get(engine)
-		obs, err := d.Observe(ctx)
-		if err != nil {
-			c.logChange("observe/"+engine.String(), err.Error(), func(e *log.Entry) {
-				e.WithError(err).WithField("engine", engine.String()).Warn("Could not observe the forwarding engine")
-			})
-			continue
-		}
-		c.logChange("observe/"+engine.String(), "", nil)
-		out[engine] = obs
-	}
-	c.enforceQuotas(ctx)
-	return out
 }
 
 // logChange logs through f when the value of what changed since the last
@@ -493,7 +357,7 @@ func (c *Component) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return Status{
-		Generation: c.desired.GetGeneration(), StateHash: c.desired.GetStateHash(), Applied: c.desired != nil && c.applied,
+		Generation: c.desired.GetGeneration(), StateHash: c.desired.GetStateHash(), Applied: c.desired != nil,
 		Hops: len(c.desired.GetHops()), HopErrors: len(c.hopErrors), ReportsSent: c.reportsSent,
 	}
 }

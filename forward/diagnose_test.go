@@ -12,13 +12,11 @@ import (
 	"time"
 
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
-	"github.com/AnixOps/anix-control/sdk/forward/driver/fake"
 )
 
 // hostCommands answers ss and nft from canned output.
 type hostCommands struct {
 	mu    sync.Mutex
-	ss    string
 	ssP   string
 	nft   string
 	nftOK bool
@@ -31,10 +29,7 @@ func (h *hostCommands) run(_ context.Context, name string, args ...string) ([]by
 	h.calls = append(h.calls, name+" "+strings.Join(args, " "))
 	switch name {
 	case "ss":
-		if len(args) > 0 && args[len(args)-1] == "-p" {
-			return []byte(h.ssP), nil
-		}
-		return []byte(h.ss), nil
+		return []byte(h.ssP), nil
 	case "nft":
 		if !h.nftOK {
 			return nil, errors.New("nft: command not found")
@@ -95,7 +90,6 @@ func TestDiagnoseRefusals(t *testing.T) {
 
 func TestDiagnoseListenAndConflicts(t *testing.T) {
 	commands := &hostCommands{
-		ss: "tcp LISTEN 0 4096 *:31001 *:*\n",
 		ssP: "tcp LISTEN 0 4096 0.0.0.0:31000 0.0.0.0:* users:((\"nginx\",pid=812,fd=6))\n" +
 			"tcp LISTEN 0 4096 *:31001 *:* users:((\"gost\",pid=900,fd=7))\n",
 		nftOK: true,
@@ -106,11 +100,7 @@ func TestDiagnoseListenAndConflicts(t *testing.T) {
  {"rule":{"family":"ip","table":"filter","chain":"INPUT","handle":2,"expr":[
    {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":31000}},{"accept":null}]}}]}`,
 	}
-	h := diagHarness(t, commands, func(o *Options) {
-		if err := o.Registry.Register(fake.New(fake.NewHost(nil), fake.Options{Engine: forwardv1.Engine_ENGINE_GOST})); err != nil {
-			t.Fatal(err)
-		}
-	})
+	h := diagHarness(t, commands)
 	nft := hop("r1", 0, 31000, forwardv1.BalanceStrategy_BALANCE_STRATEGY_ROUND_ROBIN, up("192.0.2.2", 32000, 0))
 	gost := hop("r2", 0, 31001, forwardv1.BalanceStrategy_BALANCE_STRATEGY_ROUND_ROBIN, up("192.0.2.2", 32001, 0))
 	gost.Engine = forwardv1.Engine_ENGINE_GOST
@@ -118,21 +108,17 @@ func TestDiagnoseListenAndConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// No engine runs a hop on the Agent: listen answers the hop error.
 	listen, err := h.c.Diagnose(context.Background(), CheckListen, params("r1", 0, "generation", float64(5)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listen.Status != VerdictOK || len(listen.Items) != 1 || listen.Items[0].Code != "listening" || listen.Generation != 5 {
+	if listen.Status != VerdictFailed || listen.Code != "hop_error" || !strings.Contains(listen.Message, "ENGINE_NFTABLES") || listen.Generation != 5 {
 		t.Fatalf("nftables listen: %+v", listen)
 	}
 	gostListen, _ := h.c.Diagnose(context.Background(), CheckListen, params("r2", 0))
-	if gostListen.Status != VerdictOK || gostListen.Items[0].Target != "*:31001" {
+	if gostListen.Status != VerdictFailed || !strings.Contains(gostListen.Message, "ENGINE_GOST") {
 		t.Fatalf("gost listen: %+v", gostListen)
-	}
-	commands.ss = ""
-	gostListen, _ = h.c.Diagnose(context.Background(), CheckListen, params("r2", 0))
-	if gostListen.Status != VerdictFailed || gostListen.Items[0].Code != "not_listening" {
-		t.Fatalf("gost not listening: %+v", gostListen)
 	}
 
 	conflicts, _ := h.c.Diagnose(context.Background(), CheckPortConflict, params("r1", 0))
@@ -145,10 +131,11 @@ func TestDiagnoseListenAndConflicts(t *testing.T) {
 	if conflicts.Items[1].Code != "foreign_nat_rule" || !strings.Contains(conflicts.Items[1].Message, "table ip nat chain PREROUTING") {
 		t.Errorf("nat rule: %+v", conflicts.Items[1])
 	}
-	// gost's own socket is not a conflict; the nat rule's range does not
-	// reach 31001? It does (30990-31010): reported.
+	// A leftover gost socket is a conflict like any other; the nat rule's
+	// range (30990-31010) reaches 31001 too.
 	gostConflicts, _ := h.c.Diagnose(context.Background(), CheckPortConflict, params("r2", 0))
-	if len(gostConflicts.Items) != 1 || gostConflicts.Items[0].Code != "foreign_nat_rule" {
+	if len(gostConflicts.Items) != 2 || gostConflicts.Items[0].Code != "foreign_listener" || !strings.Contains(gostConflicts.Items[0].Message, "gost") ||
+		gostConflicts.Items[1].Code != "foreign_nat_rule" {
 		t.Fatalf("gost conflicts: %+v", gostConflicts)
 	}
 	commands.nft = `{"nftables":[]}`

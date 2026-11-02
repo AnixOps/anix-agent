@@ -12,6 +12,14 @@
 
 ### Removed
 
+- The forward driver framework: the driver registry, the upstream health
+  loop, least-connections reweighting, the reconcile and retry loops and the
+  retired-counter bookkeeping. No engine has a driver any more (routes run on
+  the network model), so every hop is reported as a hop error, as before.
+  The forward component keeps the state Control sends, the vantage probes
+  for entry HA, the diagnostics and `forward.report`; reports no longer
+  carry counters or health. The Agent no longer imports
+  `sdk/forward/driver` or `sdk/forward/leastconn`.
 - The Docker image (`Dockerfile`, the manual ghcr.io publish workflow) and
   the Windows build script `build.ps1`: nodes install from the release zips
   with `scripts/install.sh`, and releases are Linux amd64 / arm64 only.

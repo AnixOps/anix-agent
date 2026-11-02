@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
@@ -207,4 +208,13 @@ func (c *Component) vantageResults() []*forwardv1.VantageResult {
 		return a.GetPort() < b.GetPort()
 	})
 	return out
+}
+
+// normalizeAddress answers an address in the form probes are keyed by: an
+// IP literal unmapped, a name in lower case.
+func normalizeAddress(address string) string {
+	if a, err := netip.ParseAddr(address); err == nil {
+		return a.Unmap().String()
+	}
+	return strings.ToLower(address)
 }
