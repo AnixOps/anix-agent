@@ -27,7 +27,6 @@ def check_release_version(repo_root: Path, tag: str) -> str:
     version = match.group("version")
     require_pattern(repo_root / "cmd/version.go", r'^\s*(?:var\s+)?version\s*=\s*"v([^"]+)"', version, "CLI")
     require_pattern(repo_root / "api/panel/version.go", r'^var Version = "([^"]+)"', version, "panel")
-    require_pattern(repo_root / "Dockerfile", r'^ARG VERSION=v([^\s]+)', version, "Docker build")
     require_pattern(repo_root / "README.md", r'^`v([^`]+)` 提供 AnixOps 官方签名软件包', version, "README preview")
     require_pattern(repo_root / "docs/INSTALL.md", r'^export VERSION=v([^\s]+)', version, "install guide")
     require_pattern(repo_root / "docs/ANIX_AGENT_MIGRATION.md", r'^export VERSION=v([^\s]+)', version, "migration guide")
@@ -39,7 +38,6 @@ def write_fixture(root: Path, version: str) -> None:
     files = {
         "cmd/version.go": f'package cmd\nvar version = "v{version}"\n',
         "api/panel/version.go": f'package panel\nvar Version = "{version}"\n',
-        "Dockerfile": f"ARG VERSION=v{version}\n",
         "README.md": f"`v{version}` 提供 AnixOps 官方签名软件包\n",
         "docs/INSTALL.md": f"export VERSION=v{version}\n",
         "docs/ANIX_AGENT_MIGRATION.md": f"export VERSION=v{version}\n",
@@ -58,14 +56,14 @@ def self_test() -> None:
         write_fixture(root, version)
         assert check_release_version(root, f"v{version}") == version
 
-        dockerfile = root / "Dockerfile"
-        dockerfile.write_text("ARG VERSION=v3.1.0-alpha.3\n", encoding="utf-8")
+        changelog = root / "CHANGELOG.md"
+        changelog.write_text("# Changelog\n\n## 3.1.0-alpha.3 - 2026-07-17\n", encoding="utf-8")
         try:
             check_release_version(root, f"v{version}")
         except ValueError as error:
-            assert "Docker build version mismatch" in str(error)
+            assert "changelog version mismatch" in str(error)
         else:
-            raise AssertionError("Docker version mismatch was accepted")
+            raise AssertionError("changelog version mismatch was accepted")
 
         try:
             check_release_version(root, "v4")

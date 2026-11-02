@@ -10,6 +10,14 @@
   off. Loaded latency under a full download drops from hundreds of ms to the
   idle level (anx FUTURE-IMPROVEMENTS F-26 / F-33). See docs/INSTALL.md.
 
+### Removed
+
+- The Docker image (`Dockerfile`, the manual ghcr.io publish workflow) and
+  the Windows build script `build.ps1`: nodes install from the release zips
+  with `scripts/install.sh`, and releases are Linux amd64 / arm64 only.
+- Stale docs: `TODO.md`, `docs/P4_EXECUTION_STATUS.md`. `AGENTS.md` is
+  rewritten for the current Agent and `CLAUDE.md` points to it.
+
 ### Fixed
 
 - Destination statistics (panel 访问统计, `destinations.v1`) report again:
