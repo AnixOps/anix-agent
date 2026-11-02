@@ -166,6 +166,30 @@ The drop-in also raises `net.core.rmem_max` and `net.core.wmem_max` to
 (`--quic-sockbuf`); the Agent raises them to that at run time too when it
 starts anx-server.
 
+### Host TCP settings
+
+On Linux the Agent applies two TCP settings at start (`common/hosttune`),
+for every node type:
+
+- `net.ipv4.tcp_notsent_lowat = 131072`, when the current value is higher
+  (the kernel default is unlimited). A socket then keeps at most 128 KiB of
+  unsent data queued, so a full download no longer delays every other
+  request on the node: the public WAN bench measured 604 ms of loaded
+  latency on an ANX-A node before, and the idle level with it in the lab.
+- `net.ipv4.tcp_congestion_control = bbr`, when the current value is the
+  kernel default `cubic` or `reno` and the kernel has BBR. BBR keeps
+  throughput up under random loss.
+
+Other values an operator set are kept. Set `ANIXOPS_TCP_TUNE=0` in the
+service environment to skip both. The settings last until reboot and are
+applied again when the Agent starts. They are not written to
+`/etc/sysctl.d`; to keep them without the Agent:
+
+```bash
+printf 'net.ipv4.tcp_notsent_lowat = 131072\nnet.ipv4.tcp_congestion_control = bbr\n' | sudo tee /etc/sysctl.d/91-anixops-tcp.conf
+sudo sysctl --system
+```
+
 gost was removed: the network model (anx-node) carries what its routes did.
 The Agent stops `anixops-gost.service` and clears `/var/lib/anixops-gost` at
 start, the updater deletes `/usr/lib/anixops-agent/gost` after an upgrade, and
