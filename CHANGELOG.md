@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 5.0.0-rc.29 - 2026-11-02
+
+The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.29 and
+anx-node 0.1.0-alpha.13. Proxy nodes run only on the mTLS Agent control
+stream; every legacy transport and node API key path is gone. A node needs
+an enrolled client certificate (every node on 5.0.0-rc.28 has one).
+
+### Added
+
+- The Hello labels name the installed anx-node release (`kernel.anx-node`),
+  so Control shows each node's kernel and can upgrade only the kernel.
+
 ### Removed
 
 - The frozen `sdk/` module (`github.com/AnixOps/anix-agent/sdk`, last tag
