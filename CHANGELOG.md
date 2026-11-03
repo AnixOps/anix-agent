@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 5.0.0 - 2026-11-03
+
+The 5.0 release, shipped with AnixOps Control 5.0.0 and anx-node
+0.1.0-alpha.15. From here on Control and the Agent share the major and
+minor version and number their patches independently.
+
 ### Added
 
 - On Linux the Agent sets `net.ipv4.tcp_notsent_lowat = 131072` and switches
