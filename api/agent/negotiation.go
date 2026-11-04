@@ -38,6 +38,7 @@ var dataPlaneCapabilities = []string{
 	agentcontrol.CapabilityAlive,
 	agentcontrol.CapabilityArtifacts,
 	agentcontrol.CapabilityUpgrade,
+	agentcontrol.CapabilityReleases,
 	agentcontrol.CapabilityDestinations,
 }
 
@@ -59,6 +60,7 @@ var implementedDataPlane = map[string]bool{
 	agentcontrol.CapabilityNetwork:        true,
 	agentcontrol.CapabilityDiag:           true,
 	agentcontrol.CapabilityUpgrade:        true,
+	agentcontrol.CapabilityReleases:       true,
 	agentcontrol.CapabilityDestinations:   true,
 }
 

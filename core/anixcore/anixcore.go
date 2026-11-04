@@ -42,6 +42,15 @@ var lineSupportsMTLS = func(binary string) bool {
 	return anxmtls.Supports(binary, anxmtls.NodeMarker)
 }
 
+// configOnStdin reports whether the anx-node at binary reads its config from
+// stdin (`run -c -`), so that no file on the node holds it.
+var configOnStdin = func(binary string) bool {
+	if path, err := exec.LookPath(binary); err == nil {
+		binary = path
+	}
+	return anxmtls.Supports(binary, []byte("features: config-stdin"))
+}
+
 var (
 	_ vCore.Core                 = (*Core)(nil)
 	_ vCore.OnlineDeviceProvider = (*Core)(nil)
@@ -240,10 +249,16 @@ func (c *Core) launch() error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, document, 0o600); err != nil {
-		return fmt.Errorf("write anixcore config: %w", err)
+	process := exec.Command(c.config.BinaryPath, "run", "-c", "-")
+	if configOnStdin(c.config.BinaryPath) {
+		process.Stdin = bytes.NewReader(document)
+		_ = os.Remove(path) // what an earlier Agent wrote
+	} else {
+		if err := os.WriteFile(path, document, 0o600); err != nil {
+			return fmt.Errorf("write anixcore config: %w", err)
+		}
+		process.Args[3] = path
 	}
-	process := exec.Command(c.config.BinaryPath, "run", "-c", path)
 	process.Stdout = os.Stdout
 	process.Stderr = os.Stderr
 	if err := process.Start(); err != nil {

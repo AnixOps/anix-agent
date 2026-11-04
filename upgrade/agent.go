@@ -1,6 +1,7 @@
 package upgrade
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -314,7 +315,7 @@ func (a *Agent) Handle(ctx context.Context, operation *agentv1pb.DesiredOperatio
 				return state("", a.Version, codeError(agentcontrol.UpgradeErrorNoArtifact, "the release has no artifact for %s", a.arch()))
 			}
 			logger.WithField("asset", artifact.Asset).Info("Downloading the Agent release Control pushed")
-			staged, err = a.stage(ctx, artifact)
+			staged, err = a.stage(ctx, request.TargetVersion, artifact)
 			if err != nil {
 				logger.WithError(err).Warn("The Agent release could not be staged")
 				return state("", a.Version, err)
@@ -410,7 +411,7 @@ func (a *Agent) stageKernel(ctx context.Context, kernel agentcontrol.UpgradeKern
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "cannot create %s: %v", dir, err)
 	}
 	progress(ctx, agentcontrol.UpgradePhaseDownloading, a.Version)
-	temp, err := a.download(ctx, kernel.URL, kernel.Asset, kernel.Size)
+	temp, err := a.download(ctx, agentcontrol.ReleaseKindKernel, kernel.Version, kernel.URL, kernel.Asset, kernel.Size)
 	if err != nil {
 		return "", err
 	}
@@ -438,13 +439,13 @@ func (a *Agent) stageKernel(ctx context.Context, kernel agentcontrol.UpgradeKern
 
 // stage downloads artifact into the staging directory and verifies it; a
 // release that does not verify is removed.
-func (a *Agent) stage(ctx context.Context, artifact agentcontrol.UpgradeArtifact) (string, error) {
+func (a *Agent) stage(ctx context.Context, version string, artifact agentcontrol.UpgradeArtifact) (string, error) {
 	dir := a.dir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "cannot create %s: %v", dir, err)
 	}
 	progress(ctx, agentcontrol.UpgradePhaseDownloading, a.Version)
-	temp, err := a.download(ctx, artifact.URL, artifact.Asset, artifact.Size)
+	temp, err := a.download(ctx, agentcontrol.ReleaseKindAgent, version, artifact.URL, artifact.Asset, artifact.Size)
 	if err != nil {
 		return "", err
 	}
@@ -467,9 +468,30 @@ func (a *Agent) stage(ctx context.Context, artifact agentcontrol.UpgradeArtifact
 	return path, nil
 }
 
-// download fetches url into a temporary file of the staging directory, at
-// most size bytes: more is a size mismatch (upgrade_digest_mismatch).
-func (a *Agent) download(ctx context.Context, url, asset string, size int64) (string, error) {
+// Fetch downloads a release file on the Agent's control connection
+// (releases.v1): kind is agentcontrol.ReleaseKindAgent or ReleaseKindKernel.
+type Fetch func(ctx context.Context, kind, version, asset string, size int64) ([]byte, error)
+
+type fetchKey struct{}
+
+// WithFetch makes Handle download releases with fetch first, the https URL
+// of the operation being the fallback.
+func WithFetch(ctx context.Context, fetch Fetch) context.Context {
+	return context.WithValue(ctx, fetchKey{}, fetch)
+}
+
+// download fetches a release file into a temporary file of the staging
+// directory, at most size bytes: more is a size mismatch
+// (upgrade_digest_mismatch). The control connection goes first (WithFetch),
+// then url.
+func (a *Agent) download(ctx context.Context, kind, version, url, asset string, size int64) (string, error) {
+	if fetch, ok := ctx.Value(fetchKey{}).(Fetch); ok {
+		data, err := fetch(ctx, kind, version, asset, size)
+		if err == nil {
+			return a.saveTemp(asset, size, bytes.NewReader(data))
+		}
+		log.WithError(err).WithField("asset", asset).Warn("The release could not be downloaded on the control connection; trying its https URL")
+	}
 	client := a.HTTPClient
 	if client == nil {
 		client = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second}}
@@ -489,12 +511,18 @@ func (a *Agent) download(ctx context.Context, url, asset string, size int64) (st
 	if response.ContentLength > size {
 		return "", codeError(agentcontrol.UpgradeErrorDigest, "%s is %d bytes, not %d", asset, response.ContentLength, size)
 	}
+	return a.saveTemp(asset, size, response.Body)
+}
+
+// saveTemp writes body into a temporary file of the staging directory, at
+// most size bytes.
+func (a *Agent) saveTemp(asset string, size int64, body io.Reader) (string, error) {
 	file, err := os.CreateTemp(a.dir(), "."+asset+".*.tmp")
 	if err != nil {
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "%v", err)
 	}
 	name := file.Name()
-	written, err := io.Copy(file, io.LimitReader(response.Body, size+1))
+	written, err := io.Copy(file, io.LimitReader(body, size+1))
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
 	}

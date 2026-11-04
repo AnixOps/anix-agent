@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- Upgrades download the Agent release and the anx-node package on the
+  control connection (`releases.v1`, `AgentArtifacts.DownloadRelease`) when
+  Control serves it, resuming a cut stream from the bytes received; the
+  operation's https URL is the fallback.
+- anx-node gets its configuration on stdin (`run -c -`) when the release
+  supports it (`features: config-stdin`), so no file on the node holds it.
+
+### Changed
+
+- The log writes a node's tag (`[<api host>]-<protocol>:<id>`) as
+  `node-<id>`, and the command help no longer lists protocols.
+- Release builds add `-buildvcs=false`.
+
 ## 5.0.0 - 2026-11-03
 
 The 5.0 release, shipped with AnixOps Control 5.0.0 and anx-node
