@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- The Agent names its protocol revision (`protocol.revision`, 1) and the
+  oldest anx-node it works with (`kernel.anx-node.min`, 0.1.0-alpha.15) in
+  its Hello, so Control can judge compatibility now that Control and the
+  Agent number their patches independently.
+
 ## 5.0.0 - 2026-11-03
 
 The 5.0 release, shipped with AnixOps Control 5.0.0 and anx-node
