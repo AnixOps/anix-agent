@@ -11,13 +11,26 @@
 - anx-node gets its configuration on stdin (`run -c -`) when the release
   supports it (`features: config-stdin`), so no file on the node holds it.
 
+- Kernel forwarding hops (Control `ENGINE_NFTABLES`, network.v1
+  `NetworkPlan.kernel_forwards`): the Agent forwards each one in the kernel
+  with one nftables table, `inet edge_nat` (DNAT to the targets, masquerade,
+  an up and a down counter per route), replaced whole with `nft -f`. No
+  process listens on the port. Counters carry over each replacement. TCP
+  targets are checked by connecting every health interval (5 s by default);
+  failing ones are left out while another is up. Balancing is round robin,
+  random, source hash or failover. The Agent turns `net.ipv4.ip_forward` on;
+  IPv6 targets need `net.ipv6.conf.all.forwarding=1` from the operator
+  (Ansible `services/kernel-forward`). Each kernel forward is reported as
+  the route's port forward (state, bytes, target health). It needs `nft`
+  (package nftables).
+
 ### Changed
 
 - The log writes a node's tag (`[<api host>]-<protocol>:<id>`) as
   `node-<id>`, and the command help no longer lists protocols.
 - Release builds add `-buildvcs=false`.
 - The installed layout comes from where the binary is (`common/layout`):
-  an Agent at `/usr/lib/<name>/<name>` (install.sh `--name <name>`) uses
+  an Agent at `/usr/lib/<name>/<name>` (install.sh `--install-name <name>`) uses
   `/etc/<name>`, `/var/lib/<name>`, `/run/<name>`, the units `<name>` and
   `<name>-updater`, the polkit rule and sysctl drop-in named `<name>`, and
   installs its kernel as `core` and `core-server`. The default layout is
