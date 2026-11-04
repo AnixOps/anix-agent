@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.1 - 2026-11-04
+
+Shipped with AnixOps Control 5.0.1 and anx-node 0.1.0-alpha.16 (config on
+stdin). Protocol revision 1.
+
 ### Added
 
 - Upgrades download the Agent release and the anx-node package on the
