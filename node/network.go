@@ -18,6 +18,7 @@ import (
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
+	"github.com/AnixOps/anix-agent/v5/kernelfwd"
 	"github.com/AnixOps/anix-agent/v5/networkroute"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -92,6 +93,8 @@ type networkComponent struct {
 	routes *networkroute.Manager
 	// servers runs the accepting anx_line ends, nil without anx-server.
 	servers *anxserver.Manager
+	// kernel runs the plan's kernel forwards (nftables).
+	kernel *kernelfwd.Manager
 
 	mu         sync.Mutex
 	client     *agentapi.Client
@@ -135,7 +138,7 @@ func newNetworkComponent(nodeID int, core vCore.Core) *networkComponent {
 		listKind(caps, networkv1.Component_COMPONENT_EGRESS, network.EgressHop)
 	}
 	return &networkComponent{
-		device: device, applier: applier, caps: caps, routes: routes, servers: servers,
+		device: device, applier: applier, caps: caps, routes: routes, servers: servers, kernel: &kernelfwd.Manager{},
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), stopped: make(chan struct{}),
 	}
 }
@@ -189,6 +192,7 @@ func (c *networkComponent) close() {
 		if c.servers != nil {
 			c.servers.Close()
 		}
+		c.kernel.Close()
 	})
 }
 
@@ -248,10 +252,18 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	if err := c.route(plan); err != nil {
 		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), err)
 	}
-	status, applyErr := c.applier.ApplyNetwork(plan)
-	if status == nil && applyErr != nil {
-		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), applyErr)
+	// The Agent runs the kernel forwards itself; the core gets the rest.
+	kernelErr := c.kernel.Apply(plan.GetKernelForwards())
+	core := plan
+	if len(plan.GetKernelForwards()) > 0 {
+		core = proto.Clone(plan).(*networkv1.NetworkPlan)
+		core.KernelForwards = nil
 	}
+	status, applyErr := c.applier.ApplyNetwork(core)
+	if status == nil && applyErr != nil {
+		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), errors.Join(applyErr, kernelErr))
+	}
+	applyErr = errors.Join(applyErr, kernelErr)
 	if c.servers != nil {
 		applyErr = errors.Join(applyErr, c.servers.Apply(accepts))
 	}
@@ -364,6 +376,7 @@ func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 		status = read
 	}
 	status = proto.Clone(status).(*networkv1.NetworkStatus)
+	status.PortForwards = append(status.PortForwards, c.kernel.Status()...)
 	if c.servers != nil && plan != nil {
 		status.Components = append(status.Components, c.servers.Status()...)
 		status.Components = hopIngressStates(plan, status.Components)
