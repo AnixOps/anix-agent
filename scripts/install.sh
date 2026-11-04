@@ -158,20 +158,20 @@ install_base() {
     case "${release}" in
         centos)
             if command -v dnf >/dev/null 2>&1; then
-                dnf install -y coreutils curl wget unzip tar ca-certificates >/dev/null 2>&1
+                dnf install -y coreutils curl wget unzip tar ca-certificates nftables >/dev/null 2>&1
             else
-                yum install -y coreutils curl wget unzip tar ca-certificates >/dev/null 2>&1
+                yum install -y coreutils curl wget unzip tar ca-certificates nftables >/dev/null 2>&1
             fi
             ;;
         debian)
             apt-get update -y >/dev/null 2>&1
-            apt-get install -y coreutils curl wget unzip tar ca-certificates >/dev/null 2>&1
+            apt-get install -y coreutils curl wget unzip tar ca-certificates nftables >/dev/null 2>&1
             ;;
         alpine)
-            apk add --no-cache coreutils curl wget unzip tar ca-certificates >/dev/null 2>&1
+            apk add --no-cache coreutils curl wget unzip tar ca-certificates nftables >/dev/null 2>&1
             ;;
         arch)
-            pacman -Sy --noconfirm --needed coreutils curl wget unzip tar ca-certificates >/dev/null 2>&1
+            pacman -Sy --noconfirm --needed coreutils curl wget unzip tar ca-certificates nftables >/dev/null 2>&1
             ;;
     esac
 }
