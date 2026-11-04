@@ -195,11 +195,34 @@ var installedKernel = func() string { return upgrade.InstalledKernel(upgrade.Def
 // kernel-only upgrade. It is left out when no kernel is installed.
 const KernelVersionLabel = "kernel.anx-node"
 
+// The protocol revision and kernel minimum this Agent names in its Hello
+// (Control's sdk/agentcontrol/compat.go and
+// docs/reference/agent-versioning.md, which own the label names). Control
+// judges every session with them: an Agent below the revisions it serves,
+// or running an anx-node older than KernelMinVersion, is shown as
+// incompatible.
+const (
+	// ProtocolRevisionLabel carries ProtocolRevision.
+	ProtocolRevisionLabel = "protocol.revision"
+	// KernelMinVersionLabel carries KernelMinVersion.
+	KernelMinVersionLabel = "kernel.anx-node.min"
+	// ProtocolRevision is the anix.agent.v1 revision this Agent implements.
+	// Raise it when the Agent implements the contract change of a newer
+	// revision (Control's revision table).
+	ProtocolRevision = 1
+	// KernelMinVersion is the oldest anx-node release this Agent works
+	// with (destination counting and QoS need alpha.15). Raise it when the
+	// Agent starts to rely on a newer kernel.
+	KernelMinVersion = "0.1.0-alpha.15"
+)
+
 // helloLabels are the labels of the Agent's Hello.
 func helloLabels(coreType, nodeType, kernel string) map[string]string {
 	labels := map[string]string{
-		"core":      coreType,
-		"node_type": nodeType,
+		"core":                coreType,
+		"node_type":           nodeType,
+		ProtocolRevisionLabel: strconv.Itoa(ProtocolRevision),
+		KernelMinVersionLabel: KernelMinVersion,
 	}
 	if kernel != "" {
 		labels[KernelVersionLabel] = kernel

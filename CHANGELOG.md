@@ -10,7 +10,10 @@
   operation's https URL is the fallback.
 - anx-node gets its configuration on stdin (`run -c -`) when the release
   supports it (`features: config-stdin`), so no file on the node holds it.
-
+- The Agent names its protocol revision (`protocol.revision`, 1) and the
+  oldest anx-node it works with (`kernel.anx-node.min`, 0.1.0-alpha.15) in
+  its Hello, so Control can judge compatibility now that Control and the
+  Agent number their patches independently.
 - Kernel forwarding hops (Control `ENGINE_NFTABLES`, network.v1
   `NetworkPlan.kernel_forwards`): the Agent forwards each one in the kernel
   with one nftables table, `inet edge_nat` (DNAT to the targets, masquerade,

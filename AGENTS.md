@@ -51,5 +51,8 @@ sing-box、xray、hysteria、gost、旧的 nftables 转发驱动、anixops relay
   仅在显式设置 `ALLOW_LOCAL_BUILD=1` 时用于开发验证。
 - 测试命令（CI 同款）：`GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1`。
 - Go 版本见 `go.mod`；需要 `GOEXPERIMENT=jsonv2`。
-- 版本号规则：5.0 GA 前 Control 与 Agent 共用同一个基础版本，热修复加 `.hf.N`。
+- 版本号规则：5.0.0 起 Control 与 Agent 主版本号.次版本号相同（版本线），补丁号各自独立；
+  兼容性由协议修订号决定（`node/agent_control.go` 的 `ProtocolRevision`、`KernelMinVersion`，
+  规则见 Control 仓库 `docs/reference/agent-versioning.md`）。实现了 Control 新修订号的契约变更时
+  提升 `ProtocolRevision`；开始依赖更新的 anx-node 时提升 `KernelMinVersion`。
 - 变更说明写入 `CHANGELOG.md`。
