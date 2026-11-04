@@ -7,7 +7,8 @@
 `anix-agent` 是 AnixOps 的节点端程序（Go 模块 `github.com/AnixOps/anix-agent/v5`）。
 它运行 AnixOps 自研内核 anixcore（anx-node 进程）与 WireGuard 内核，只通过
 mTLS 的 `anix.agent.v1` 双向 gRPC 控制流与 AnixOps Control（`AnixOps/anix-control`）交互。
-sing-box、xray、hysteria、gost、nftables 转发、anixops relay 都已删除，不要再引入。
+sing-box、xray、hysteria、gost、旧的 nftables 转发驱动、anixops relay 都已删除，不要再引入。
+网络计划里的内核转发跳（`kernel_forwards`）由 `kernelfwd/` 直接用 nft 实现，保持轻量。
 
 - 协议契约归 Control 所有：`github.com/AnixOps/anix-control/sdk`（`sdk/api/agent/v1`、
   `sdk/agentcontrol`、`sdk/plugincontrol`）。契约只增不删。
@@ -28,6 +29,7 @@ sing-box、xray、hysteria、gost、nftables 转发、anixops relay 都已删除
 | `node/` | 节点控制器：配置快照、用户增量、流量上报、证书、网络模型 |
 | `anxserver/`、`anxline/`、`anxmtls/` | anx-node 进程管理、ANX-Line 链路（MPTCP / fake-TCP）、链路证书 |
 | `forward/` | 入口高可用的 vantage 探测、转发诊断与 forward.report（Control 在用） |
+| `kernelfwd/` | 网络计划的内核转发跳：一张 nft 表（DNAT + masquerade + 计数器）与目标 TCP 探测 |
 | `networkroute/`、`realityprobe/`、`diagnostic/` | 路由健康、Reality 目标探测、诊断任务 |
 | `plugin/` | 插件 Supervisor 与机器监控插件 |
 | `upgrade/` | 自升级与旧安装（V2bX、gost、nftables）清理 |

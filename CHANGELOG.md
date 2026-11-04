@@ -8,6 +8,18 @@
   oldest anx-node it works with (`kernel.anx-node.min`, 0.1.0-alpha.15) in
   its Hello, so Control can judge compatibility now that Control and the
   Agent number their patches independently.
+- Kernel forwarding hops (Control `ENGINE_NFTABLES`, network.v1
+  `NetworkPlan.kernel_forwards`): the Agent forwards each one in the kernel
+  with one nftables table, `inet edge_nat` (DNAT to the targets, masquerade,
+  an up and a down counter per route), replaced whole with `nft -f`. No
+  process listens on the port. Counters carry over each replacement. TCP
+  targets are checked by connecting every health interval (5 s by default);
+  failing ones are left out while another is up. Balancing is round robin,
+  random, source hash or failover. The Agent turns `net.ipv4.ip_forward` on;
+  IPv6 targets need `net.ipv6.conf.all.forwarding=1` from the operator
+  (Ansible `services/kernel-forward`). Each kernel forward is reported as
+  the route's port forward (state, bytes, target health). It needs `nft`
+  (package nftables).
 
 ## 5.0.0 - 2026-11-03
 
