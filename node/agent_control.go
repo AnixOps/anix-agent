@@ -404,6 +404,15 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 		if c.upgrader == nil {
 			return nil, fmt.Errorf("unsupported desired operation %q", operation.Kind)
 		}
+		if c.agentClient != nil {
+			ctx = upgrade.WithFetch(ctx, func(ctx context.Context, kind, version, asset string, size int64) ([]byte, error) {
+				releases, err := c.agentClient.Releases()
+				if err != nil {
+					return nil, err
+				}
+				return releases.DownloadRelease(ctx, kind, version, asset, size)
+			})
+		}
 		return c.upgrader.Handle(ctx, operation)
 	case diagnostic.Operation:
 		if c.diagnostics == nil {

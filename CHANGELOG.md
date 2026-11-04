@@ -4,6 +4,12 @@
 
 ### Added
 
+- Upgrades download the Agent release and the anx-node package on the
+  control connection (`releases.v1`, `AgentArtifacts.DownloadRelease`) when
+  Control serves it, resuming a cut stream from the bytes received; the
+  operation's https URL is the fallback.
+- anx-node gets its configuration on stdin (`run -c -`) when the release
+  supports it (`features: config-stdin`), so no file on the node holds it.
 - The Agent names its protocol revision (`protocol.revision`, 1) and the
   oldest anx-node it works with (`kernel.anx-node.min`, 0.1.0-alpha.15) in
   its Hello, so Control can judge compatibility now that Control and the
@@ -20,6 +26,18 @@
   (Ansible `services/kernel-forward`). Each kernel forward is reported as
   the route's port forward (state, bytes, target health). It needs `nft`
   (package nftables).
+
+### Changed
+
+- The log writes a node's tag (`[<api host>]-<protocol>:<id>`) as
+  `node-<id>`, and the command help no longer lists protocols.
+- Release builds add `-buildvcs=false`.
+- The installed layout comes from where the binary is (`common/layout`):
+  an Agent at `/usr/lib/<name>/<name>` (install.sh `--install-name <name>`) uses
+  `/etc/<name>`, `/var/lib/<name>`, `/run/<name>`, the units `<name>` and
+  `<name>-updater`, the polkit rule and sysctl drop-in named `<name>`, and
+  installs its kernel as `core` and `core-server`. The default layout is
+  unchanged.
 
 ## 5.0.0 - 2026-11-03
 

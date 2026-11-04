@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 )
 
 // DefaultAgentStreamStateDir is where the data-plane state lives.
-const DefaultAgentStreamStateDir = "/var/lib/anixops-agent/stream"
+var DefaultAgentStreamStateDir = layout.StateDir + "/stream"
 
 // AgentStreamConfig is the data plane of the Agent control stream: the
 // node's configuration (config.v1) and users (users.v1) from Control, and

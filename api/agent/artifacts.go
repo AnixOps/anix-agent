@@ -202,3 +202,48 @@ func (c *Client) artifactsMetrics(metrics map[string]float64) {
 	metrics[MetricArtifactDownloads] = float64(c.artifacts.downloads.Load())
 	metrics[MetricArtifactFailures] = float64(c.artifacts.failures.Load())
 }
+
+// Releases returns the AgentArtifacts client for release downloads;
+// ErrSessionGone when the session did not negotiate releases.v1.
+func (c *Client) Releases() (*PluginArtifacts, error) {
+	c.mu.RLock()
+	negotiated := c.ready && agentcontrol.Negotiated(c.helloCapabilities, c.serverCapabilities, agentcontrol.CapabilityReleases)
+	c.mu.RUnlock()
+	identity := c.identity.certificate()
+	if !negotiated || identity == nil {
+		return nil, fmt.Errorf("release downloads: %w (the session did not negotiate releases.v1)", ErrSessionGone)
+	}
+	return &PluginArtifacts{client: c, identity: identity}, nil
+}
+
+// DownloadRelease downloads a release file of size bytes (releases.v1). A
+// stream that breaks is resumed from the bytes received; the caller
+// verifies the file.
+func (a *PluginArtifacts) DownloadRelease(ctx context.Context, kind, version, asset string, size int64) ([]byte, error) {
+	data := make([]byte, 0, size)
+	err := a.call(ctx, "release", &agentv1pb.PluginReleaseAddress{PluginId: asset, Version: version}, func(callCtx context.Context, service agentv1pb.AgentArtifactsClient, trailer *metadata.MD) error {
+		stream, err := service.DownloadRelease(callCtx, &agentv1pb.DownloadReleaseRequest{Kind: kind, Version: version, Asset: asset, Offset: int64(len(data))})
+		if err != nil {
+			return err
+		}
+		for {
+			chunk, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				*trailer = stream.Trailer()
+				return err
+			}
+			if chunk.GetOffset() != int64(len(data)) || int64(len(data)+len(chunk.GetData())) > size {
+				return fmt.Errorf("release chunk at offset %d does not fit the %d bytes received of %d", chunk.GetOffset(), len(data), size)
+			}
+			data = append(data, chunk.GetData()...)
+		}
+		if int64(len(data)) != size {
+			return fmt.Errorf("the release has %d bytes, the operation names %d", len(data), size)
+		}
+		return nil
+	})
+	return data, err
+}

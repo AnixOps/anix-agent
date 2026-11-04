@@ -146,7 +146,7 @@ jobs:
         run: |
           echo "version: $version"
           mkdir -p build_assets
-          GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "anixcore" -trimpath -ldflags "-X 'github.com/AnixOps/anix-agent/v5/cmd.version=$version' -s -w -buildid="
+          GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "anixcore" -trimpath -buildvcs=false -ldflags "-X 'github.com/AnixOps/anix-agent/v5/cmd.version=$version' -s -w -buildid="
           ln -s anix-agent build_assets/V2bX
 
       - name: Prepare to release

@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
 )
@@ -59,8 +60,10 @@ const (
 // The Agent's own service and its systemd unit (scripts/install.sh).
 const (
 	AgentService = "anix-agent"
-	AgentUnit    = "anix-agent.service"
 )
+
+// AgentUnit is the Agent's systemd unit.
+var AgentUnit = layout.Service + ".service"
 
 // Task is the task Control sends.
 type Task struct {

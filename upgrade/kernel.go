@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	"golang.org/x/crypto/ssh"
 )
@@ -31,18 +32,25 @@ import (
 // installs LibDir/anx-node (and LibDir/anx-server, the accepting end of
 // anx_line transports, when the package holds it) and restarts the Agent,
 // which then runs anx-node as its anixcore core (core.DefaultCoreConfigs).
-const (
-	// KernelBinary is the installed kernel in LibDir.
-	KernelBinary = "anx-node"
-	// KernelPrevBinary is the kernel kept when a new one is installed.
-	KernelPrevBinary = "anx-node.prev"
-	// ServerBinary is anx-server, installed next to anx-node from the same
+var (
+	// KernelFile is the installed kernel in LibDir.
+	KernelFile = layout.Kernel
+	// KernelPrevFile is the kernel kept when a new one is installed.
+	KernelPrevFile = KernelFile + ".prev"
+	// ServerFile is anx-server, installed next to the kernel from the same
 	// package: the Agent runs it for the accepting anx_line ends.
-	ServerBinary = "anx-server"
-	// ServerPrevBinary is the anx-server kept when a new one is installed.
-	ServerPrevBinary = "anx-server.prev"
+	ServerFile = layout.KernelServer
+	// ServerPrevFile is the anx-server kept when a new one is installed.
+	ServerPrevFile = ServerFile + ".prev"
 	// KernelRecord is the installed kernel's version and SHA-256.
-	KernelRecord = "anx-node.json"
+	KernelRecord = KernelFile + ".json"
+)
+
+const (
+	// KernelBinary and ServerBinary are the binaries in the kernel package;
+	// KernelBinary is also the name anx-node's version prints.
+	KernelBinary = "anx-node"
+	ServerBinary = "anx-server"
 	// KernelReleaseKey is the anx release's signing key (the anx repository's
 	// release/allowed_signers): its SHA256SUMS.sig is `ssh-keygen -Y sign`
 	// by this key in KernelSignatureNamespace. Both halves verify with it
@@ -106,8 +114,8 @@ func InstalledKernel(libDir string) string {
 	if err != nil {
 		return ""
 	}
-	for _, binary := range []string{KernelBinary, ServerBinary} {
-		if binary == ServerBinary && record.Server != nil && !*record.Server {
+	for _, binary := range []string{KernelFile, ServerFile} {
+		if binary == ServerFile && record.Server != nil && !*record.Server {
 			continue
 		}
 		if info, err := os.Stat(filepath.Join(libDir, binary)); err != nil || !info.Mode().IsRegular() {
@@ -269,19 +277,19 @@ func (a *Applier) installKernel(ctx context.Context, dir string, kernel KernelHa
 	if server != "" {
 		defer func() { _ = os.Remove(server) }()
 	}
-	if err := keepPrevious(lib, KernelBinary, KernelPrevBinary); err != nil {
+	if err := keepPrevious(lib, KernelFile, KernelPrevFile); err != nil {
 		return codeError(ErrorInstall, "cannot keep the installed kernel: %v", err)
 	}
 	if server != "" {
-		if err := keepPrevious(lib, ServerBinary, ServerPrevBinary); err != nil {
+		if err := keepPrevious(lib, ServerFile, ServerPrevFile); err != nil {
 			return codeError(ErrorInstall, "cannot keep the installed anx-server: %v", err)
 		}
 	}
-	if err := os.Rename(binary, filepath.Join(lib, KernelBinary)); err != nil {
+	if err := os.Rename(binary, filepath.Join(lib, KernelFile)); err != nil {
 		return codeError(ErrorInstall, "cannot install the kernel: %v", err)
 	}
 	if server != "" {
-		if err := os.Rename(server, filepath.Join(lib, ServerBinary)); err != nil {
+		if err := os.Rename(server, filepath.Join(lib, ServerFile)); err != nil {
 			return codeError(ErrorInstall, "cannot install anx-server: %v", err)
 		}
 	}
@@ -333,11 +341,11 @@ func keepPrevious(lib, name, prev string) error {
 func (a *Applier) removeKernel() {
 	lib := a.libDir()
 	_ = os.Remove(filepath.Join(lib, KernelRecord))
-	if err := os.Rename(filepath.Join(lib, KernelPrevBinary), filepath.Join(lib, KernelBinary)); err != nil {
-		_ = os.Remove(filepath.Join(lib, KernelBinary))
+	if err := os.Rename(filepath.Join(lib, KernelPrevFile), filepath.Join(lib, KernelFile)); err != nil {
+		_ = os.Remove(filepath.Join(lib, KernelFile))
 	}
-	if err := os.Rename(filepath.Join(lib, ServerPrevBinary), filepath.Join(lib, ServerBinary)); err != nil {
-		_ = os.Remove(filepath.Join(lib, ServerBinary))
+	if err := os.Rename(filepath.Join(lib, ServerPrevFile), filepath.Join(lib, ServerFile)); err != nil {
+		_ = os.Remove(filepath.Join(lib, ServerFile))
 	}
 }
 

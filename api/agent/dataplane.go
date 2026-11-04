@@ -376,7 +376,7 @@ func (d *DataPlane) capabilities() []string {
 		names = append(names, agentcontrol.CapabilityDiag)
 	}
 	if d.config.Upgrade {
-		names = append(names, agentcontrol.CapabilityUpgrade)
+		names = append(names, agentcontrol.CapabilityUpgrade, agentcontrol.CapabilityReleases)
 	}
 	return names
 }

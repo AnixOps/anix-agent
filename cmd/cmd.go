@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -16,16 +17,20 @@ type LocalTimeFormatter struct {
 	log.TextFormatter
 }
 
+// nodeTagPattern is a node's tag, "[<api host>]-<protocol>:<id>"; the log
+// writes it as "node-<id>" so the journal names no protocol or Control host.
+var nodeTagPattern = regexp.MustCompile(`\[[^\]\s]+\]-[a-z0-9]+:([0-9]+)`)
+
 func (f *LocalTimeFormatter) Format(entry *log.Entry) ([]byte, error) {
 	entry.Time = entry.Time.Local()
-	return f.TextFormatter.Format(entry)
+	line, err := f.TextFormatter.Format(entry)
+	return nodeTagPattern.ReplaceAll(line, []byte("node-$1")), err
 }
 
 var command = &cobra.Command{
 	Use:   cliName,
-	Short: productName + " - multi-protocol proxy node agent",
-	Long: `AnixOps Agent is a multi-protocol proxy node agent that supports
-	VMess, VLESS, Trojan, Shadowsocks, Hysteria, Hysteria2, TUIC, and AnyTLS protocols.
+	Short: productName + " node agent",
+	Long: `AnixOps Agent runs a node for AnixOps Control.
 
 	Usage:
 	  anix-agent -c config.json           Run with specified config file

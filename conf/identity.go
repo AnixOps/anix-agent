@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 )
 
 // Agent identity enrollment modes (AgentIdentity.Enroll).
@@ -19,7 +21,7 @@ const (
 )
 
 // DefaultAgentIdentityCertDir is where node identities live.
-const DefaultAgentIdentityCertDir = "/var/lib/anixops-agent/pki"
+var DefaultAgentIdentityCertDir = layout.StateDir + "/pki"
 
 var agentIdentityClusterPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 

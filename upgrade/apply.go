@@ -539,7 +539,7 @@ func unpack(zipPath, dir string) (binary string, err error) {
 	}
 	for _, entry := range reader.File {
 		name := strings.TrimPrefix(entry.Name, "./")
-		if name != BinaryName || !entry.Mode().IsRegular() {
+		if name != ReleaseBinary || !entry.Mode().IsRegular() {
 			continue
 		}
 		if entry.UncompressedSize64 > maxBinaryBytes {
@@ -557,7 +557,7 @@ func unpack(zipPath, dir string) (binary string, err error) {
 		binary = path
 	}
 	if binary == "" {
-		return "", codeError(ErrorInstall, "the release holds no %s binary", BinaryName)
+		return "", codeError(ErrorInstall, "the release holds no %s binary", ReleaseBinary)
 	}
 	return binary, nil
 }

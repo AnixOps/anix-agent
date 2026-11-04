@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 )
 
@@ -37,7 +38,7 @@ type ForwardConfig struct {
 
 // DefaultForwardStateDir is the Agent's own forwarding state, not the
 // Agent's PKI directory.
-const DefaultForwardStateDir = "/var/lib/anixops-agent/forward"
+var DefaultForwardStateDir = layout.StateDir + "/forward"
 
 // Forward node kinds.
 const (
