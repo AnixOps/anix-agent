@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Removed
+
+- The start-time cleanup of the removed nftables driver (table
+  `inet anixops_fwd`, tc qdisc `af00:`) and the `Forward.Nftables` config
+  keys (`NFT`, `TC`); every node has run it for several releases.
+
 ## 5.0.1 - 2026-11-04
 
 Shipped with AnixOps Control 5.0.1 and anx-node 0.1.0-alpha.16 (config on
