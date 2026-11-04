@@ -42,6 +42,8 @@ var (
 	ServerFile = layout.KernelServer
 	// ServerPrevFile is the anx-server kept when a new one is installed.
 	ServerPrevFile = ServerFile + ".prev"
+	// KernelRecord is the installed kernel's version and SHA-256.
+	KernelRecord = KernelFile + ".json"
 )
 
 const (
@@ -49,8 +51,6 @@ const (
 	// KernelBinary is also the name anx-node's version prints.
 	KernelBinary = "anx-node"
 	ServerBinary = "anx-server"
-	// KernelRecord is the installed kernel's version and SHA-256.
-	KernelRecord = "anx-node.json"
 	// KernelReleaseKey is the anx release's signing key (the anx repository's
 	// release/allowed_signers): its SHA256SUMS.sig is `ssh-keygen -Y sign`
 	// by this key in KernelSignatureNamespace. Both halves verify with it
