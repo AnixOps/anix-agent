@@ -32,8 +32,7 @@ type ForwardConfig struct {
 	// client certificate), AgentStream.
 	ForwardNode *ApiConfig `json:"ForwardNode"`
 	// StateDir keeps the applied forwarding state (DefaultForwardStateDir).
-	StateDir string                `json:"StateDir"`
-	Nftables ForwardNftablesConfig `json:"Nftables"`
+	StateDir string `json:"StateDir"`
 }
 
 // DefaultForwardStateDir is the Agent's own forwarding state, not the
@@ -45,15 +44,6 @@ const (
 	ForwardNodeKindProxy   = "proxy"
 	ForwardNodeKindForward = "forward"
 )
-
-// ForwardNftablesConfig locates the nft and tc of the nftables driver the
-// Agent ran before it was removed: the Agent deletes the table and qdisc the
-// driver left at start. Its other keys (Disable, MarkMask, LimitInterfaces,
-// MSSClampInterfaces) are ignored.
-type ForwardNftablesConfig struct {
-	NFT string `json:"NFT"`
-	TC  string `json:"TC"`
-}
 
 // Kind answers the forwarding node kind, proxy by default.
 func (f *ForwardConfig) Kind() string {

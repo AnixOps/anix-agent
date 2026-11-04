@@ -3,8 +3,7 @@
 // experimental anixops relay) was removed, and the driver framework with
 // them: routes run on the network model. It keeps the forwarding state
 // Control sends, probes entry addresses for Control's entry HA (vantage.go),
-// runs the forward diagnostics and reports hop errors and vantage results;
-// Prepare cleans up after the nftables driver (RetireNftables).
+// runs the forward diagnostics and reports hop errors and vantage results.
 //
 // # Wiring
 //

@@ -1,25 +1,12 @@
 package forward
 
 import (
-	"context"
 	"os"
 	"strings"
 
 	forwardv1 "github.com/AnixOps/anix-control/sdk/api/forward/v1"
 	log "github.com/sirupsen/logrus"
 )
-
-// Settings locate what the Agent cleans up at start.
-type Settings struct {
-	Nftables NftablesSettings
-}
-
-// NftablesSettings locate the nft and tc the Agent ran the removed nftables
-// driver with: RetireNftables deletes the table and qdisc it left.
-type NftablesSettings struct {
-	// NFT and TC are the binaries; empty runs nft and tc from PATH.
-	NFT, TC string
-}
 
 // retiredEngines are the forward engines the Agent had drivers for. Every
 // one was removed: routes run on the network model (anx-node). The Hello
@@ -39,10 +26,9 @@ func removedEngineMessage(engine forwardv1.Engine) string {
 	return "no driver for engine " + engine.String() + ": the Agent runs forwarding on the network model"
 }
 
-// Prepare cleans up after the removed nftables driver and checks the
-// kernel's forwarding sysctls, once at start. It changes nothing else.
-func Prepare(ctx context.Context, settings Settings) {
-	RetireNftables(ctx, settings.Nftables)
+// Prepare checks the kernel's forwarding sysctls, once at start. It changes
+// nothing.
+func Prepare() {
 	checkIPForwarding(log.WithField("component", "forward"))
 }
 

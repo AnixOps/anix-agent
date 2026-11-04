@@ -21,10 +21,7 @@ import (
 // host, a forward node's of its own (StartForward) or a proxy node's
 // (Node.SetForward).
 
-// forwardPrepareTimeout bounds the start-up cleanup (nft, tc).
-const forwardPrepareTimeout = 30 * time.Second
-
-// NewForwardComponent cleans up after the removed drivers, builds the forward
+// NewForwardComponent checks the forwarding sysctls, builds the forward
 // component of the node cfg names, and starts it: the persisted state is
 // loaded before any stream connects. nodes are the proxy nodes, for a
 // proxy node's forwarding.
@@ -33,11 +30,7 @@ func NewForwardComponent(cfg *conf.ForwardConfig, nodes []conf.NodeConfig) (*for
 	if err != nil {
 		return nil, 0, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), forwardPrepareTimeout)
-	defer cancel()
-	forward.Prepare(ctx, forward.Settings{
-		Nftables: forward.NftablesSettings{NFT: cfg.Nftables.NFT, TC: cfg.Nftables.TC},
-	})
+	forward.Prepare()
 	component, err := forward.New(forward.Options{
 		Node: node, StateDir: cfg.Dir(), AgentVersion: panel.Version, Host: forward.ProbeHost(),
 	})
