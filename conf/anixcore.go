@@ -1,5 +1,7 @@
 package conf
 
+import "github.com/AnixOps/anix-agent/v5/common/layout"
+
 // AnixcoreConfig drives the AnixOps node kernel (`anixcore`, from
 // networkcore_anixops) through its local management API.
 type AnixcoreConfig struct {
@@ -48,14 +50,14 @@ type ManagementTLSConfig struct {
 
 // InstalledAnxNodePath is where Agent upgrades install anx-node, the
 // release of our kernel with ANX (upgrade.DefaultLibDir +
-// upgrade.KernelBinary). A configuration without cores runs it as the
+// upgrade.KernelFile). A configuration without cores runs it as the
 // anixcore core with AnxLine when it is there.
-const InstalledAnxNodePath = "/usr/lib/anixops-agent/anx-node"
+var InstalledAnxNodePath = layout.LibDir + "/" + layout.Kernel
 
 // InstalledAnxServerPath is where Agent upgrades install anx-server from
-// the same release (upgrade.DefaultLibDir + upgrade.ServerBinary); the
+// the same release (upgrade.DefaultLibDir + upgrade.ServerFile); the
 // Agent runs it for the accepting anx_line ends, before one on PATH.
-const InstalledAnxServerPath = "/usr/lib/anixops-agent/anx-server"
+var InstalledAnxServerPath = layout.LibDir + "/" + layout.KernelServer
 
 func NewAnixcoreConfig() *AnixcoreConfig {
 	return &AnixcoreConfig{

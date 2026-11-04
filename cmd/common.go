@@ -4,17 +4,21 @@ import (
 	"fmt"
 
 	"github.com/AnixOps/anix-agent/v5/common/exec"
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 )
 
 const (
-	red               = "\033[0;31m"
-	green             = "\033[0;32m"
-	yellow            = "\033[0;33m"
-	plain             = "\033[0m"
-	cliName           = "anix-agent"
-	productName       = "AnixOps Agent"
-	serviceName       = "anix-agent.service"
-	defaultConfigPath = "/etc/anixops/agent/config.json"
+	red         = "\033[0;31m"
+	green       = "\033[0;32m"
+	yellow      = "\033[0;33m"
+	plain       = "\033[0m"
+	cliName     = "anix-agent"
+	productName = "AnixOps Agent"
+)
+
+var (
+	serviceName       = layout.Service + ".service"
+	defaultConfigPath = layout.ConfigDir + "/config.json"
 )
 
 func checkRunning() (bool, error) {

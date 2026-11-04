@@ -39,6 +39,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 )
 
@@ -50,15 +51,23 @@ import (
 const OfficialPublicKey = "jW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE="
 
 // The installed layout (anix-control internal/agentinstall/install.sh).
-const (
+var (
 	// DefaultLibDir holds the installed binaries, root-owned.
-	DefaultLibDir = "/usr/lib/anixops-agent"
+	DefaultLibDir = layout.LibDir
 	// DefaultDir is the staging directory the Agent may write.
-	DefaultDir = "/var/lib/anixops-agent/upgrade"
+	DefaultDir = layout.StateDir + "/upgrade"
 	// UpdaterPathUnit starts the updater when RequestFile appears.
-	UpdaterPathUnit = "anixops-agent-updater.path"
+	UpdaterPathUnit = layout.Updater + ".path"
 	// AgentUnit is the Agent's unit, which the updater restarts.
-	AgentUnit = "anix-agent.service"
+	AgentUnit = layout.Service + ".service"
+	// BinaryName is the Agent binary in LibDir.
+	BinaryName = layout.Binary
+	// PrevBinary is the binary kept for a rollback, PrevRecord its record.
+	PrevBinary = BinaryName + ".prev"
+	PrevRecord = BinaryName + ".prev.json"
+)
+
+const (
 	// RelayUnit is the experimental anixops relay's unit, which nothing here
 	// restarts either.
 	RelayUnit = "anixops-relay.service"
@@ -67,11 +76,8 @@ const (
 	RequestFile = "request.json"
 	// ResultFile is the updater's outcome, which the next Agent logs.
 	ResultFile = "result.json"
-	// BinaryName is the Agent binary in LibDir and in the release zip.
-	BinaryName = "anix-agent"
-	// PrevBinary is the binary kept for a rollback, PrevRecord its record.
-	PrevBinary = "anix-agent.prev"
-	PrevRecord = "anix-agent.prev.json"
+	// ReleaseBinary is the Agent binary in the release zip.
+	ReleaseBinary = "anix-agent"
 
 	// HandOffSchema is HandOff.Schema.
 	HandOffSchema = "anixops.agent-upgrade-handoff/v1"

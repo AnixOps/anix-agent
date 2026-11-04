@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 )
@@ -34,12 +35,7 @@ import (
 // script of this repository. Nothing else on the host is touched.
 const (
 	systemdUnitDir = "/etc/systemd/system"
-	// updaterServiceUnit is the root oneshot the updater path unit starts
-	// (upgrade.UpdaterPathUnit).
-	updaterServiceUnit = "anixops-agent-updater.service"
-	legacyUnitLink     = "V2bX.service"
-
-	polkitRule = "/etc/polkit-1/rules.d/50-anixops-agent.rules"
+	legacyUnitLink = "V2bX.service"
 
 	// agentBinaryLink is the command the O1 installer links to
 	// upgrade.DefaultLibDir/anix-agent.
@@ -53,9 +49,7 @@ const (
 	gostUnit      = "anixops-gost.service"
 	gostStateDir  = "/var/lib/anixops-gost"
 	relayStateDir = "/var/lib/anixops-relay"
-	sysctlDropIn  = "/etc/sysctl.d/90-anixops-forward.conf"
 
-	agentAccount = "anixops-agent"
 	gostAccount  = "anixops-gost"
 	relayAccount = "anixops-relay"
 )
@@ -71,6 +65,15 @@ var legacyCommandLinks = []string{
 // stopped: the updater first, so that nothing replaces the Agent meanwhile,
 // then the Agent, so that it cannot apply its state again, then gost and the
 // anixops relay.
+// The installer's names for this install (layout): the updater's oneshot,
+// the polkit rule, the forwarding sysctl drop-in and the service account.
+var (
+	updaterServiceUnit = layout.Updater + ".service"
+	polkitRule         = layout.PolkitRule
+	sysctlDropIn       = layout.SysctlDropIn
+	agentAccount       = layout.Name
+)
+
 var uninstallUnits = []string{upgrade.UpdaterPathUnit, updaterServiceUnit, upgrade.AgentUnit, gostUnit, upgrade.RelayUnit}
 
 // errNoSystemctl is the host systemctl runner's answer on a host without

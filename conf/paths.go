@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 )
 
 // The AnixOps Agent's file system layout (owner decision H13, the O1
@@ -20,11 +22,11 @@ import (
 //	/run/anixops-agent       runtime files: plugin sockets (RuntimeDirectory)
 //
 // The configuration lives in /etc/anixops/agent and is read only.
-const (
+var (
 	// DefaultStateRoot holds the Agent's persistent state.
-	DefaultStateRoot = "/var/lib/anixops-agent"
+	DefaultStateRoot = layout.StateDir
 	// DefaultRuntimeRoot is the Agent unit's RuntimeDirectory.
-	DefaultRuntimeRoot = "/run/anixops-agent"
+	DefaultRuntimeRoot = layout.RuntimeDir
 	// DefaultPluginRoot is PluginRoot when the configuration leaves it out.
 	DefaultPluginRoot = DefaultStateRoot + "/plugins"
 	// DefaultPluginSocketDir is PluginSocketDir when the configuration

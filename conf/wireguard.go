@@ -1,5 +1,7 @@
 package conf
 
+import "github.com/AnixOps/anix-agent/v5/common/layout"
+
 type WireGuardConfig struct {
 	RuntimeDir                    string `json:"RuntimeDir"`
 	WGPath                        string `json:"WGPath"`
@@ -10,7 +12,7 @@ type WireGuardConfig struct {
 
 func NewWireGuardConfig() *WireGuardConfig {
 	return &WireGuardConfig{
-		RuntimeDir:                    "/etc/anixops/agent/wireguard",
+		RuntimeDir:                    layout.ConfigDir + "/wireguard",
 		WGPath:                        "wg",
 		IPPath:                        "ip",
 		TCPath:                        "tc",

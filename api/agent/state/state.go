@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	"google.golang.org/protobuf/proto"
@@ -36,7 +37,7 @@ import (
 
 // DefaultRoot is where the data-plane state lives unless
 // AgentStream.StateDir says otherwise.
-const DefaultRoot = "/var/lib/anixops-agent/stream"
+var DefaultRoot = layout.StateDir + "/stream"
 
 const (
 	stateFile  = "state.json"

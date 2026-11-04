@@ -16,6 +16,12 @@
 - The log writes a node's tag (`[<api host>]-<protocol>:<id>`) as
   `node-<id>`, and the command help no longer lists protocols.
 - Release builds add `-buildvcs=false`.
+- The installed layout comes from where the binary is (`common/layout`):
+  an Agent at `/usr/lib/<name>/<name>` (install.sh `--name <name>`) uses
+  `/etc/<name>`, `/var/lib/<name>`, `/run/<name>`, the units `<name>` and
+  `<name>-updater`, the polkit rule and sysctl drop-in named `<name>`, and
+  installs its kernel as `core` and `core-server`. The default layout is
+  unchanged.
 
 ## 5.0.0 - 2026-11-03
 

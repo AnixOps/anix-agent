@@ -32,13 +32,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 
 // DefaultRoot is where identities live unless AgentIdentity.CertDir says
 // otherwise.
-const DefaultRoot = "/var/lib/anixops-agent/pki"
+var DefaultRoot = layout.StateDir + "/pki"
 
 // Bootstrap methods recorded with an identity.
 const (
