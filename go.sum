@@ -44,6 +44,8 @@ github.com/AnixOps/anix-control/sdk v0.0.0-20261101010707-4c210899bc56 h1:NqyxNz
 github.com/AnixOps/anix-control/sdk v0.0.0-20261101010707-4c210899bc56/go.mod h1:+W8lHrhwVAHwSElRriWM9MN2VtZOrVzYdtAZ9lZkAgg=
 github.com/AnixOps/anix-control/sdk v0.0.0-20261104142705-ce8831c7f648 h1:CE1wVxOtz1KIuJwFevFSoQDjZBb+3Z1LGZWjE0tS01Y=
 github.com/AnixOps/anix-control/sdk v0.0.0-20261104142705-ce8831c7f648/go.mod h1:2Z7DJrKa4YOmwwglq0ksSenDEgS/FOqCboXkVYIJ0ek=
+github.com/AnixOps/anix-control/sdk v0.0.0-20261104145313-a180c451f6ad h1:VnZR1VwY+X5KL2QWhnCONXNFkSr23mDzbENqMIb30bw=
+github.com/AnixOps/anix-control/sdk v0.0.0-20261104145313-a180c451f6ad/go.mod h1:2Z7DJrKa4YOmwwglq0ksSenDEgS/FOqCboXkVYIJ0ek=
 github.com/Azure/azure-sdk-for-go v68.0.0+incompatible h1:fcYLmCpyNYRnvJbPerq7U0hS+6+I79yEDJBqVNcqUzU=
 github.com/Azure/azure-sdk-for-go v68.0.0+incompatible/go.mod h1:9XXNKU+eRnpl9moKnB4QOLf1HestfXbmab5FXxiDBjc=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1 h1:Wc1ml6QlJs2BHQ/9Bqu1jiyggbsSjramq2oUmp5WeIo=
