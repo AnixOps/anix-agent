@@ -81,6 +81,9 @@ type client struct {
 	// destinationStats is whether the kernel counts each user's traffic by
 	// destination (GET /v1/inbounds/{tag}/destinations).
 	destinationStats atomic.Bool
+	// blockCIDRs is whether the kernel refuses address blocks
+	// (block_cidrs) and counts them (GET /v1/rules/counters).
+	blockCIDRs atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -146,6 +149,7 @@ func (c *client) status(ctx context.Context) error {
 	c.reverseProxy.Store(slices.Contains(status.Features, reverseProxyFeature))
 	c.qos.Store(slices.Contains(status.Features, qosFeature))
 	c.destinationStats.Store(slices.Contains(status.Features, destinationsFeature))
+	c.blockCIDRs.Store(slices.Contains(status.Features, blockCIDRsFeature))
 	return nil
 }
 

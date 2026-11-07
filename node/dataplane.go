@@ -36,7 +36,7 @@ var (
 	streamStartupWait = 20 * time.Second
 	// streamConfigWait bounds the wait for the first snapshot once a
 	// session negotiated config.v1. Control sends one right after the
-	// HelloAck; without it the start fails (systemd restarts the Agent).
+	// HelloAck; without it the start fails.
 	streamConfigWait = 60 * time.Second
 	// streamPendingGrace is how long after the stream went down a
 	// capability it carried counts as pending (0:
@@ -158,7 +158,37 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 	if err := n.applyQoS(snapshot); err != nil {
 		errs = append(errs, err)
 	}
+	if err := n.applyExitPolicy(snapshot); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// applyExitPolicy runs the snapshot's exit policy (the member
+// "exit_policy") on the node's core; a snapshot without it turns it off. A
+// core that cannot run it is skipped.
+func (n *nodeDataPlane) applyExitPolicy(snapshot *agentv1pb.ConfigSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	policy, err := panel.ParseExitPolicy(snapshot.GetConfigJson())
+	if err != nil {
+		return err
+	}
+	for _, controller := range n.controllers {
+		if controller.server == nil {
+			continue
+		}
+		applier, ok := controller.server.(vCore.ExitPolicyApplier)
+		if !ok {
+			return nil
+		}
+		if err := applier.ApplyExitPolicy(policy); err != nil {
+			return fmt.Errorf("exit policy: %w", err)
+		}
+		return nil
+	}
+	return nil
 }
 
 // applyQoS runs the snapshot's traffic priorities and per-user class caps
@@ -544,8 +574,10 @@ func (n *nodeDataPlane) start(ctx context.Context) error {
 }
 
 // streamStartFailed ends the Agent when a node could not start from the
-// stream in the background: systemd starts it again, as after a
-// failed start in the foreground. Tests replace it.
+// stream in the background because Control sent no users or configuration
+// or does not serve them, as a failed start in the foreground does. A
+// configuration that fails to apply does not end it (finishStart). Tests
+// replace it.
 var streamStartFailed = func(nodeID int, err error) {
 	log.WithFields(log.Fields{"component": "agent-dataplane", "node_id": nodeID}).WithError(err).
 		Fatal("Could not start the node from the Agent control stream")
@@ -624,15 +656,23 @@ func (n *nodeDataPlane) finishStart(ctx context.Context, persistedConfig *agentv
 			return fmt.Errorf("node %d: Control negotiated config.v1 but sent no configuration snapshot within %s: %w", n.nodeID, streamConfigWait, err)
 		}
 		applyErr := n.ApplyConfig(ctx, snapshot)
+		// Control hears of a failure (config_apply_failed); the node
+		// stays connected and applies the next snapshot or kernel.
 		plane.ConfigResult(snapshot, applyErr)
 		if applyErr != nil {
-			return fmt.Errorf("node %d: apply the configuration snapshot from Control: %w", n.nodeID, applyErr)
+			n.logger().WithError(applyErr).WithField("config_revision", snapshot.GetConfigRevision()).
+				Warn("Could not apply the configuration; the node stays connected and applies the next configuration Control sends")
 		}
 	case configMode == agentapi.DataPlanePending && persistedConfig != nil:
 		if err := n.ApplyConfig(ctx, persistedConfig); err != nil {
-			return fmt.Errorf("node %d: start from the stored configuration snapshot: %w", n.nodeID, err)
+			// Hello then reports no revision: Control sends the desired
+			// configuration once the stream is up.
+			n.logger().WithError(err).WithField("config_revision", persistedConfig.GetConfigRevision()).
+				Warn("Could not apply the stored configuration; the node stays connected and applies the next configuration Control sends")
+			plane.DiscardPersistedConfig()
+		} else {
+			plane.RestoreConfig(persistedConfig)
 		}
-		plane.RestoreConfig(persistedConfig)
 	default:
 		return fmt.Errorf("node %d: Control does not serve configuration on the Agent control stream (config.v1): upgrade Control", n.nodeID)
 	}

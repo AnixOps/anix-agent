@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 )
@@ -71,7 +72,7 @@ func foldDestinations(entries []apiDestination) []destinations.Traffic {
 			i = len(traffic)
 			index[k] = i
 			traffic = append(traffic, destinations.Traffic{UID: uid, Entry: destinations.Entry{
-				User: entry.Name, Domain: k.domain, Protocol: k.protocol,
+				User: strconv.Itoa(uid), Domain: k.domain, Protocol: k.protocol,
 			}})
 		}
 		traffic[i].Upload += max(entry.Up, 0)

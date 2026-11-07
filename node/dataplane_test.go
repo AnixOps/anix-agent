@@ -323,6 +323,37 @@ func TestStreamStartFailsWhenControlDoesNotServeTheNode(t *testing.T) {
 	assert.True(t, agentcontrol.HasCapabilityVersion(hello.Capabilities, agentcontrol.CapabilityConfig, "v1"))
 }
 
+func TestStreamFirstConfigurationThatFailsKeepsTheAgentConnected(t *testing.T) {
+	previous := streamStartFailed
+	streamStartFailed = func(_ int, err error) { t.Errorf("the node must not end the Agent: %v", err) }
+	t.Cleanup(func() { streamStartFailed = previous })
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired, agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers)
+	broken := proxyDocument(443)
+	broken["runtime"] = map[string]any{"types": map[string]any{}}
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, broken), false)
+	fixture.control.UpsertUsers(&agentv1pb.NodeUser{UserId: 1, Uuid: "user-1"})
+	node := fixture.start(t)
+
+	require.Eventually(t, func() bool { return lastStatus(fixture.control) != nil }, 5*time.Second, 10*time.Millisecond)
+	assert.False(t, lastStatus(fixture.control).Applied)
+	assert.NotEmpty(t, lastStatus(fixture.control).Error)
+	_, info := fixture.core.node()
+	assert.Nil(t, info, "no controller starts on a configuration that failed")
+	assert.False(t, node.controllers[0].isStarted())
+
+	// The next snapshot starts the node without a restart.
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(4, proxyDocument(443)), true)
+	require.Eventually(t, func() bool {
+		status := lastStatus(fixture.control)
+		return status != nil && status.ConfigRevision == 4 && status.Applied
+	}, 5*time.Second, 10*time.Millisecond)
+	tag, info := fixture.core.node()
+	require.NotNil(t, info)
+	assert.Equal(t, 443, info.VAllss.ServerPort)
+	assert.True(t, node.controllers[0].isStarted())
+	assert.ElementsMatch(t, []string{"user-1"}, fixture.core.userUUIDs(tag))
+}
+
 func TestNodeInfoFromSnapshotPicksTheControllersNodeType(t *testing.T) {
 	document := proxyDocument(443)
 	document["runtime"].(map[string]any)["types"].(map[string]any)["vmess"] = map[string]any{

@@ -24,6 +24,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
+	log "github.com/sirupsen/logrus"
 )
 
 // newAgentControlClientForSupervisor binds the control stream to the
@@ -96,10 +97,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		Handler:       agentapi.OperationHandlerFunc(controller.handleAgentOperation),
 		Admit:         controller.admitAgentOperation,
 		MetricsProvider: func(ctx context.Context) (map[string]float64, error) {
-			if supervisor == nil {
-				return nil, nil
-			}
-			return supervisor.TelemetryMetrics(ctx)
+			return agentMetrics(ctx, core, supervisor)
 		},
 		PluginObservationsProvider: func(ctx context.Context) ([]*agentv1pb.PluginObservedState, error) {
 			if supervisor == nil {
@@ -121,6 +119,39 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	}
 	controller.agentClient = client
 	return client, nil
+}
+
+// mainlandBlockedMetric is the heartbeat metric of the connections the
+// exit policy refused to mainland-China addresses since the previous
+// heartbeat.
+const mainlandBlockedMetric = "agent_dataplane_mainland_blocked"
+
+// agentMetrics are the heartbeat's metrics: the plugins' telemetry and the
+// connections the exit policy refused since the previous heartbeat.
+func agentMetrics(ctx context.Context, core vCore.Core, supervisor *plugin.Supervisor) (map[string]float64, error) {
+	var metrics map[string]float64
+	if supervisor != nil {
+		telemetry, err := supervisor.TelemetryMetrics(ctx)
+		if err != nil {
+			return nil, err
+		}
+		metrics = telemetry
+	}
+	counter, ok := core.(vCore.MainlandCounter)
+	if !ok {
+		return metrics, nil
+	}
+	blocked, err := counter.MainlandBlocked(ctx)
+	if err != nil {
+		log.WithError(err).Warn("Could not read the connections refused to mainland-China destinations")
+	}
+	if blocked > 0 {
+		if metrics == nil {
+			metrics = map[string]float64{}
+		}
+		metrics[mainlandBlockedMetric] = float64(blocked)
+	}
+	return metrics, nil
 }
 
 // proxyNodeDiagnostics is a proxy node's agent.diagnostic executor: the
@@ -209,7 +240,7 @@ const (
 	// ProtocolRevision is the anix.agent.v1 revision this Agent implements.
 	// Raise it when the Agent implements the contract change of a newer
 	// revision (Control's revision table).
-	ProtocolRevision = 1
+	ProtocolRevision = 2
 	// KernelMinVersion is the oldest anx-node release this Agent works
 	// with (destination counting and QoS need alpha.15). Raise it when the
 	// Agent starts to rely on a newer kernel.

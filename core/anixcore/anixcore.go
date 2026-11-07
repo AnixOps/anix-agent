@@ -87,6 +87,9 @@ type Core struct {
 	// rules are the block rules last given to anixcore (syncRules), nil
 	// before the first.
 	rules *rulesConfig
+	// blockMainland is the exit policy (ApplyExitPolicy); warnedCIDRs
+	// whether a kernel without block_cidrs was warned about.
+	blockMainland, warnedCIDRs bool
 	// network is the last plan ApplyNetwork sent, nil for none, and
 	// ingresses its user ingresses by listen port.
 	network   json.RawMessage

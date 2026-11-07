@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
@@ -72,6 +73,21 @@ type EgressApplier interface {
 // what the previous call set; nil turns them off.
 type QoSApplier interface {
 	ApplyQoS(config json.RawMessage) error
+}
+
+// ExitPolicyApplier is implemented by cores that run Control's exit policy
+// (the member "exit_policy" of a node's configuration,
+// panel.ParseExitPolicy): the anixcore core. ApplyExitPolicy replaces what
+// the previous call set; the zero policy turns it off.
+type ExitPolicyApplier interface {
+	ApplyExitPolicy(policy panel.ExitPolicy) error
+}
+
+// MainlandCounter is implemented by cores that count the connections their
+// exit policy refused to mainland-China addresses; MainlandBlocked reads
+// and resets the count.
+type MainlandCounter interface {
+	MainlandBlocked(ctx context.Context) (uint64, error)
 }
 
 // NetworkApplier is implemented by cores that run the device network model

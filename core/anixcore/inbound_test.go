@@ -335,3 +335,28 @@ func TestAnxUserKeyMatchesControl(t *testing.T) {
 		t.Fatalf("apiUserFor = %+v, %v", user, err)
 	}
 }
+
+func TestAPIUsersForAddsTheIssuedShadowsocksKey(t *testing.T) {
+	key := "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+	user := panel.UserInfo{Id: 7, Uuid: "0123456789abcdef0123456789abcdef", Extra: map[string]string{"ss2022_key": key}}
+	info := &panel.NodeInfo{Type: "shadowsocks", Shadowsocks: &panel.ShadowsocksNode{Cipher: "2022-blake3-aes-256-gcm"}}
+	users, err := apiUsersFor(info, user)
+	if err != nil || len(users) != 2 || users[0].Name != "7" || users[1] != (apiUser{Name: "7.k", Password: key}) {
+		t.Fatalf("apiUsersFor = %+v, %v", users, err)
+	}
+	// A key that is not 32 bytes, a legacy cipher or another protocol: the
+	// legacy user only.
+	for _, c := range []struct {
+		info  *panel.NodeInfo
+		extra string
+	}{
+		{info, "AAECAw=="},
+		{&panel.NodeInfo{Type: "shadowsocks", Shadowsocks: &panel.ShadowsocksNode{Cipher: "aes-128-gcm"}}, key},
+		{&panel.NodeInfo{Type: "trojan"}, key},
+	} {
+		users, err := apiUsersFor(c.info, panel.UserInfo{Id: 7, Uuid: user.Uuid, Extra: map[string]string{"ss2022_key": c.extra}})
+		if err != nil || len(users) != 1 || users[0].Name != "7" {
+			t.Fatalf("%s %q: apiUsersFor = %+v, %v", c.info.Type, c.extra, users, err)
+		}
+	}
+}

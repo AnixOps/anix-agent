@@ -63,6 +63,8 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &rules)
 		f.rules = append(f.rules, rules)
 		reply(200, rules)
+	case r.Method == "GET" && r.URL.Path == "/v1/rules/counters":
+		reply(200, map[string]any{"blocked_cidrs": 3})
 	case r.Method == "PUT" && r.URL.Path == "/v1/qos":
 		f.qos = append(f.qos, string(body))
 		reply(200, map[string]any{"active": true})
@@ -128,6 +130,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			reply(200, map[string]any{"traffic": []map[string]any{
 				{"name": "7", "up": 100, "down": 200},
 				{"name": "8", "up": 0, "down": 0},
+				{"name": "7.k", "up": 1, "down": 2},
 				{"name": "not-a-panel-user", "up": 5, "down": 5},
 				{"name": "2147483648", "up": 5, "down": 5},
 			}, "inbound": map[string]any{"up": 110, "down": 210}})
@@ -150,6 +153,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		case r.Method == "GET" && rest == "online":
 			reply(200, map[string]any{"online": []map[string]any{
 				{"name": "7", "ip": "203.0.113.9", "connections": 2},
+				{"name": "7.k", "ip": "198.51.100.9", "connections": 1},
 			}})
 		default:
 			reply(404, map[string]any{"error": "no such endpoint"})
@@ -229,11 +233,12 @@ func TestShadowsocksNodesStartWithTheirFirstUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(traffic) != 1 || traffic[0] != (panel.UserTraffic{UID: 7, Upload: 100, Download: 200}) {
+	// "7.k" (the key Control issued) counts as panel user 7.
+	if len(traffic) != 1 || traffic[0] != (panel.UserTraffic{UID: 7, Upload: 101, Download: 202}) {
 		t.Fatalf("traffic = %v", traffic)
 	}
 	online, err := core.GetOnlineDevice("ss")
-	if err != nil || len(online) != 1 || online[0] != (panel.OnlineUser{UID: 7, IP: "203.0.113.9"}) {
+	if err != nil || !reflect.DeepEqual(online, []panel.OnlineUser{{UID: 7, IP: "203.0.113.9"}, {UID: 7, IP: "198.51.100.9"}}) {
 		t.Fatalf("online = %v, %v", online, err)
 	}
 
@@ -251,6 +256,41 @@ func TestShadowsocksNodesStartWithTheirFirstUsers(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(api.calls, "\n"), "traffic?reset=true") {
 		t.Fatalf("traffic was not read with reset: %v", api.calls)
+	}
+}
+
+func TestShadowsocksIssuedKeyIsASecondUser(t *testing.T) {
+	api, server := newFakeAPI(t)
+	core := externalCore(t, server)
+	defer core.Close()
+	info := shadowsocksNode()
+	if err := core.AddNode("ss", info, &conf.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	key := "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" // bytes 0..31
+	user := panel.UserInfo{Id: 7, Uuid: "0123456789abcdef0123456789abcdef", Extra: map[string]string{"ss2022_key": key}}
+	plain := panel.UserInfo{Id: 8, Uuid: "fedcba9876543210fedcba9876543210"}
+	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "ss", Users: []panel.UserInfo{user, plain}, NodeInfo: info}); err != nil {
+		t.Fatal(err)
+	}
+	users := api.users["ss"]
+	if len(users) != 3 {
+		t.Fatalf("users = %v", users)
+	}
+	// The legacy user is unchanged; "7.k" takes the first 16 bytes of the
+	// issued key (aes-128).
+	if users["7"].Password != "MDEyMzQ1Njc4OWFiY2RlZg==" || users["8"].Name != "8" {
+		t.Fatalf("legacy users = %v", users)
+	}
+	if got := users["7.k"]; got.Password != "AAECAwQFBgcICQoLDA0ODw==" {
+		t.Fatalf("issued key user = %+v", got)
+	}
+
+	if err := core.DelUsers([]panel.UserInfo{user}, "ss", info); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := api.users["ss"]["7.k"]; ok || len(api.users["ss"]) != 1 {
+		t.Fatalf("users after the removal = %v", api.users["ss"])
 	}
 }
 
