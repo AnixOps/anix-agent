@@ -63,3 +63,86 @@ func TestDestinationTrafficNeedsTheKernelFeature(t *testing.T) {
 		t.Fatalf("missing tag = %v, %v", got, err)
 	}
 }
+
+// TestFoldDestinationsCountsUDPQUICAndMux folds what anx-node reports for
+// UDP (protocol udp), QUIC (quic, from the Initial's SNI) and Mux.Cool
+// sessions (each sub-stream as its own entry: TCP as tls, http or empty,
+// UDP as udp or quic).
+func TestFoldDestinationsCountsUDPQUICAndMux(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		entries []apiDestination
+		want    []destinations.Traffic
+	}{
+		{
+			name: "quic is a row of its own next to tls",
+			entries: []apiDestination{
+				{Name: "7", Host: "www.youtube.com", Protocol: "quic", Up: 10, Down: 100, Connections: 1},
+				{Name: "7", Host: "rr1.youtube.com", Protocol: "quic", Up: 1, Down: 10, Connections: 1},
+				{Name: "7", Host: "www.youtube.com", Protocol: "tls", Up: 2, Down: 20, Connections: 1},
+			},
+			want: []destinations.Traffic{
+				{UID: 7, Entry: destinations.Entry{User: "7", Domain: "youtube.com", Protocol: "quic", Upload: 11, Download: 110, Connections: 2}},
+				{UID: 7, Entry: destinations.Entry{User: "7", Domain: "youtube.com", Protocol: "tls", Upload: 2, Download: 20, Connections: 1}},
+			},
+		},
+		{
+			name: "a udp address target becomes its network",
+			entries: []apiDestination{
+				{Name: "7", Host: "203.0.113.53", Protocol: "udp", Up: 1, Down: 2, Connections: 1},
+				{Name: "7", Host: "203.0.113.54:53", Protocol: "udp", Up: 3, Down: 4, Connections: 1},
+			},
+			want: []destinations.Traffic{
+				{UID: 7, Entry: destinations.Entry{User: "7", Domain: "203.0.113.0/24", Protocol: "udp", Upload: 4, Download: 6, Connections: 2}},
+			},
+		},
+		{
+			name: "udp to an unknown host is kept as other",
+			entries: []apiDestination{
+				{Name: "8", Host: "", Protocol: "udp", Up: 5, Down: 6, Connections: 1},
+			},
+			want: []destinations.Traffic{
+				{UID: 8, Entry: destinations.Entry{User: "8", Protocol: "udp", Upload: 5, Download: 6, Connections: 1}},
+			},
+		},
+		{
+			name: "mux sub-streams count by their own protocol",
+			entries: []apiDestination{
+				{Name: "9", Host: "api.example.com", Protocol: "tls", Up: 1, Down: 1, Connections: 1},
+				{Name: "9", Host: "www.example.com", Protocol: "http", Up: 1, Down: 1, Connections: 1},
+				{Name: "9", Host: "cdn.example.com", Protocol: "", Up: 1, Down: 1, Connections: 1},
+				{Name: "9", Host: "dns.example.com", Protocol: "udp", Up: 1, Down: 1, Connections: 1},
+				{Name: "9", Host: "media.example.com", Protocol: "quic", Up: 1, Down: 1, Connections: 1},
+			},
+			want: []destinations.Traffic{
+				{UID: 9, Entry: destinations.Entry{User: "9", Domain: "example.com", Protocol: "tls", Upload: 1, Download: 1, Connections: 1}},
+				{UID: 9, Entry: destinations.Entry{User: "9", Domain: "example.com", Protocol: "http", Upload: 1, Download: 1, Connections: 1}},
+				{UID: 9, Entry: destinations.Entry{User: "9", Domain: "example.com", Upload: 1, Download: 1, Connections: 1}},
+				{UID: 9, Entry: destinations.Entry{User: "9", Domain: "example.com", Protocol: "udp", Upload: 1, Download: 1, Connections: 1}},
+				{UID: 9, Entry: destinations.Entry{User: "9", Domain: "example.com", Protocol: "quic", Upload: 1, Download: 1, Connections: 1}},
+			},
+		},
+		{
+			name: "all-zero entries are dropped",
+			entries: []apiDestination{
+				{Name: "7", Host: "example.com", Protocol: "udp"},
+			},
+		},
+		{
+			name: "the issued-key user folds into the panel user",
+			entries: []apiDestination{
+				{Name: "7", Host: "www.youtube.com", Protocol: "quic", Up: 1, Down: 1, Connections: 1},
+				{Name: "7.k", Host: "m.youtube.com", Protocol: "quic", Up: 2, Down: 2, Connections: 1},
+			},
+			want: []destinations.Traffic{
+				{UID: 7, Entry: destinations.Entry{User: "7", Domain: "youtube.com", Protocol: "quic", Upload: 3, Download: 3, Connections: 2}},
+			},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := foldDestinations(c.entries); !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("foldDestinations = %+v\nwant %+v", got, c.want)
+			}
+		})
+	}
+}
