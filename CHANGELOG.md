@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- A node whose first configuration fails to apply (for example a fresh
+  node without anx-node) no longer ends the Agent and loops through
+  systemd restarts: it reports the failure to Control (`config_apply_failed`),
+  stays connected and applies the next configuration Control sends; a
+  kernel installed by a kernel-only upgrade restarts it into the
+  configuration. A stored configuration that fails at start is dropped the
+  same way and Control sends the desired one.
+
 ### Removed
 
 - The start-time cleanup of the removed nftables driver (table
