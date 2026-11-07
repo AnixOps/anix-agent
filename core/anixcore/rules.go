@@ -58,9 +58,6 @@ var (
 func (c *Core) ApplyExitPolicy(policy panel.ExitPolicy) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.blockMainland == policy.BlockMainland {
-		return nil
-	}
 	c.blockMainland = policy.BlockMainland
 	return c.syncRules()
 }
