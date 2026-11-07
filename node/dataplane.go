@@ -639,6 +639,7 @@ func (n *nodeDataPlane) finishStart(ctx context.Context, persistedConfig *agentv
 			// configuration once the stream is up.
 			n.logger().WithError(err).WithField("config_revision", persistedConfig.GetConfigRevision()).
 				Warn("Could not apply the stored configuration; the node stays connected and applies the next configuration Control sends")
+			plane.DiscardPersistedConfig()
 		} else {
 			plane.RestoreConfig(persistedConfig)
 		}
