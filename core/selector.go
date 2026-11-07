@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -294,6 +295,29 @@ func (s *Selector) ApplyQoS(config json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// ApplyExitPolicy implements ExitPolicyApplier: the first core in
+// configuration order that runs an exit policy runs it; without one, it is
+// left out.
+func (s *Selector) ApplyExitPolicy(policy panel.ExitPolicy) error {
+	for _, key := range s.order {
+		if applier, ok := s.cores[key].(ExitPolicyApplier); ok {
+			return applier.ApplyExitPolicy(policy)
+		}
+	}
+	return nil
+}
+
+// MainlandBlocked implements MainlandCounter with the core that runs the
+// exit policy.
+func (s *Selector) MainlandBlocked(ctx context.Context) (uint64, error) {
+	for _, key := range s.order {
+		if counter, ok := s.cores[key].(MainlandCounter); ok {
+			return counter.MainlandBlocked(ctx)
+		}
+	}
+	return 0, nil
 }
 
 // networkApplier is the first core in configuration order that runs the

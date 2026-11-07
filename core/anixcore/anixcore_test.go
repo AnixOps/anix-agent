@@ -63,6 +63,8 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &rules)
 		f.rules = append(f.rules, rules)
 		reply(200, rules)
+	case r.Method == "GET" && r.URL.Path == "/v1/rules/counters":
+		reply(200, map[string]any{"blocked_cidrs": 3})
 	case r.Method == "PUT" && r.URL.Path == "/v1/qos":
 		f.qos = append(f.qos, string(body))
 		reply(200, map[string]any{"active": true})

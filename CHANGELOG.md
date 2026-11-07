@@ -4,6 +4,16 @@
 
 ### Added
 
+- Exit nodes can refuse mainland-China destinations when Control turns it
+  on for the node (member `exit_policy: {block_mainland: true}`, off by
+  default). The Agent sends the mainland address blocks it ships
+  (`core/anixcore/mainland_cidrs.txt`, from APNIC's public delegations via
+  `scripts/update-mainland-cidrs.sh`) to anx-node as `block_cidrs` in
+  `PUT /v1/rules`, and reports the refused connections since the previous
+  heartbeat as the metric `agent_dataplane_mainland_blocked` (read from
+  `GET /v1/rules/counters?reset=true`). It needs an anx-node with the
+  `block_cidrs` feature; an older one gets nothing and one warning is
+  logged.
 - Protocol revision 2: Shadowsocks 2022 keys issued by Control. When a
   user's users.v1 extras carry `ss2022_key` (32 random bytes, base64), the
   node serves a second kernel user `"<id>.k"` keyed by it next to the

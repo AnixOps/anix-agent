@@ -158,7 +158,37 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 	if err := n.applyQoS(snapshot); err != nil {
 		errs = append(errs, err)
 	}
+	if err := n.applyExitPolicy(snapshot); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// applyExitPolicy runs the snapshot's exit policy (the member
+// "exit_policy") on the node's core; a snapshot without it turns it off. A
+// core that cannot run it is skipped.
+func (n *nodeDataPlane) applyExitPolicy(snapshot *agentv1pb.ConfigSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	policy, err := panel.ParseExitPolicy(snapshot.GetConfigJson())
+	if err != nil {
+		return err
+	}
+	for _, controller := range n.controllers {
+		if controller.server == nil {
+			continue
+		}
+		applier, ok := controller.server.(vCore.ExitPolicyApplier)
+		if !ok {
+			return nil
+		}
+		if err := applier.ApplyExitPolicy(policy); err != nil {
+			return fmt.Errorf("exit policy: %w", err)
+		}
+		return nil
+	}
+	return nil
 }
 
 // applyQoS runs the snapshot's traffic priorities and per-user class caps
