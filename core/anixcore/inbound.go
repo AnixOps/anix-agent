@@ -441,6 +441,34 @@ func userName(user panel.UserInfo) string {
 	return strconv.Itoa(user.Id)
 }
 
+// userKeySuffix names a panel user's second Shadowsocks 2022 user, the one
+// with the key Control issued (users.v1 extra ss2022_key): "<id>.k".
+const userKeySuffix = ".k"
+
+// apiUsersFor gives a panel user the kernel users its node's protocol
+// checks: one, or for Shadowsocks 2022 the legacy user keyed by the first
+// key-length bytes of the UUID plus, when Control issued one, the user
+// "<id>.k" keyed by the issued key.
+func apiUsersFor(info *panel.NodeInfo, user panel.UserInfo) ([]apiUser, error) {
+	legacy, err := apiUserFor(info, user)
+	if err != nil {
+		return nil, err
+	}
+	users := []apiUser{legacy}
+	if info.Type != "shadowsocks" || shadowsocksLegacy(info.Shadowsocks.Cipher) {
+		return users, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(user.Extra["ss2022_key"])
+	if err != nil || len(raw) != 32 {
+		return users, nil
+	}
+	keyLen, _ := shadowsocksKeyLen(info.Shadowsocks.Cipher) // apiUserFor checked the cipher.
+	keyed := legacy
+	keyed.Name += userKeySuffix
+	keyed.Password = base64.StdEncoding.EncodeToString(raw[:keyLen])
+	return append(users, keyed), nil
+}
+
 // apiUserFor gives a panel user the credential its node's protocol checks,
 // the way the sing-box core does: the UUID, or for Shadowsocks 2022 the
 // first key-length bytes of it.

@@ -176,7 +176,8 @@ func compareUserList(old, new []panel.UserInfo) (deleted, added []panel.UserInfo
 func userSyncKey(user panel.UserInfo) string {
 	return user.Uuid + "\x00" + strconv.Itoa(user.SpeedLimit) + "\x00" +
 		strconv.Itoa(user.DeviceLimit) + "\x00" + user.WireGuardPeerIP + "\x00" +
-		user.WireGuardPublicKey + "\x00" + user.WireGuardPresharedKey
+		user.WireGuardPublicKey + "\x00" + user.WireGuardPresharedKey + "\x00" +
+		user.Extra["ss2022_key"]
 }
 
 // submitTraffic hands the window to the node's control stream.

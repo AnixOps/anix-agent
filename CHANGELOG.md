@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Protocol revision 2: Shadowsocks 2022 keys issued by Control. When a
+  user's users.v1 extras carry `ss2022_key` (32 random bytes, base64), the
+  node serves a second kernel user `"<id>.k"` keyed by it next to the
+  unchanged legacy user `"<id>"` (key from the UUID), so devices on either
+  key keep working. Traffic, online devices and destinations of `"<id>.k"`
+  count as the panel user. A newly issued key re-adds the user. No kernel
+  change is needed. Kernel-local speed and device limits apply per kernel
+  user, so a user on both keys at once gets them twice on that node.
+
 ### Fixed
 
 - A node whose first configuration fails to apply (for example a fresh

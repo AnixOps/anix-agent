@@ -209,7 +209,7 @@ const (
 	// ProtocolRevision is the anix.agent.v1 revision this Agent implements.
 	// Raise it when the Agent implements the contract change of a newer
 	// revision (Control's revision table).
-	ProtocolRevision = 1
+	ProtocolRevision = 2
 	// KernelMinVersion is the oldest anx-node release this Agent works
 	// with (destination counting and QoS need alpha.15). Raise it when the
 	// Agent starts to rely on a newer kernel.

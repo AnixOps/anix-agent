@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
@@ -18,11 +19,11 @@ func (c *Core) AddUsers(p *vCore.AddUsersParams) (int, error) {
 	}
 	users := make([]apiUser, 0, len(p.Users))
 	for _, user := range p.Users {
-		converted, err := apiUserFor(n.info, user)
+		converted, err := apiUsersFor(n.info, user)
 		if err != nil {
 			return 0, err
 		}
-		users = append(users, converted)
+		users = append(users, converted...)
 	}
 	if len(users) == 0 {
 		return 0, nil
@@ -59,7 +60,11 @@ func (c *Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) e
 	}
 	names := make([]string, 0, len(users))
 	for _, user := range users {
-		names = append(names, userName(user))
+		name := userName(user)
+		names = append(names, name)
+		if _, ok := n.users[name+userKeySuffix]; ok {
+			names = append(names, name+userKeySuffix)
+		}
 	}
 	if n.created && len(names) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
@@ -86,11 +91,19 @@ func (c *Core) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic,
 		return nil, fmt.Errorf("anixcore node %s: %w", tag, err)
 	}
 	slice := make([]panel.UserTraffic, 0, len(traffic))
+	index := make(map[int]int, len(traffic))
 	for _, entry := range traffic {
 		uid, ok := panelUID(entry.Name)
 		if !ok || entry.Up+entry.Down == 0 {
 			continue
 		}
+		// A panel user's two Shadowsocks 2022 users count as one.
+		if i, seen := index[uid]; seen {
+			slice[i].Upload += entry.Up
+			slice[i].Download += entry.Down
+			continue
+		}
+		index[uid] = len(slice)
 		slice = append(slice, panel.UserTraffic{UID: uid, Upload: entry.Up, Download: entry.Down})
 	}
 	if len(slice) == 0 {
@@ -129,10 +142,11 @@ func (c *Core) clientFor(tag string) (*client, bool) {
 	return c.client, ok && n.created
 }
 
-// panelUID is the panel user id an anixcore user name stands for: a
-// positive int32, which fits both int and the uint32 the panel reports.
+// panelUID is the panel user id an anixcore user name ("<id>", or "<id>.k"
+// for the issued Shadowsocks 2022 key) stands for: a positive int32, which
+// fits both int and the uint32 the panel reports.
 func panelUID(name string) (int, bool) {
-	uid, err := strconv.ParseInt(name, 10, 32)
+	uid, err := strconv.ParseInt(strings.TrimSuffix(name, userKeySuffix), 10, 32)
 	if err != nil || uid <= 0 {
 		return 0, false
 	}
