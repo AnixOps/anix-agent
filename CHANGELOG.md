@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- An upgrade download on the control connection that stalls now gets half
+  of the operation's time, so the https fallback still runs (a node failed
+  the 5.0.2 upgrade with `upgrade_download_failed`).
+
 ## 5.0.2 - 2026-11-08
 
 Shipped with AnixOps Control 5.0.2 and anx-node 0.1.0-alpha.17
