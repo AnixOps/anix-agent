@@ -482,11 +482,17 @@ func WithFetch(ctx context.Context, fetch Fetch) context.Context {
 
 // download fetches a release file into a temporary file of the staging
 // directory, at most size bytes: more is a size mismatch
-// (upgrade_digest_mismatch). The control connection goes first (WithFetch),
-// then url.
+// (upgrade_digest_mismatch). The control connection goes first (WithFetch)
+// with half the time left, then url, so a stalled stream leaves the https
+// fallback time to run.
 func (a *Agent) download(ctx context.Context, kind, version, url, asset string, size int64) (string, error) {
 	if fetch, ok := ctx.Value(fetchKey{}).(Fetch); ok {
-		data, err := fetch(ctx, kind, version, asset, size)
+		fetchCtx, cancel := ctx, context.CancelFunc(func() {})
+		if deadline, ok := ctx.Deadline(); ok {
+			fetchCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/2)
+		}
+		data, err := fetch(fetchCtx, kind, version, asset, size)
+		cancel()
 		if err == nil {
 			return a.saveTemp(asset, size, bytes.NewReader(data))
 		}
