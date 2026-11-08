@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.2 - 2026-11-08
+
+Shipped with AnixOps Control 5.0.2 and anx-node 0.1.0-alpha.17
+(`block_cidrs`). Protocol revision 2.
+
 ### Added
 
 - Exit nodes can refuse mainland-China destinations when Control turns it

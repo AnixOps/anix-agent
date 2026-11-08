@@ -47,13 +47,14 @@ func TestCommandRunnerProcessOutlivesStartupContext(t *testing.T) {
 	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "plugin")
-	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\ntrap 'exit 0' INT TERM\nwhile :; do sleep 1; done\n"), 0o750))
+	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\ntrap 'exit 0' INT TERM\ntouch \"$0.ready\"\nwhile :; do sleep 1; done\n"), 0o750))
 
 	startupCtx, cancelStartup := context.WithCancel(context.Background())
 	process, err := (CommandRunner{}).Start(startupCtx, binary, filepath.Join(dir, "plugin.sock"), filepath.Join(dir, "config.json"))
 	require.NoError(t, err)
 	cancelStartup()
-	time.Sleep(30 * time.Millisecond)
+	// Stop sends SIGINT; wait until the script has installed its trap.
+	require.Eventually(t, func() bool { _, err := os.Stat(binary + ".ready"); return err == nil }, 2*time.Second, 10*time.Millisecond)
 	require.NoError(t, syscall.Kill(process.PID(), 0), "cancelling startup must not kill the long-lived plugin")
 
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), 2*time.Second)
