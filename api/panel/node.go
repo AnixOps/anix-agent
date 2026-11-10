@@ -184,6 +184,14 @@ type AnxNode struct {
 	// BareListenPort is the TCP port of the bare jacket (random-looking TCP,
 	// for users dialing a domestic entry only); 0 = off.
 	BareListenPort int `json:"bare_listen_port"`
+	// DestStack picks the TLS stack preset (openssl, boringssl, go, rustls)
+	// for failed handshakes when dest is unreachable; empty = anx-node's
+	// default.
+	DestStack string `json:"dest_stack"`
+	// DestBehavior overrides the preset key by key (anx BOUNDARY.md
+	// dest_behavior); with a dest it should carry session_tickets and
+	// flight_records as measured by anx-lab dest-probe.
+	DestBehavior map[string]any `json:"dest_behavior"`
 }
 
 type WireGuardRelay struct {

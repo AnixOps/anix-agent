@@ -301,7 +301,7 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}
 	}
-	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams", "wg_listen_port", "bare_listen_port"} {
+	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams", "wg_listen_port", "bare_listen_port", "dest_stack", "dest_behavior"} {
 		if _, set := inbound[key]; set {
 			t.Fatalf("anx inbound sets %s while the node leaves it at the default", key)
 		}
@@ -321,6 +321,46 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 		if !reflect.DeepEqual(inbound[key], want) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}
+	}
+}
+
+func TestAnxDestBehaviorPassesThrough(t *testing.T) {
+	old := anxKeyFile
+	anxKeyFile = func() (string, error) { return "/var/lib/anixops-agent/anx-server/server.key", nil }
+	defer func() { anxKeyFile = old }()
+	behavior := map[string]any{"session_tickets": "266/266", "flight_records": "4", "max_ccs": float64(32)}
+	info := &panel.NodeInfo{
+		Type:   "anx",
+		Common: &panel.CommonNode{ServerPort: 8443},
+		Anx: &panel.AnxNode{ServerNames: []string{"www.apple.com"}, Dest: "www.apple.com:443",
+			DestStack: "boringssl", DestBehavior: behavior},
+	}
+	inbound, err := inboundConfig("anx-1", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inbound["dest_stack"] != "boringssl" {
+		t.Fatalf("dest_stack = %#v", inbound["dest_stack"])
+	}
+	if !reflect.DeepEqual(inbound["dest_behavior"], behavior) {
+		t.Fatalf("dest_behavior = %#v, want %#v", inbound["dest_behavior"], behavior)
+	}
+	if missing := anxDestBehaviorMissing(info.Anx); len(missing) != 0 {
+		t.Fatalf("missing = %v with both site keys set", missing)
+	}
+	// "none" is a measured value too.
+	info.Anx.DestBehavior = map[string]any{"session_tickets": "none"}
+	if got := anxDestBehaviorMissing(info.Anx); !reflect.DeepEqual(got, []string{"flight_records"}) {
+		t.Fatalf("missing = %v, want [flight_records]", got)
+	}
+	info.Anx.DestBehavior = nil
+	if got := anxDestBehaviorMissing(info.Anx); !reflect.DeepEqual(got, []string{"session_tickets", "flight_records"}) {
+		t.Fatalf("missing = %v, want both", got)
+	}
+	// Without a dest there is no site to measure.
+	info.Anx.Dest, info.Anx.AllowNoSNI = "", true
+	if got := anxDestBehaviorMissing(info.Anx); got != nil {
+		t.Fatalf("missing = %v without a dest", got)
 	}
 }
 
