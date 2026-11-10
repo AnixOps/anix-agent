@@ -214,6 +214,10 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node.WGListenPort > 0 {
 			inbound["wg_listen_port"] = node.WGListenPort
 		}
+		// The bare jacket listens on its own TCP port, beside the A2 one.
+		if node.BareListenPort > 0 {
+			inbound["bare_listen_port"] = node.BareListenPort
+		}
 	default:
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}
