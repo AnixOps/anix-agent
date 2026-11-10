@@ -149,6 +149,17 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 		defer anxLine.Close()
 	}
 
+	// Periodic anx-server key rotation (off by default).
+	if c.AnxKeyRotation.Enabled() {
+		if rotator := node.KeyRotator(*c.AnxKeyRotation); rotator != nil {
+			rotator.Start()
+			defer rotator.Close()
+			log.Info("anx-server key rotation started")
+		} else {
+			log.Warn("AnxKeyRotation is on but this host has no anx-server: nothing to rotate")
+		}
+	}
+
 	vc, err := vCore.NewForConfig(c.CoresConfig, len(c.NodeConfig))
 	if err != nil {
 		log.WithField("err", err).Error("new core failed")

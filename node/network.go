@@ -79,6 +79,17 @@ var networkServers = func() *anxserver.Manager {
 	}
 }
 
+// KeyRotator answers the rotator of this host's anx-server key, nil when
+// the host has no anx-server. It shares the key directory with the
+// accepting ends and anx-node's ANX inbound.
+func KeyRotator(config anxserver.RotationConfig) *anxserver.Rotator {
+	servers := networkServers()
+	if servers == nil {
+		return nil
+	}
+	return &anxserver.Rotator{Manager: &anxserver.Manager{Binary: servers.Binary, Dir: servers.Dir}, Config: config}
+}
+
 // routedEgressKinds are the egress kinds the Agent runs itself when it can
 // route: the core binds the source, the Agent's policy routing sends it out
 // of its line.
