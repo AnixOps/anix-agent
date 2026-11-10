@@ -18,6 +18,7 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
+	log "github.com/sirupsen/logrus"
 )
 
 const visionFlow = "xtls-rprx-vision"
@@ -196,6 +197,16 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node.Dest != "" {
 			inbound["dest"] = node.Dest
 		}
+		if node.DestStack != "" {
+			inbound["dest_stack"] = node.DestStack
+		}
+		if len(node.DestBehavior) > 0 {
+			inbound["dest_behavior"] = node.DestBehavior
+		}
+		if missing := anxDestBehaviorMissing(node); len(missing) > 0 {
+			log.WithField("tag", tag).WithField("missing", strings.Join(missing, ",")).
+				Warn("anx node has a dest but its dest_behavior lacks the measured dest values; run anx-lab dest-probe against the dest and paste its dest_behavior line into the node settings")
+		}
 		if len(node.ALPN) > 0 {
 			inbound["alpn"] = node.ALPN
 		}
@@ -222,6 +233,24 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}
 	return inbound, nil
+}
+
+// anxDestBehaviorMissing lists the dest_behavior keys a node with a dest
+// should carry but does not: session_tickets and flight_records are the
+// dest's own data (anx spec §4 items 8 and 9), not a preset's, so only a
+// dest-probe run against that dest gives them. Without them the server
+// looks unlike the dest when mirroring it is not possible.
+func anxDestBehaviorMissing(node *panel.AnxNode) []string {
+	if node == nil || node.Dest == "" {
+		return nil
+	}
+	var missing []string
+	for _, key := range []string{"session_tickets", "flight_records"} {
+		if _, ok := node.DestBehavior[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	return missing
 }
 
 // addTLS sets `tls` from the node's certificate config. QUIC protocols

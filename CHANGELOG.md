@@ -8,6 +8,12 @@
   port for users dialing a domestic entry) to the anx-node inbound when
   Control sets it. Needs an anx-node whose ANX inbound serves the bare jacket;
   older ones refuse the key, so Control sends it only when set.
+- ANX nodes pass `dest_stack` and `dest_behavior` (the cover site's TLS stack
+  preset and per-key overrides, anx spec §4 item 6) to the anx-node inbound
+  when Control sets them. A node with a `dest` whose `dest_behavior` lacks
+  `session_tickets` or `flight_records` logs a warning: those are the cover
+  site's own data, measured with `anx-lab dest-probe`, and without them the
+  node looks unlike the site when it cannot mirror it.
 
 ### Fixed
 
