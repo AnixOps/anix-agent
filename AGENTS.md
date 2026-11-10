@@ -8,6 +8,9 @@
 它运行 AnixOps 自研内核 anixcore（anx-node 进程）与 WireGuard 内核，只通过
 mTLS 的 `anix.agent.v1` 双向 gRPC 控制流与 AnixOps Control（`AnixOps/anix-control`）交互。
 sing-box、xray、hysteria、gost、旧的 nftables 转发驱动、anixops relay 都已删除，不要再引入。
+不得链接、静态嵌入或以库形式（含 cgo / FFI）引入任何第三方代理引擎或 GPL / AGPL 模块：anixcore（anx-node）、
+anx-server 只作为独立进程，经 gRPC、HTTP 管理接口、配置文件和命令行驱动。CI 的
+“No third-party engines or GPL modules” 步骤（`scripts/check_forbidden_deps.sh` 与 go-licenses）强制这一点。
 网络计划里的内核转发跳（`kernel_forwards`）由 `kernelfwd/` 直接用 nft 实现，保持轻量。
 
 - 协议契约归 Control 所有：`github.com/AnixOps/anix-control/sdk`（`sdk/api/agent/v1`、

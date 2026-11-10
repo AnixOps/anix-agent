@@ -302,8 +302,8 @@ upgrades"). An Agent never upgrades on its own.
   accepting ends of the network model's `anx_line` transports. When the
   Agent fails to stay up both are taken out again. A node
   whose configuration lists no cores runs the installed anx-node as the
-  anixcore core with ANX-Line, ahead of Xray and sing-box. arm64 has no
-  anx-node release yet and keeps the old cores.
+  anixcore core with ANX-Line. The Xray, sing-box and Hysteria 2 cores were
+  removed in 5.0.0-rc.22; anixcore is the only proxy core.
 
 ## Release Signing
 

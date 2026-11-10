@@ -62,7 +62,7 @@ anixcore 是外部程序，节点上没有安装时不应影响其他内核。
 
 | 面板节点 | anixcore 入站 |
 | --- | --- |
-| shadowsocks（2022 AES 方法） | `shadowsocks`，多用户；用户密钥为 UUID 前 16/32 字节的 base64，与 sing-box 内核相同。节点在拿到首批用户时才创建（anixcore 在创建时决定多用户模式）。 |
+| shadowsocks（2022 AES 方法） | `shadowsocks`，多用户；用户密钥为 UUID 前 16/32 字节的 base64，与已移除的旧内核相同（老节点的订阅不用改）。节点在拿到首批用户时才创建（anixcore 在创建时决定多用户模式）。 |
 | trojan | `trojan`，tcp / ws / grpc，证书来自 `CertConfig` |
 | vless | `vless`，tls 或 reality（reality 只支持 tcp，`xtls-rprx-vision` flow 随 reality 下发）|
 | vmess | `vmess`，tcp / ws / grpc |

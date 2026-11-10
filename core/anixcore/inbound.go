@@ -299,7 +299,7 @@ func addTLS(inbound map[string]any, info *panel.NodeInfo, options *conf.Options,
 			return fmt.Errorf("%s needs a certificate (CertConfig)", info.Type)
 		}
 		// The node asks for TLS but the agent terminates none: plain, as
-		// the sing-box core does.
+		// the retired cores did.
 		return nil
 	}
 	if cert.CertFile == "" || cert.KeyFile == "" {
@@ -548,7 +548,7 @@ func apiUsersFor(info *panel.NodeInfo, user panel.UserInfo) ([]apiUser, error) {
 }
 
 // apiUserFor gives a panel user the credential its node's protocol checks,
-// the way the sing-box core does: the UUID, or for Shadowsocks 2022 the
+// the way the retired cores did: the UUID, or for Shadowsocks 2022 the
 // first key-length bytes of it.
 func apiUserFor(info *panel.NodeInfo, user panel.UserInfo) (apiUser, error) {
 	out := apiUser{Name: userName(user), SpeedLimit: max(user.SpeedLimit, 0), DeviceLimit: max(user.DeviceLimit, 0)}

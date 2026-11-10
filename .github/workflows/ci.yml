@@ -89,6 +89,19 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: No third-party engines or GPL modules
+        # The Agent drives anixcore (anx-node) as a separate process and must
+        # never link sing-box / Xray / Hysteria / Mieru / gost again; the
+        # licence check also rejects any other GPL / AGPL (restricted or
+        # forbidden) module in the release build.
+        run: |
+          bash scripts/check_forbidden_deps.sh --self-test
+          bash scripts/check_forbidden_deps.sh
+          go install github.com/google/go-licenses/v2@v2.0.1
+          GOEXPERIMENT=jsonv2 GOWORK=off GOFLAGS=-tags=anixcore \
+            "$(go env GOPATH)/bin/go-licenses" check ./... \
+            --disallowed_types=forbidden,restricted
+
       - name: Test installer migration and generated production config
         run: bash scripts/test_install_migration.sh
 
