@@ -11,6 +11,12 @@
   `anixcore` build. The Agent already stopped linking these engines in
   5.0.0-rc.22; this keeps it that way.
 
+### Removed
+
+- `github.com/juju/ratelimit` (LGPL-3.0) and the unused `Limiter.CheckLimit` /
+  `SpeedLimiter` token buckets it backed; they served the removed Xray /
+  sing-box cores. anixcore enforces user speed limits itself.
+
 ### Changed
 
 - Docs no longer describe Xray / sing-box cores as present (`docs/features.md`,

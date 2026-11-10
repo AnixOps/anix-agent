@@ -11,7 +11,6 @@ require (
 	github.com/go-acme/lego/v4 v4.25.2
 	github.com/godbus/dbus/v5 v5.1.1-0.20230522191255-76236955d466
 	github.com/gofrs/flock v0.12.1
-	github.com/juju/ratelimit v1.0.2
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
