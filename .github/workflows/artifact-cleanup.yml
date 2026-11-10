@@ -1,0 +1,25 @@
+name: Artifact Cleanup
+
+# Artifacts only carry files between the jobs of one run (releases keep their
+# own assets), so anything older than a day is deleted to keep Actions storage
+# small.
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Delete artifacts older than one day
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cut=$(date -u -d '-1 day' +%FT%TZ)
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.expired | not) | select(.created_at < \"$cut\") | .id" |
+            xargs -r -I{} gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/{}"
