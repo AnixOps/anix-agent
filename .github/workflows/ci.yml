@@ -93,14 +93,21 @@ jobs:
         # The Agent drives anixcore (anx-node) as a separate process and must
         # never link sing-box / Xray / Hysteria / Mieru / gost again; the
         # licence check also rejects any other GPL / AGPL (restricted or
-        # forbidden) module in the release build.
+        # forbidden) module in the release build. The --ignore entries are
+        # lego DNS-provider modules whose licence file go-licenses cannot
+        # locate (vegadns2client: Apache-2.0; endpoint-util,
+        # tencentclouddnspod: Apache-2.0; oci-go-sdk: UPL-1.0 / Apache-2.0).
         run: |
           bash scripts/check_forbidden_deps.sh --self-test
           bash scripts/check_forbidden_deps.sh
           go install github.com/google/go-licenses/v2@v2.0.1
           GOEXPERIMENT=jsonv2 GOWORK=off GOFLAGS=-tags=anixcore \
             "$(go env GOPATH)/bin/go-licenses" check ./... \
-            --disallowed_types=forbidden,restricted
+            --disallowed_types=forbidden,restricted \
+            --ignore github.com/OpenDNS/vegadns2client \
+            --ignore github.com/alibabacloud-go/endpoint-util \
+            --ignore github.com/go-acme/tencentclouddnspod \
+            --ignore github.com/nrdcg/oci-go-sdk
 
       - name: Test installer migration and generated production config
         run: bash scripts/test_install_migration.sh
