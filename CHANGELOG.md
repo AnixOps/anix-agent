@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 5.0.3 - 2026-11-10
+
+Shipped with AnixOps Control 5.0.3 and anx-node 0.1.0-alpha.19
+(bare jacket, cover-site data, anx-server key rotation). Every new option is
+off until Control sets it.
+
 ### Added
 
 - Optional periodic rotation of the anx-server key (`AnxKeyRotation`, off by
