@@ -4,8 +4,7 @@
 
 | Area | Feature | Status | Evidence | Notes |
 |------|---------|--------|----------|-------|
-| Core | VMess/VLESS/Trojan/Shadowsocks runtime | Implemented | Xray and Sing-box cores | Keep panel compatibility tests current. |
-| Core | Hysteria2 runtime | Implemented | Hysteria2 core | Keep auth and traffic paths covered. |
+| Core | VMess/VLESS/Trojan/Shadowsocks/Hysteria2/TUIC/AnyTLS/ANX runtime | Implemented | anixcore core (`core/anixcore`) driving the separate anx-node process over its management API | Xray, sing-box and Hysteria 2 cores were removed in 5.0.0-rc.22; no third-party engine or GPL module may be linked (CI `scripts/check_forbidden_deps.sh` + go-licenses). |
 | Platform | Official plugin Supervisor | Preview/Partial | Signed artifact verification, node-isolated lifecycle journals, authenticated v2 Secret material validation, private-file rotation/cleanup, metadata-only replay binding, runtime-state/cleanup capabilities, canonical config validation, durable nftables ownership snapshot, live semantic ruleset SHA-256 plus per-rule counters, TCP/UDP namespace traffic, exact rollback, and `SIGKILL` plus Agent-restart recovery | Keep `PluginSupervisorEnabled` opt-in; production requires matching Control topology admission, staged fallback, rollout records, and a sustained canary. |
 | Core | WireGuard user access | Partial/P0 | `core/wireguard`, REST/gRPC parsing, peer field sync, focused unit tests, Linux `tc` shaping, dynamic-limit sync | Single-node WireGuard interface, peer traffic/online reporting and per-peer/node shaping. The dual-node gost relay was removed; a node with relay settings is refused. |
 | WireGuard | WireGuard subscription runtime contract | Partial/P0 | `api/panel.NodeInfo`, `api/panel.UserInfo`, gRPC `extra` mapping | Requires matching `v2board_AnixOps` panel runtime peer fields. |

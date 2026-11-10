@@ -215,8 +215,8 @@ func TestShadowsocksNodesStartWithTheirFirstUsers(t *testing.T) {
 		inbound["password"] != "AAECAwQFBgcICQoLDA0ODw==" || inbound["listen"] != "0.0.0.0" {
 		t.Fatalf("inbound = %v", inbound)
 	}
-	// The user key is the first 16 bytes of the UUID, as the sing-box core
-	// derives it.
+	// The user key is the first 16 bytes of the UUID, as the retired cores
+	// derived it.
 	if got := api.users["ss"]["7"].Password; got != "MDEyMzQ1Njc4OWFiY2RlZg==" {
 		t.Fatalf("user key = %q", got)
 	}

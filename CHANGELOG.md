@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- CI step "No third-party engines or GPL modules": `scripts/check_forbidden_deps.sh`
+  rejects sing-box (sagernet), metacubex, Xray (xtls), v2fly, Hysteria
+  (apernet), Mieru, EasyTier and gost modules in `go.mod` / `go.sum`, and
+  go-licenses rejects any restricted or forbidden (GPL / AGPL) licence in the
+  `anixcore` build. The Agent already stopped linking these engines in
+  5.0.0-rc.22; this keeps it that way.
+
+### Removed
+
+- `github.com/juju/ratelimit` (LGPL-3.0) and the unused `Limiter.CheckLimit` /
+  `SpeedLimiter` token buckets it backed; they served the removed Xray /
+  sing-box cores. anixcore enforces user speed limits itself.
+
+### Changed
+
+- Docs no longer describe Xray / sing-box cores as present (`docs/features.md`,
+  `docs/INSTALL.md`, `docs/anixcore-core.md`).
+
 ## 5.0.3 - 2026-11-10
 
 Shipped with AnixOps Control 5.0.3 and anx-node 0.1.0-alpha.19
