@@ -181,6 +181,9 @@ type AnxNode struct {
 	// WGListenPort is the UDP port of the wg jacket (WireGuard-shaped UDP,
 	// for users dialing a domestic entry); 0 = off.
 	WGListenPort int `json:"wg_listen_port"`
+	// BareListenPort is the TCP port of the bare jacket (random-looking TCP,
+	// for users dialing a domestic entry only); 0 = off.
+	BareListenPort int `json:"bare_listen_port"`
 }
 
 type WireGuardRelay struct {

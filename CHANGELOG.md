@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- ANX nodes pass `bare_listen_port` (the bare jacket, a random-looking TCP
+  port for users dialing a domestic entry) to the anx-node inbound when
+  Control sets it. Needs an anx-node whose ANX inbound serves the bare jacket;
+  older ones refuse the key, so Control sends it only when set.
+
 ### Fixed
 
 - An upgrade download on the control connection that stalls now gets half
