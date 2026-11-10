@@ -301,7 +301,7 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}
 	}
-	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams", "wg_listen_port", "bare_listen_port", "dest_stack", "dest_behavior"} {
+	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams", "wg_listen_port", "bare_listen_port", "dest_stack", "dest_behavior", "dest_behaviors"} {
 		if _, set := inbound[key]; set {
 			t.Fatalf("anx inbound sets %s while the node leaves it at the default", key)
 		}
@@ -350,13 +350,34 @@ func TestAnxDestBehaviorPassesThrough(t *testing.T) {
 	}
 	// "none" is a measured value too.
 	info.Anx.DestBehavior = map[string]any{"session_tickets": "none"}
-	if got := anxDestBehaviorMissing(info.Anx); !reflect.DeepEqual(got, []string{"flight_records"}) {
-		t.Fatalf("missing = %v, want [flight_records]", got)
+	if got := anxDestBehaviorMissing(info.Anx); !reflect.DeepEqual(got, []string{"www.apple.com:443:flight_records"}) {
+		t.Fatalf("missing = %v, want flight_records", got)
 	}
 	info.Anx.DestBehavior = nil
-	if got := anxDestBehaviorMissing(info.Anx); !reflect.DeepEqual(got, []string{"session_tickets", "flight_records"}) {
+	if got := anxDestBehaviorMissing(info.Anx); !reflect.DeepEqual(got, []string{"www.apple.com:443:session_tickets", "www.apple.com:443:flight_records"}) {
 		t.Fatalf("missing = %v, want both", got)
 	}
+
+	// A dest list: per-dest data goes out for listed dests only, and each
+	// dest is checked on its merged behavior.
+	info.Anx.Dest = "www.apple.com:443, www.icloud.com:443"
+	info.Anx.DestBehavior = map[string]any{"flight_records": "none"}
+	backup := map[string]any{"session_tickets": "200/200"}
+	info.Anx.DestBehaviors = map[string]map[string]any{
+		"www.icloud.com:443": backup,
+		"old.example:443":    {"session_tickets": "none"},
+	}
+	inbound, err = inboundConfig("anx-1", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]map[string]any{"www.icloud.com:443": backup}; !reflect.DeepEqual(inbound["dest_behaviors"], want) {
+		t.Fatalf("dest_behaviors = %#v, want %#v", inbound["dest_behaviors"], want)
+	}
+	if got := anxDestBehaviorMissing(info.Anx); !reflect.DeepEqual(got, []string{"www.apple.com:443:session_tickets"}) {
+		t.Fatalf("missing = %v, want the first dest's session_tickets", got)
+	}
+
 	// Without a dest there is no site to measure.
 	info.Anx.Dest, info.Anx.AllowNoSNI = "", true
 	if got := anxDestBehaviorMissing(info.Anx); got != nil {

@@ -192,6 +192,10 @@ type AnxNode struct {
 	// dest_behavior); with a dest it should carry session_tickets and
 	// flight_records as measured by anx-lab dest-probe.
 	DestBehavior map[string]any `json:"dest_behavior"`
+	// DestBehaviors holds per-dest overrides on top of DestBehavior, keyed
+	// by an entry of the dest list ("host:port"); usually the site keys
+	// session_tickets and flight_records of each backup dest.
+	DestBehaviors map[string]map[string]any `json:"dest_behaviors"`
 }
 
 type WireGuardRelay struct {

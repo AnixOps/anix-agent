@@ -4,6 +4,11 @@
 
 ### Added
 
+- ANX nodes pass `dest_behaviors` (per-dest overrides keyed by an entry of
+  the `dest` list) to the anx-node inbound when Control
+  sets it, limited to the entries of the current list; the missing site data
+  warning now checks each dest on its merged behavior. Needs an anx-node with
+  per-dest behavior (anx #208).
 - ANX nodes pass `bare_listen_port` (the bare jacket, a random-looking TCP
   port for users dialing a domestic entry) to the anx-node inbound when
   Control sets it. Needs an anx-node whose ANX inbound serves the bare jacket;
