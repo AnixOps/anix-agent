@@ -349,7 +349,7 @@ upgrade such a node by running its install command from Control again.
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
 
 ```bash
-export VERSION=v5.0.2
+export VERSION=v5.0.3
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -400,7 +400,7 @@ paste enrollment credentials into public logs or support tickets.
 Install an exact stable or prerelease tag with the same command:
 
 ```bash
-sudo anix-agent update v5.0.2
+sudo anix-agent update v5.0.3
 sudo anix-agent status
 ```
 
