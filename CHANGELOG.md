@@ -4,6 +4,13 @@
 
 ### Added
 
+- The reverse A2 rendezvous (`anx_line.reverse_a2_key`) gets a key file of
+  its own, `reverse-a2.key`, made once as a copy of the anx-server key and
+  reported to Control as `anx_reverse_a2`. The anx-server key can then rotate
+  (anx §2.6) without breaking l2 reverse links, whose egress pins the
+  rendezvous key and has no grace period. Nodes running a rendezvous restart
+  anx-node once with the new path (same key). Needs the matching Control,
+  which hands l2 egresses this key.
 - ANX nodes pass `dest_behaviors` (per-dest overrides keyed by an entry of
   the `dest` list) to the anx-node inbound when Control
   sets it, limited to the entries of the current list; the missing site data

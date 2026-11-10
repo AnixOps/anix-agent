@@ -682,3 +682,26 @@ func TestWithStatFallsBackToTheProbeHandshake(t *testing.T) {
 	stat.RttMs = 12
 	assert.Equal(t, uint32(12), withStat(&networkv1.ComponentStatus{}, stat).GetRttMs())
 }
+
+func TestReverseA2KeyIsACopyThatStays(t *testing.T) {
+	m, _ := newManager(t, &fakeHost{})
+	public, err := m.ReverseA2PublicKey()
+	require.NoError(t, err)
+	assert.Equal(t, "PUBLIC-1", public, "starts as the server key")
+	server, err := os.ReadFile(filepath.Join(m.Dir, keyFile))
+	require.NoError(t, err)
+	reverse, err := os.ReadFile(filepath.Join(m.Dir, ReverseA2KeyFile))
+	require.NoError(t, err)
+	assert.Equal(t, server, reverse)
+
+	// The server key rotates; the reverse A2 key does not follow it.
+	require.NoError(t, os.WriteFile(filepath.Join(m.Dir, keyFile), []byte("NEW SECRET"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(m.Dir, publicFile), []byte("PUBLIC-2\n"), 0o600))
+	again := &Manager{Binary: m.Binary, Dir: m.Dir}
+	public, err = again.ReverseA2PublicKey()
+	require.NoError(t, err)
+	assert.Equal(t, "PUBLIC-1", public)
+	reverse, err = os.ReadFile(filepath.Join(m.Dir, ReverseA2KeyFile))
+	require.NoError(t, err)
+	assert.Equal(t, server, reverse)
+}

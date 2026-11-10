@@ -360,6 +360,11 @@ func (c *networkComponent) report(status *networkv1.NetworkStatus) {
 		} else {
 			keys = append(keys, &networkv1.PublicKey{Kind: network.TransportAnxLine, Key: public})
 		}
+		if public, err := c.servers.ReverseA2PublicKey(); err != nil {
+			c.logger().WithError(err).Warn("Could not make the reverse A2 key")
+		} else {
+			keys = append(keys, &networkv1.PublicKey{Kind: anxserver.ReverseA2PublicKind, Key: public})
+		}
 	}
 	interfaces := interfaceFacts()
 	if plan == nil {
