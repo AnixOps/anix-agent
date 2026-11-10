@@ -4,6 +4,15 @@
 
 ### Added
 
+- Optional periodic rotation of the anx-server key (`AnxKeyRotation`, off by
+  default; `IntervalDays` 30, `GraceDays` 7, `PublishDelaySeconds` 90). When
+  due the Agent runs `anx-server rotate-key --key server.key --grace …`,
+  waits until every anx-server and anx-node has reloaded the key file (they
+  do every 30 s), then reports the new public key to Control, which hands it
+  to subscriptions and plans; the previous key stays accepted for the grace
+  period. Turning it on only starts the clock. The reverse A2 key does not
+  rotate. Needs an anx-server with `rotate-key` (anx #211); older ones fail
+  the rotation and keep the key.
 - The reverse A2 rendezvous (`anx_line.reverse_a2_key`) gets a key file of
   its own, `reverse-a2.key`, made once as a copy of the anx-server key and
   reported to Control as `anx_reverse_a2`. The anx-server key can then rotate

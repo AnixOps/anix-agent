@@ -102,7 +102,6 @@ type Manager struct {
 	MTLS bool
 
 	mu      sync.Mutex
-	public  string
 	servers map[listener]*server
 	// rst is whether RST rules were installed.
 	rst bool
@@ -116,15 +115,13 @@ func (m *Manager) PublicKey() (string, error) {
 	return m.publicKey()
 }
 
+// publicKey reads server.pub each time: a key rotation (rotate.go)
+// replaces it once every process serves the new key.
 func (m *Manager) publicKey() (string, error) {
-	if m.public != "" {
-		return m.public, nil
-	}
 	key, pub := filepath.Join(m.Dir, keyFile), filepath.Join(m.Dir, publicFile)
 	if data, err := os.ReadFile(pub); err == nil {
 		if _, keyErr := os.Stat(key); keyErr == nil {
 			if public := strings.TrimSpace(string(data)); public != "" {
-				m.public = public
 				return public, nil
 			}
 		}
@@ -151,7 +148,6 @@ func (m *Manager) publicKey() (string, error) {
 	if err := os.WriteFile(pub, []byte(public+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("anx-server public key: %w", err)
 	}
-	m.public = public
 	return public, nil
 }
 
@@ -161,6 +157,10 @@ func (m *Manager) publicKey() (string, error) {
 func (m *Manager) ReverseA2PublicKey() (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.reverseA2PublicKey()
+}
+
+func (m *Manager) reverseA2PublicKey() (string, error) {
 	key, pub := filepath.Join(m.Dir, ReverseA2KeyFile), filepath.Join(m.Dir, reverseA2PublicKey)
 	if data, err := os.ReadFile(pub); err == nil {
 		if _, keyErr := os.Stat(key); keyErr == nil {
