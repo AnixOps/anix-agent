@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v5/anxserver"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	log "github.com/sirupsen/logrus"
@@ -484,6 +485,17 @@ var anxKeyFile = func() (string, error) {
 	path := filepath.Join(conf.DefaultStateRoot, "anx-server", "server.key")
 	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return "", fmt.Errorf("anx server key %s is not made yet", path)
+	}
+	return path, nil
+}
+
+// anxReverseA2KeyFile is the key of the reverse A2 rendezvous
+// (anxserver.ReverseA2KeyFile), made beside the server key when the Agent
+// reports its keys, before any plan asks for the rendezvous.
+var anxReverseA2KeyFile = func() (string, error) {
+	path := filepath.Join(conf.DefaultStateRoot, "anx-server", anxserver.ReverseA2KeyFile)
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("anx reverse A2 key %s is not made yet", path)
 	}
 	return path, nil
 }

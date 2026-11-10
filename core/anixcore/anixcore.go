@@ -235,8 +235,9 @@ func (c *Core) launch() error {
 			// §6.4): its short auth is to the Agent's anx-server key, the
 			// server_public Control hands the egress; what does not
 			// authenticate goes to the first name's site, as on the forward
-			// A2 listener.
-			key, err := anxKeyFile()
+			// A2 listener. The key is a copy of the server key that never
+			// rotates (anxserver.ReverseA2KeyFile).
+			key, err := anxReverseA2KeyFile()
 			if err != nil {
 				return err
 			}

@@ -32,7 +32,19 @@ import (
 const (
 	keyFile    = "server.key"
 	publicFile = "server.pub"
+	// ReverseA2KeyFile is the key of anx-node's reverse A2 rendezvous
+	// (anx_line.reverse_a2_key), with its public half beside it. It starts
+	// as a copy of the server key and never rotates: the l2 egress pins its
+	// public half and authenticates to the current key only (anx §2.6), so
+	// it is kept apart from the server key, which rotates.
+	ReverseA2KeyFile   = "reverse-a2.key"
+	reverseA2PublicKey = "reverse-a2.pub"
 )
+
+// ReverseA2PublicKind is the kind the reverse A2 key is reported under
+// (NetworkStatus public_keys); Control hands it to l2 egresses as
+// server_public.
+const ReverseA2PublicKind = "anx_reverse_a2"
 
 // RSTTable is the nftables table of the accepting ends' fake-TCP RST rules
 // (anxline; the AnxLine section has a table of its own).
@@ -141,6 +153,59 @@ func (m *Manager) publicKey() (string, error) {
 	}
 	m.public = public
 	return public, nil
+}
+
+// ReverseA2PublicKey answers the public key of the reverse A2 key, making
+// the key first as a copy of the server key (so an existing rendezvous keeps
+// the key its egresses pinned).
+func (m *Manager) ReverseA2PublicKey() (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, pub := filepath.Join(m.Dir, ReverseA2KeyFile), filepath.Join(m.Dir, reverseA2PublicKey)
+	if data, err := os.ReadFile(pub); err == nil {
+		if _, keyErr := os.Stat(key); keyErr == nil {
+			if public := strings.TrimSpace(string(data)); public != "" {
+				return public, nil
+			}
+		}
+	}
+	public, err := m.publicKey()
+	if err != nil {
+		return "", err
+	}
+	secret, err := os.ReadFile(filepath.Join(m.Dir, keyFile))
+	if err != nil {
+		return "", fmt.Errorf("anx-server key: %w", err)
+	}
+	// The public half last: it marks the copy complete.
+	if err := writeFileAtomic(key, secret); err != nil {
+		return "", fmt.Errorf("reverse A2 key: %w", err)
+	}
+	if err := writeFileAtomic(pub, []byte(public+"\n")); err != nil {
+		return "", fmt.Errorf("reverse A2 public key: %w", err)
+	}
+	return public, nil
+}
+
+// writeFileAtomic writes data to path through a temporary file, mode 0600.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // Apply runs exactly accepts: processes whose listener is gone stop, new
