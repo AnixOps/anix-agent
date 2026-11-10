@@ -203,9 +203,14 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if len(node.DestBehavior) > 0 {
 			inbound["dest_behavior"] = node.DestBehavior
 		}
+		// anx-node refuses a dest_behaviors key that is not in the dest
+		// list, so entries left over from an earlier list are dropped.
+		if behaviors := anxDestBehaviors(node); len(behaviors) > 0 {
+			inbound["dest_behaviors"] = behaviors
+		}
 		if missing := anxDestBehaviorMissing(node); len(missing) > 0 {
 			log.WithField("tag", tag).WithField("missing", strings.Join(missing, ",")).
-				Warn("anx node has a dest but its dest_behavior lacks the measured dest values; run anx-lab dest-probe against the dest and paste its dest_behavior line into the node settings")
+				Warn("anx node has a dest whose behavior lacks the measured dest values; run anx-lab dest-probe against that dest and paste its dest_behavior line into the node settings")
 		}
 		if len(node.ALPN) > 0 {
 			inbound["alpn"] = node.ALPN
@@ -235,19 +240,47 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 	return inbound, nil
 }
 
-// anxDestBehaviorMissing lists the dest_behavior keys a node with a dest
-// should carry but does not: session_tickets and flight_records are the
-// dest's own data (anx spec §4 items 8 and 9), not a preset's, so only a
-// dest-probe run against that dest gives them. Without them the server
-// looks unlike the dest when mirroring it is not possible.
+// anxDests splits the dest list ("host:port[,host:port…]") as anx-node does.
+func anxDests(dest string) []string {
+	var dests []string
+	for _, item := range strings.Split(dest, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			dests = append(dests, item)
+		}
+	}
+	return dests
+}
+
+// anxDestBehaviors is the node's per-dest overrides limited to the entries of
+// its dest list.
+func anxDestBehaviors(node *panel.AnxNode) map[string]map[string]any {
+	behaviors := map[string]map[string]any{}
+	for _, dest := range anxDests(node.Dest) {
+		if behavior := node.DestBehaviors[dest]; len(behavior) > 0 {
+			behaviors[dest] = behavior
+		}
+	}
+	return behaviors
+}
+
+// anxDestBehaviorMissing lists, as "dest:key", the site keys a dest lacks in
+// its merged behavior (dest_behavior, then dest_behaviors[dest]):
+// session_tickets and flight_records are the dest's own data (anx spec §4
+// items 8 and 9), not a preset's, so only a dest-probe run against that dest
+// gives them ("none" counts as given). Without them the server looks unlike
+// the dest when mirroring it is not possible.
 func anxDestBehaviorMissing(node *panel.AnxNode) []string {
-	if node == nil || node.Dest == "" {
+	if node == nil {
 		return nil
 	}
 	var missing []string
-	for _, key := range []string{"session_tickets", "flight_records"} {
-		if _, ok := node.DestBehavior[key]; !ok {
-			missing = append(missing, key)
+	for _, dest := range anxDests(node.Dest) {
+		for _, key := range []string{"session_tickets", "flight_records"} {
+			_, common := node.DestBehavior[key]
+			_, own := node.DestBehaviors[dest][key]
+			if !common && !own {
+				missing = append(missing, dest+":"+key)
+			}
 		}
 	}
 	return missing
