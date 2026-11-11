@@ -128,9 +128,6 @@ jobs:
         # between them (aliveMap) only showed in tests outside the filter above.
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test -race ./node -count=1
 
-      - name: Verify WireGuard relay and peer limit contract
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
-
 
       - name: Set up protoc
         uses: arduino/setup-protoc@v3
