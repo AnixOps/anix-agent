@@ -96,9 +96,6 @@ jobs:
       - name: Run full Go test suite
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
 
-      - name: Verify WireGuard contract
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
-
 
   build:
     name: build (${{ matrix.asset_name }})
