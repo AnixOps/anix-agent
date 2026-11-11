@@ -331,7 +331,7 @@ Agent 在 Hello 中声明 `config.v1`，节点配置由控制流的 `ConfigSnaps
 
 ## 开发构建
 
-要求 Go 1.26.10，并设置 `GOEXPERIMENT=jsonv2`。发行产物必须由 GitHub Actions
+要求 Go 1.26.11，并设置 `GOEXPERIMENT=jsonv2`。发行产物必须由 GitHub Actions
 生成；本地脚本仅用于开发验证，并要求显式启用：
 
 ```bash

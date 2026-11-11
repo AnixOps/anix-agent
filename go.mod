@@ -2,7 +2,7 @@ module github.com/AnixOps/anix-agent/v5
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/AnixOps/anix-control/sdk v0.0.0-20261104145622-7fa02e4615dd

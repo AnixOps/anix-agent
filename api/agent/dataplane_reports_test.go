@@ -93,9 +93,9 @@ func TestReportsWaitInTheSpoolWhileTheStreamIsDownAndReplayInOrder(t *testing.T)
 	startUsersClient(t, client)
 	plane := client.DataPlane()
 
-	// The stream goes down: reports stay pending and go to the spool.
-	control.SetMode(agenttest.ModeRequired)
-	control.DropSessions()
+	// The stream goes down and stays down (a dropped session alone
+	// reconnects at once): reports stay pending and go to the spool.
+	control.RefuseStreams(true)
 	require.Eventually(t, func() bool { return !client.IsConnected() }, 5*time.Second, 5*time.Millisecond)
 	assert.Equal(t, DataPlanePending, plane.Mode(agentcontrol.CapabilityReports))
 	for id := uint64(1); id <= 3; id++ {
@@ -110,7 +110,7 @@ func TestReportsWaitInTheSpoolWhileTheStreamIsDownAndReplayInOrder(t *testing.T)
 	require.NoError(t, client.Close())
 	restarted := newReportsClient(t, control, root, reportsOptions{})
 	assert.Equal(t, 3, spooled(restarted))
-	control.SetMode(agenttest.ModeRequired)
+	control.RefuseStreams(false)
 	startUsersClient(t, restarted)
 	require.Eventually(t, func() bool { return len(control.Batches()) == 3 && spooled(restarted) == 0 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, map[uint64][2]uint64{1: {100, 1000}, 2: {200, 2000}, 3: {300, 3000}}, control.Traffic())
