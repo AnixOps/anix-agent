@@ -17,6 +17,12 @@ permissions:
   contents: read
   security-events: write
 
+# A newer push to a pull request replaces the run in progress. Every other
+# run (main, tags, the schedule, manual runs) is its own group and finishes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze

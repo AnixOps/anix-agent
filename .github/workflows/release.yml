@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces the run in progress. Every other
+# run (main, tags, the schedule, manual runs) is its own group and finishes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # The official AnixOps release key (anix-control plugins.official_public_key,
   # OFFICIAL_PUBLIC_KEY of its install.sh): base64 of the raw Ed25519 public
@@ -60,23 +66,28 @@ jobs:
           python3 scripts/check_release_assets.py workflow --file .github/workflows/release.yml
 
       - name: Set up Go
+        # CI runs this on every pull request and main push; here it gates a tag.
+        if: github.ref_type == 'tag'
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.11"
 
       - name: Set up protoc
+        if: github.ref_type == 'tag'
         uses: arduino/setup-protoc@v3
         with:
           version: '29.2'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install pinned protoc Go plugins
+        if: github.ref_type == 'tag'
         run: |
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Check protobuf generated code
+        if: github.ref_type == 'tag'
         shell: bash
         run: |
           export PATH="$(go env GOPATH)/bin:${PATH}"
@@ -85,15 +96,18 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard -- api/anxmgmt)"
 
       - name: Download dependencies
+        if: github.ref_type == 'tag'
         run: go mod download
 
       - name: Check gofmt
+        if: github.ref_type == 'tag'
         shell: bash
         run: |
           unformatted="$(git ls-files '*.go' | xargs gofmt -l)"
           test -z "${unformatted}" || { echo "${unformatted}"; exit 1; }
 
       - name: Run full Go test suite
+        if: github.ref_type == 'tag'
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
 
 
@@ -177,6 +191,8 @@ jobs:
           path: |
             ./anix-agent-${{ matrix.asset_name }}.zip
             ./anix-agent-${{ matrix.asset_name }}.zip.dgst
+          # Only carried to the release job of the same run.
+          retention-days: 3
 
   release:
     if: needs.tag-gate.outputs.is_release_tag == 'true'

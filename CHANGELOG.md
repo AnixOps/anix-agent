@@ -19,6 +19,11 @@
 
 ### Changed
 
+- CI: on pull requests and `main` pushes, `release.yml` no longer repeats the
+  gofmt, protobuf and full `go test` checks that `ci.yml` runs on the same
+  commit (a tag still runs all of them before building); a newer push cancels
+  the superseded pull-request run of CI, CodeQL and the build; build packages
+  are kept as Actions artifacts for 3 days.
 - Docs no longer describe Xray / sing-box cores as present (`docs/features.md`,
   `docs/INSTALL.md`, `docs/anixcore-core.md`).
 
