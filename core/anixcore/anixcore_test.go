@@ -259,6 +259,36 @@ func TestShadowsocksNodesStartWithTheirFirstUsers(t *testing.T) {
 	}
 }
 
+func TestSnellNodesAlwaysCheckUserKeys(t *testing.T) {
+	api, server := newFakeAPI(t)
+	core := externalCore(t, server)
+	defer core.Close()
+
+	info := &panel.NodeInfo{Type: "snell", Common: &panel.CommonNode{ServerPort: 6160}, Snell: &panel.SnellNode{PSK: "shared-psk", Version: 4}}
+	if err := core.AddNode("snell", info, &conf.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// Without users the kernel would serve anyone who holds the PSK.
+	guard := api.users["snell"][snellGuardUser]
+	if len(api.users["snell"]) != 1 || guard.Password == "" {
+		t.Fatalf("users of a new snell inbound = %v", api.users["snell"])
+	}
+	user := panel.UserInfo{Id: 7, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"}
+	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "snell", Users: []panel.UserInfo{user}, NodeInfo: info}); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.DelUsers([]panel.UserInfo{user}, "snell", info); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.users["snell"], map[string]apiUser{snellGuardUser: guard}) {
+		t.Fatalf("users after the last panel user left = %v", api.users["snell"])
+	}
+	// The guard is no panel user: reports skip it.
+	if _, ok := panelUID(snellGuardUser); ok {
+		t.Fatal("the guard user counts as a panel user")
+	}
+}
+
 func TestShadowsocksIssuedKeyIsASecondUser(t *testing.T) {
 	api, server := newFakeAPI(t)
 	core := externalCore(t, server)

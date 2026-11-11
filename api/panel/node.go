@@ -38,6 +38,7 @@ type NodeInfo struct {
 	WireGuard   *WireGuardNode
 	Iwan        *IwanNode
 	Anx         *AnxNode
+	Snell       *SnellNode
 	Common      *CommonNode
 }
 
@@ -161,6 +162,19 @@ type IwanNode struct {
 	AllowClientToClient bool  `json:"allow_client_to_client"`
 	// Fixed tunnel addresses by panel user id.
 	FixedAddresses map[string]string `json:"fixed_addresses"`
+}
+
+// SnellNode is a Snell inbound (networkcore_anixops crates/inbound-snell):
+// one PSK for the node, and each panel user logs in with its UUID as the
+// user key.
+type SnellNode struct {
+	CommonNode
+	PSK     string `json:"psk"`
+	Version int    `json:"version"`
+	// Obfs is "http" (versions 1 to 4) or empty.
+	Obfs string `json:"obfs"`
+	// Mode is a version 6 mode; empty keeps the kernel default.
+	Mode string `json:"mode"`
 }
 
 // AnxNode is an ANX-A inbound (anx-node's `anx` inbound, A2 jacket): the
@@ -405,6 +419,15 @@ func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string
 		}
 		cm = &rsp.CommonNode
 		node.Anx = rsp
+		node.Security = None
+	case "snell":
+		rsp := &SnellNode{}
+		err = json.Unmarshal(body, rsp)
+		if err != nil {
+			return nil, "", fmt.Errorf("decode snell params error: %s", err)
+		}
+		cm = &rsp.CommonNode
+		node.Snell = rsp
 		node.Security = None
 	}
 	if cm == nil {

@@ -68,6 +68,7 @@ anixcore 是外部程序，节点上没有安装时不应影响其他内核。
 | vmess | `vmess`，tcp / ws / grpc |
 | hysteria2 | `hysteria2`，必须有证书，支持 salamander 混淆 |
 | tuic | `tuic`，必须有证书，`congestion_control` 透传 |
+| snell | `snell`，TCP，自带加密，不配证书；透传 `psk`、`version` 以及设置了的 `obfs`、`mode`。内核是「一个 PSK + 每个用户一个用户密钥」：用户密钥是面板用户的 UUID（Surge 的 `userkey`）。入站里始终带一个没人知道密钥的 `guard` 用户，因为内核的 Snell 入站在没有用户时会放行所有持有 PSK 的连接。 |
 | iwan（Panabit iWAN） | `iwan`，UDP 三层隧道，透传 `pool`（必填）、`mtu`、`dns_upstream`、`allow_encrypt`、`allow_client_to_client`。登录名是面板用户 id，口令是 UUID 去掉连字符后的前 16 位（小写），`fixed_addresses`（用户 id → 地址）给出的用户带固定地址。iWAN 不加密（networkcore_anixops `docs/protocols/iwan.md` §9）。 |
 
 不支持的会在 `AddNode` 时报错：chacha20 的 SS-2022（无多用户模式）、旧 SS 方法、

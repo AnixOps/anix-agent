@@ -4,6 +4,13 @@
 
 ### Added
 
+- Snell nodes (protocol revision 3): a panel node of type `snell` becomes an
+  anixcore `snell` inbound with the node's `psk`, `version` and, when set,
+  `obfs` and `mode`. A panel user's key (the Surge `userkey`) is its UUID, so
+  traffic and online IPs stay per user. The inbound always holds one extra
+  user whose key nobody has: the kernel's Snell inbound serves anyone who
+  holds the PSK while it has no users. Needs the matching Control and an
+  anx-node with the snell inbound.
 - CI step "No third-party engines or GPL modules": `scripts/check_forbidden_deps.sh`
   rejects sing-box (sagernet), metacubex, Xray (xtls), v2fly, Hysteria
   (apernet), Mieru, EasyTier and gost modules in `go.mod` / `go.sum`, and

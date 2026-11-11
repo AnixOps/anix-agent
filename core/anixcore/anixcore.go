@@ -133,7 +133,7 @@ func (c *Core) Type() string {
 }
 
 func (c *Core) Protocols() []string {
-	return []string{"shadowsocks", "trojan", "vless", "vmess", "hysteria2", "tuic", "iwan", "anytls", "anx"}
+	return []string{"shadowsocks", "trojan", "vless", "vmess", "hysteria2", "tuic", "iwan", "anytls", "snell", "anx"}
 }
 
 func (c *Core) Start() error {
@@ -430,6 +430,12 @@ func (c *Core) AddNode(tag string, info *panel.NodeInfo, options *conf.Options) 
 		return fmt.Errorf("anixcore node %s already exists", tag)
 	}
 	n := &node{info: info, inbound: inbound, users: make(map[string]apiUser)}
+	if info.Type == "snell" {
+		// anixcore's Snell inbound serves anyone who holds the PSK while
+		// it has no users: a user whose key nobody has keeps it checking
+		// user keys before the first panel user and after the last.
+		n.users[snellGuardUser] = apiUser{Name: snellGuardUser, Password: rand.Text()}
+	}
 	n.ingress = c.ingressOf(n)
 	if info.Type != "shadowsocks" {
 		if err := c.create(tag, n); err != nil {
