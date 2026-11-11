@@ -111,8 +111,10 @@ type ShadowsocksNode struct {
 
 type TrojanNode struct {
 	CommonNode
-	Network         string          `json:"network"`
-	NetworkSettings json.RawMessage `json:"networkSettings"`
+	Network string `json:"network"`
+	// Control sends network_settings; networkSettings is the older spelling.
+	NetworkSettings     json.RawMessage `json:"network_settings"`
+	NetworkSettingsBack json.RawMessage `json:"networkSettings"`
 }
 
 type TuicNode struct {
@@ -362,6 +364,10 @@ func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string
 		err = json.Unmarshal(body, rsp)
 		if err != nil {
 			return nil, "", fmt.Errorf("decode trojan params error: %s", err)
+		}
+		if len(rsp.NetworkSettingsBack) > 0 {
+			rsp.NetworkSettings = rsp.NetworkSettingsBack
+			rsp.NetworkSettingsBack = nil
 		}
 		cm = &rsp.CommonNode
 		node.Trojan = rsp
