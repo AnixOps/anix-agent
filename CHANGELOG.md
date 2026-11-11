@@ -4,12 +4,32 @@
 
 ### Added
 
+- Snell nodes (protocol revision 3): a panel node of type `snell` becomes an
+  anixcore `snell` inbound with the node's `psk`, `version` and, when set,
+  `obfs` and `mode`. A panel user's key (the Surge `userkey`) is its UUID, so
+  traffic and online IPs stay per user. The inbound always holds one extra
+  user whose key nobody has: the kernel's Snell inbound serves anyone who
+  holds the PSK while it has no users. Needs the matching Control and an
+  anx-node with the snell inbound: it came after anx-node v0.2.0 and is in
+  no release yet, so `KernelMinVersion` is unchanged and a released kernel
+  refuses the inbound.
+- `contracts/agent/v1/protocol-combinations.json`, the same file as in
+  anix-control: the protocol, TLS mode and transport combinations Control may
+  offer. `TestEveryOfferedCombinationMaps` builds an anixcore inbound from a
+  Control-shaped configuration answer for each of them.
 - CI step "No third-party engines or GPL modules": `scripts/check_forbidden_deps.sh`
   rejects sing-box (sagernet), metacubex, Xray (xtls), v2fly, Hysteria
   (apernet), Mieru, EasyTier and gost modules in `go.mod` / `go.sum`, and
   go-licenses rejects any restricted or forbidden (GPL / AGPL) licence in the
   `anixcore` build. The Agent already stopped linking these engines in
   5.0.0-rc.22; this keeps it that way.
+
+### Fixed
+
+- Trojan nodes on ws, grpc or httpupgrade read the transport settings Control
+  sends (`network_settings`). Only the older `networkSettings` spelling was
+  read, so a gRPC Trojan node was refused for its missing service name and a
+  WebSocket one listened on `/` instead of its path.
 
 ### Removed
 

@@ -1,0 +1,17 @@
+{
+  "description": "The node protocol types with the TLS modes (0 none, 1 TLS, 2 Reality) and transports the Agent's kernel runs. Control offers only these and the Agent maps every one; a test on each side reads this file. Keep the copies in anix-control and anix-agent identical.",
+  "combinations": [
+    {"type": "vless", "tls": [0, 1], "transports": ["tcp", "ws", "grpc", "httpupgrade"]},
+    {"type": "vless", "tls": [2], "transports": ["tcp"]},
+    {"type": "vmess", "tls": [0, 1], "transports": ["tcp", "ws", "grpc", "httpupgrade"]},
+    {"type": "trojan", "tls": [1], "transports": ["tcp", "ws", "grpc", "httpupgrade"]},
+    {"type": "anytls", "tls": [1], "transports": ["tcp"]},
+    {"type": "shadowsocks", "tls": [0], "transports": ["tcp"]},
+    {"type": "snell", "tls": [0], "transports": ["tcp"]},
+    {"type": "anx", "tls": [0], "transports": ["tcp"]},
+    {"type": "hysteria2", "tls": [1], "transports": ["udp"]},
+    {"type": "tuic", "tls": [1], "transports": ["udp"]},
+    {"type": "wireguard", "tls": [0], "transports": ["udp"]},
+    {"type": "iwan", "tls": [0], "transports": ["udp"]}
+  ]
+}

@@ -169,6 +169,36 @@ func TestQuicProtocolsNeedCertificates(t *testing.T) {
 	}
 }
 
+func TestSnellInbound(t *testing.T) {
+	body := `{"type":"snell","server_port":6160,"tls":0,"network":"tcp","psk":"shared-psk","version":4,"obfs":"http"}`
+	info, _, err := panel.ParseNodeInfo([]byte(body), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbound, err := inboundConfig("snell", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"tag": "snell", "type": "snell", "listen": "0.0.0.0", "listen_port": 6160,
+		"psk": "shared-psk", "version": 4, "obfs": "http",
+	}
+	if !reflect.DeepEqual(inbound, want) {
+		t.Fatalf("snell inbound = %#v", inbound)
+	}
+	// The user key a request names is the UUID.
+	user, err := apiUserFor(info, panel.UserInfo{Id: 9, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"})
+	if err != nil || user != (apiUser{Name: "9", Password: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"}) {
+		t.Fatalf("snell user = %+v, %v", user, err)
+	}
+
+	info.Snell.Version, info.Snell.Obfs, info.Snell.Mode = 6, "", "unshaped"
+	inbound, err = inboundConfig("snell", info, &conf.Options{})
+	if err != nil || inbound["mode"] != "unshaped" || inbound["obfs"] != nil {
+		t.Fatalf("snell v6 inbound = %#v, %v", inbound, err)
+	}
+}
+
 func TestIwanInbound(t *testing.T) {
 	deny := false
 	info := &panel.NodeInfo{

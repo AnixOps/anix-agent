@@ -159,6 +159,20 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if len(node.PaddingScheme) > 0 {
 			inbound["padding_scheme"] = node.PaddingScheme
 		}
+	case "snell":
+		node := info.Snell
+		if node == nil {
+			return nil, errors.New("snell node info is missing")
+		}
+		inbound["type"] = "snell"
+		inbound["psk"] = node.PSK
+		inbound["version"] = node.Version
+		if node.Obfs != "" {
+			inbound["obfs"] = node.Obfs
+		}
+		if node.Mode != "" {
+			inbound["mode"] = node.Mode
+		}
 	case "iwan":
 		node := info.Iwan
 		if node == nil {
@@ -519,6 +533,10 @@ func userName(user panel.UserInfo) string {
 	return strconv.Itoa(user.Id)
 }
 
+// snellGuardUser names the user every Snell inbound has (AddNode); the name
+// is no panel user id, so reports skip it.
+const snellGuardUser = "guard"
+
 // userKeySuffix names a panel user's second Shadowsocks 2022 user, the one
 // with the key Control issued (users.v1 extra ss2022_key): "<id>.k".
 const userKeySuffix = ".k"
@@ -566,7 +584,8 @@ func apiUserFor(info *panel.NodeInfo, user panel.UserInfo) (apiUser, error) {
 			return apiUser{}, fmt.Errorf("user %d uuid is too short for a shadowsocks key", user.Id)
 		}
 		out.Password = base64.StdEncoding.EncodeToString([]byte(user.Uuid[:keyLen]))
-	case "trojan", "hysteria2", "anytls":
+	case "trojan", "hysteria2", "anytls", "snell":
+		// Snell: the user key a request names (Surge userkey).
 		out.Password = user.Uuid
 	case "tuic":
 		out.UUID = user.Uuid

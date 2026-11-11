@@ -63,15 +63,20 @@ anixcore 是外部程序，节点上没有安装时不应影响其他内核。
 | 面板节点 | anixcore 入站 |
 | --- | --- |
 | shadowsocks（2022 AES 方法） | `shadowsocks`，多用户；用户密钥为 UUID 前 16/32 字节的 base64，与已移除的旧内核相同（老节点的订阅不用改）。节点在拿到首批用户时才创建（anixcore 在创建时决定多用户模式）。 |
-| trojan | `trojan`，tcp / ws / grpc，证书来自 `CertConfig` |
-| vless | `vless`，tls 或 reality（reality 只支持 tcp，`xtls-rprx-vision` flow 随 reality 下发）|
-| vmess | `vmess`，tcp / ws / grpc |
+| trojan | `trojan`，tcp / ws / grpc / httpupgrade，证书来自 `CertConfig` |
+| vless | `vless`，tcp / ws / grpc / httpupgrade / xhttp，tls 或 reality（reality 只支持 tcp 和 xhttp，`xtls-rprx-vision` flow 随 reality 下发）|
+| vmess | `vmess`，tcp / ws / grpc / httpupgrade |
 | hysteria2 | `hysteria2`，必须有证书，支持 salamander 混淆 |
 | tuic | `tuic`，必须有证书，`congestion_control` 透传 |
+| snell | `snell`，TCP，自带加密，不配证书；透传 `psk`、`version` 以及设置了的 `obfs`、`mode`。内核是「一个 PSK + 每个用户一个用户密钥」：用户密钥是面板用户的 UUID（Surge 的 `userkey`）。入站里始终带一个没人知道密钥的 `guard` 用户，因为内核的 Snell 入站在没有用户时会放行所有持有 PSK 的连接。snell 入站在内核 v0.2.0 之后才加入，目前还没有带它的 anx-node 发行版，已发行的内核会拒绝这个入站；有了发行版再提升 `KernelMinVersion`。 |
 | iwan（Panabit iWAN） | `iwan`，UDP 三层隧道，透传 `pool`（必填）、`mtu`、`dns_upstream`、`allow_encrypt`、`allow_client_to_client`。登录名是面板用户 id，口令是 UUID 去掉连字符后的前 16 位（小写），`fixed_addresses`（用户 id → 地址）给出的用户带固定地址。iWAN 不加密（networkcore_anixops `docs/protocols/iwan.md` §9）。 |
 
+Control 可以提供的「协议 × TLS 模式 × 传输」组合列在
+`contracts/agent/v1/protocol-combinations.json`（与 anix-control 里的同名文件保持一致），
+`core/anixcore/combinations_test.go` 逐个验证它们都能映射成入站。
+
 不支持的会在 `AddNode` 时报错：chacha20 的 SS-2022（无多用户模式）、旧 SS 方法、
-httpupgrade 等其他传输、AnyTLS、Hysteria v1、WireGuard。
+h2 等其他传输、reality 配 ws / grpc、Hysteria v1、WireGuard。
 
 用户名是面板用户 id，流量（`GetUserTrafficSlice`，支持 reset）和在线 IP
 （`GetOnlineDevice`）按 id 回报。
