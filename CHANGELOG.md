@@ -10,7 +10,9 @@
   traffic and online IPs stay per user. The inbound always holds one extra
   user whose key nobody has: the kernel's Snell inbound serves anyone who
   holds the PSK while it has no users. Needs the matching Control and an
-  anx-node with the snell inbound.
+  anx-node with the snell inbound: it came after anx-node v0.2.0 and is in
+  no release yet, so `KernelMinVersion` is unchanged and a released kernel
+  refuses the inbound.
 - `contracts/agent/v1/protocol-combinations.json`, the same file as in
   anix-control: the protocol, TLS mode and transport combinations Control may
   offer. `TestEveryOfferedCombinationMaps` builds an anixcore inbound from a
