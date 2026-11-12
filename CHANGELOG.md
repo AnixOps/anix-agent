@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.4 - 2026-11-12
+
+Shipped with AnixOps Control 5.0.4 and anx-node 0.1.0-alpha.19. Protocol
+revision 3 (Snell); Snell nodes need a later anx-node release.
+
 ### Added
 
 - Snell nodes (protocol revision 3): a panel node of type `snell` becomes an
