@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- ANX licensing (anx spec §2.4.1): an ANX node's `license_ca` and
+  `require_license` from Control go to the anx-node inbound. Control sends
+  them only while ANX licensing is on (off by default); they need an
+  anx-node with licensing (anx PR #256).
+
 ## 5.0.4 - 2026-11-12
 
 Shipped with AnixOps Control 5.0.4 and anx-node 0.1.0-alpha.19. Protocol

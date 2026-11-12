@@ -212,6 +212,14 @@ type AnxNode struct {
 	// by an entry of the dest list ("host:port"); usually the site keys
 	// session_tickets and flight_records of each backup dest.
 	DestBehaviors map[string]map[string]any `json:"dest_behaviors"`
+	// LicenseCA lists the license CAs (64-hex Ed25519 public keys, at most
+	// two while rotating) whose device licenses the node accepts (anx spec
+	// §2.4.1); empty = licensing off. Control sends it only while ANX
+	// licensing is on.
+	LicenseCA []string `json:"license_ca"`
+	// RequireLicense makes the node refuse sessions without a license;
+	// needs LicenseCA and no wg jacket.
+	RequireLicense bool `json:"require_license"`
 }
 
 type WireGuardRelay struct {
