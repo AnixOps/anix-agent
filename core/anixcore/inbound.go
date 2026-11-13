@@ -249,6 +249,14 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node.BareListenPort > 0 {
 			inbound["bare_listen_port"] = node.BareListenPort
 		}
+		// ANX licensing (anx spec §2.4.1): only while Control turns it on;
+		// an anx-node from before licensing refuses these keys.
+		if len(node.LicenseCA) > 0 {
+			inbound["license_ca"] = node.LicenseCA
+			if node.RequireLicense {
+				inbound["require_license"] = true
+			}
+		}
 	default:
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
 	}

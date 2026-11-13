@@ -331,7 +331,7 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}
 	}
-	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams", "wg_listen_port", "bare_listen_port", "dest_stack", "dest_behavior", "dest_behaviors"} {
+	for _, key := range []string{"allow_no_sni", "shape_plain", "max_streams", "wg_listen_port", "bare_listen_port", "dest_stack", "dest_behavior", "dest_behaviors", "license_ca", "require_license"} {
 		if _, set := inbound[key]; set {
 			t.Fatalf("anx inbound sets %s while the node leaves it at the default", key)
 		}
@@ -351,6 +351,25 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 		if !reflect.DeepEqual(inbound[key], want) {
 			t.Fatalf("anx inbound %s = %#v, want %#v", key, inbound[key], want)
 		}
+	}
+
+	// Licensing passes through; require_license only with a CA.
+	info.Anx.RequireLicense = true
+	inbound, err = inboundConfig("anx-1", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, set := inbound["require_license"]; set {
+		t.Fatal("require_license went out without a license CA")
+	}
+	ca := strings.Repeat("ab", 32)
+	info.Anx.LicenseCA = []string{ca}
+	inbound, err = inboundConfig("anx-1", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inbound["license_ca"], []string{ca}) || inbound["require_license"] != true {
+		t.Fatalf("anx inbound license = %#v / %#v", inbound["license_ca"], inbound["require_license"])
 	}
 }
 
