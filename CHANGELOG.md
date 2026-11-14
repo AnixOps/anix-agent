@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.5 - 2026-11-14
+
+Shipped with AnixOps Control 5.0.6 and anx-node 0.1.0-alpha.22.
+
 ### Added
 
 - ANX licensing (anx spec §2.4.1): an ANX node's `license_ca` and
