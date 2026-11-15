@@ -34,6 +34,14 @@ type EgressRoute struct {
 	Domains []string `json:"domains"`
 	// Server is the exit node's relay inbound.
 	Server EgressServer `json:"server"`
+	// Fallbacks are backup relays the core tries in order when the ones
+	// before fail to connect.
+	Fallbacks []EgressServer `json:"fallbacks,omitempty"`
+}
+
+// Servers are the route's relays in the order they are tried.
+func (r EgressRoute) Servers() []EgressServer {
+	return append([]EgressServer{r.Server}, r.Fallbacks...)
 }
 
 // EgressServer is the relay inbound a source node connects to.
@@ -100,11 +108,13 @@ func (c *EgressConfig) Validate() error {
 				return fmt.Errorf("egress route %d: an empty domain", route.ID)
 			}
 		}
-		if strings.TrimSpace(route.Server.Host) == "" {
-			return fmt.Errorf("egress route %d: the server has no host", route.ID)
-		}
-		if err := checkEgressEndpoint(route.Server.Port, route.Server.Method, route.Server.Password); err != nil {
-			return fmt.Errorf("egress route %d: %w", route.ID, err)
+		for _, server := range route.Servers() {
+			if strings.TrimSpace(server.Host) == "" {
+				return fmt.Errorf("egress route %d: the server has no host", route.ID)
+			}
+			if err := checkEgressEndpoint(server.Port, server.Method, server.Password); err != nil {
+				return fmt.Errorf("egress route %d: %w", route.ID, err)
+			}
 		}
 	}
 	seen = map[uint64]bool{}

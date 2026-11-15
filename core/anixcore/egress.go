@@ -23,8 +23,10 @@ func (c *Core) ApplyEgress(config *panel.EgressConfig) error {
 	body := &panel.EgressConfig{Routes: []panel.EgressRoute{}, Relays: []panel.EgressRelay{}}
 	if config != nil {
 		for _, route := range config.Routes {
-			if protocol := panel.EgressProtocol(route.Server.Protocol); protocol != panel.EgressProtocolShadowsocks {
-				return fmt.Errorf("egress route %d: the anixcore core has no relay protocol %q", route.ID, protocol)
+			for _, server := range route.Servers() {
+				if protocol := panel.EgressProtocol(server.Protocol); protocol != panel.EgressProtocolShadowsocks {
+					return fmt.Errorf("egress route %d: the anixcore core has no relay protocol %q", route.ID, protocol)
+				}
 			}
 		}
 		for _, relay := range config.Relays {

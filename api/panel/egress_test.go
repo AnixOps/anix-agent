@@ -27,4 +27,15 @@ func TestParseEgress(t *testing.T) {
 	require.ErrorContains(t, err, "no host")
 	_, err = ParseEgress([]byte(`{"egress":{"relays":[{"id":4,"port":1,"method":"m","password":"k"},{"id":4,"port":2,"method":"m","password":"k"}]}}`))
 	require.ErrorContains(t, err, "repeated")
+
+	failover, err := ParseEgress([]byte(`{"egress":{"routes":[{"id":1,"domains":["a.com"],
+		"server":{"host":"jp.example","port":1,"method":"m","password":"k"},
+		"fallbacks":[{"host":"us.example","port":2,"method":"m","password":"k"}]}]}}`))
+	require.NoError(t, err)
+	servers := failover.Routes[0].Servers()
+	require.Len(t, servers, 2)
+	require.Equal(t, "us.example", servers[1].Host)
+	_, err = ParseEgress([]byte(`{"egress":{"routes":[{"id":1,"domains":["a.com"],
+		"server":{"host":"jp.example","port":1,"method":"m","password":"k"},"fallbacks":[{"port":2,"method":"m","password":"k"}]}]}}`))
+	require.ErrorContains(t, err, "no host")
 }
