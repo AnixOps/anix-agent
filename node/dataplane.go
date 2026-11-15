@@ -54,7 +54,10 @@ type nodeDataPlane struct {
 	// a node may serve more, also two of one type.
 	extrasMu sync.Mutex
 	extras   map[uint64]*Controller
-	client   *agentapi.Client
+	// relayFirewall: the egress relay firewall table holds rules
+	// (applyRelayFirewall), so a configuration without them removes it.
+	relayFirewall bool
+	client        *agentapi.Client
 	// forward runs the forwarding state of the node's snapshots (F3b),
 	// nil when the node does not forward.
 	forward *forward.Component
@@ -252,6 +255,9 @@ func (n *nodeDataPlane) applyEgress(snapshot *agentv1pb.ConfigSnapshot) error {
 	}
 	if err := applier.ApplyEgress(egress); err != nil {
 		return fmt.Errorf("egress routes: %w", err)
+	}
+	if err := n.applyRelayFirewall(egress); err != nil {
+		return fmt.Errorf("egress relay firewall: %w", err)
 	}
 	if !egress.Empty() {
 		n.logger().WithFields(log.Fields{"egress_routes": len(egress.Routes), "egress_relays": len(egress.Relays)}).

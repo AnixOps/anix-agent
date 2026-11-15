@@ -3,8 +3,13 @@ package panel
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// allowedSource is an IP address or host name (nothing nft would read as
+// syntax).
+var allowedSource = regexp.MustCompile(`^[0-9A-Za-z.:-]+$`)
 
 // EgressProtocolShadowsocks is the relay protocol of Control's egress
 // routes today: Shadowsocks 2022 with the route's method and key.
@@ -62,6 +67,10 @@ type EgressRelay struct {
 	Port     int    `json:"port"`
 	Method   string `json:"method"`
 	Password string `json:"password"`
+	// Allow are the addresses or host names of the route's source nodes:
+	// when set, the Agent lets only them reach Port (the core never sees
+	// it). Empty leaves the port open.
+	Allow []string `json:"allow,omitempty"`
 }
 
 // Empty tells whether the configuration asks for nothing.
@@ -125,6 +134,11 @@ func (c *EgressConfig) Validate() error {
 		seen[relay.ID] = true
 		if err := checkEgressEndpoint(relay.Port, relay.Method, relay.Password); err != nil {
 			return fmt.Errorf("egress relay %d: %w", relay.ID, err)
+		}
+		for _, source := range relay.Allow {
+			if !allowedSource.MatchString(source) {
+				return fmt.Errorf("egress relay %d: allow %q is not an address or host name", relay.ID, source)
+			}
 		}
 	}
 	return nil
