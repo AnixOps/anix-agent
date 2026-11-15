@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 5.0.6 - 2026-11-15
+
+Shipped with AnixOps Control 5.0.8 and anx-node 0.1.0-alpha.23.
+
+### Added
+
+- Egress route failover: a route in the configuration member `egress` may
+  carry `fallbacks`, backup relays in the order they are tried. The Agent
+  validates them and passes them to anixcore, which moves to the next relay
+  when one fails to connect (needs anx-node 0.1.0-alpha.23; an older one
+  uses only the first relay).
+
 ## 5.0.5 - 2026-11-14
 
 Shipped with AnixOps Control 5.0.6 and anx-node 0.1.0-alpha.22.
