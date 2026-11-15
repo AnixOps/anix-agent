@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.0.7 - 2026-11-15
+
+Shipped with AnixOps Control 5.0.9 and anx-node 0.1.0-alpha.23.
+
 ### Added
 
 - Egress relays only accept their source nodes: a relay in the member
