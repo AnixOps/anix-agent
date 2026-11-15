@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Egress relays only accept their source nodes: a relay in the member
+  `egress` may carry `allow`, the addresses or host names of the route's
+  source nodes, and the Agent then drops every other address on the relay's
+  port (TCP and UDP) in the nftables table `inet anixops_egress`, ahead of
+  the host's own firewall. Relays without `allow` stay open.
+
 ## 5.0.6 - 2026-11-15
 
 Shipped with AnixOps Control 5.0.8 and anx-node 0.1.0-alpha.23.

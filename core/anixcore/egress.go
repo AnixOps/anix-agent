@@ -35,7 +35,10 @@ func (c *Core) ApplyEgress(config *panel.EgressConfig) error {
 			}
 		}
 		body.Routes = append(body.Routes, config.Routes...)
-		body.Relays = append(body.Relays, config.Relays...)
+		for _, relay := range config.Relays {
+			relay.Allow = nil // the Agent's firewall, not the core's
+			body.Relays = append(body.Relays, relay)
+		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
