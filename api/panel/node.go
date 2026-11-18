@@ -220,6 +220,10 @@ type AnxNode struct {
 	// RequireLicense makes the node refuse sessions without a license;
 	// needs LicenseCA and no wg jacket.
 	RequireLicense bool `json:"require_license"`
+	// LicenseRevoked lists the devices (16-hex device_id) the panel
+	// revoked while their license may still be valid: the node refuses
+	// them. Control sends it only while it is not empty.
+	LicenseRevoked []string `json:"license_revoked"`
 }
 
 type WireGuardRelay struct {

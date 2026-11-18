@@ -51,6 +51,15 @@ var configOnStdin = func(binary string) bool {
 	return anxmtls.Supports(binary, []byte("features: config-stdin"))
 }
 
+// revokesLicenses reports whether the anx-node at binary knows the
+// inbound's license_revoked; older releases refuse the whole inbound.
+var revokesLicenses = func(binary string) bool {
+	if path, err := exec.LookPath(binary); err == nil {
+		binary = path
+	}
+	return anxmtls.Supports(binary, []byte("license_revoked entries"))
+}
+
 var (
 	_ vCore.Core                 = (*Core)(nil)
 	_ vCore.OnlineDeviceProvider = (*Core)(nil)
@@ -423,6 +432,10 @@ func (c *Core) AddNode(tag string, info *panel.NodeInfo, options *conf.Options) 
 	inbound, err := inboundConfig(tag, info, options)
 	if err != nil {
 		return fmt.Errorf("anixcore node %s: %w", tag, err)
+	}
+	if _, ok := inbound["license_revoked"]; ok && !revokesLicenses(c.config.BinaryPath) {
+		log.WithField("core", coreType).Warn("anx-node does not know license_revoked; revoked devices keep their licenses until they expire")
+		delete(inbound, "license_revoked")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -371,6 +371,17 @@ func TestAnxNodesBecomeAnxInbounds(t *testing.T) {
 	if !reflect.DeepEqual(inbound["license_ca"], []string{ca}) || inbound["require_license"] != true {
 		t.Fatalf("anx inbound license = %#v / %#v", inbound["license_ca"], inbound["require_license"])
 	}
+	if _, set := inbound["license_revoked"]; set {
+		t.Fatal("license_revoked went out empty")
+	}
+	info.Anx.LicenseRevoked = []string{"0011223344556677"}
+	inbound, err = inboundConfig("anx-1", info, &conf.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inbound["license_revoked"], []string{"0011223344556677"}) {
+		t.Fatalf("anx inbound license_revoked = %#v", inbound["license_revoked"])
+	}
 }
 
 func TestAnxDestBehaviorPassesThrough(t *testing.T) {
