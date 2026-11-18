@@ -256,6 +256,9 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 			if node.RequireLicense {
 				inbound["require_license"] = true
 			}
+			if len(node.LicenseRevoked) > 0 {
+				inbound["license_revoked"] = node.LicenseRevoked
+			}
 		}
 	default:
 		return nil, fmt.Errorf("anixcore does not serve %q nodes", info.Type)
