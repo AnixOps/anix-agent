@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 5.0.8 - 2026-11-18
+
+Shipped with AnixOps Control 5.0.10 and anx-node 0.1.0-alpha.24.
+
+### Added
+
+- The panel's revoked ANX devices go to anx-node as `license_revoked`, so a
+  revoked device is dropped and refused at once instead of when its license
+  runs out. Only sent to an anx-node that knows the field (0.1.0-alpha.24+).
+
 ## 5.0.7 - 2026-11-15
 
 Shipped with AnixOps Control 5.0.9 and anx-node 0.1.0-alpha.23.
