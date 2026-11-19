@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Reachability probe: the `agent.diagnostic` action `reach.probe` (capability
+  `reach.probe`) opens a TCP connection to each port of up to 64 targets from
+  the node's own network and closes it at once, and answers per port `open`,
+  `refused`, `timeout`, `reset` or `unreachable`. A target is reachable when
+  any port connects or refuses. Host names resolve with the node's resolver;
+  addresses that are not public are refused. Control compares the answers of
+  nodes in different regions to tell a node that is down from one that is
+  unreachable from some regions only.
+
 ## 5.0.8 - 2026-11-18
 
 Shipped with AnixOps Control 5.0.10 and anx-node 0.1.0-alpha.24.

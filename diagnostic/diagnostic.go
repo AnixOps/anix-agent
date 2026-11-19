@@ -11,6 +11,8 @@
 //     forward component runs on the hop it holds.
 //   - The Reality target probe (reality.probe, package realityprobe): from
 //     the node's network, whether a site can serve as a REALITY target.
+//   - The reachability probe (reach.probe, package reachprobe): from the
+//     node's network, whether other nodes' public addresses answer.
 //
 // The payload is {"task": {"id", "type", "action", "params", "timeout"}}.
 // The answer is the generic diagnostic state {"success", "output", "error",
@@ -102,6 +104,8 @@ type Executor struct {
 	Forward Checker
 	// Reality runs reality.probe; nil refuses it.
 	Reality Checker
+	// Reach runs reach.probe; nil refuses it.
+	Reach Checker
 	// Units maps a service to its systemd unit; a service not listed is
 	// refused.
 	Units map[string]string
@@ -146,7 +150,7 @@ func (e *Executor) now() time.Time {
 // Run1 runs one task.
 func (e *Executor) Run1(ctx context.Context, task Task) (*State, error) {
 	started := e.now()
-	for _, checker := range []Checker{e.Forward, e.Reality} {
+	for _, checker := range []Checker{e.Forward, e.Reality, e.Reach} {
 		if checker == nil || !checker.IsCheck(task.Action) {
 			continue
 		}
@@ -163,7 +167,7 @@ func (e *Executor) Run1(ctx context.Context, task Task) (*State, error) {
 	if strings.HasPrefix(task.Action, "forward.") {
 		return nil, fmt.Errorf("agent.diagnostic: %q needs the forward component, which this Agent does not run", task.Action)
 	}
-	if strings.HasPrefix(task.Action, "reality.") {
+	if strings.HasPrefix(task.Action, "reality.") || strings.HasPrefix(task.Action, "reach.") {
 		return nil, fmt.Errorf("agent.diagnostic: %q runs only on a proxy node's Agent", task.Action)
 	}
 	service, _ := task.Params["service"].(string)
