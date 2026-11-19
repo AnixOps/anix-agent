@@ -20,6 +20,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/diagnostic"
 	"github.com/AnixOps/anix-agent/v5/forward"
 	"github.com/AnixOps/anix-agent/v5/plugin"
+	"github.com/AnixOps/anix-agent/v5/reachprobe"
 	"github.com/AnixOps/anix-agent/v5/realityprobe"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
@@ -79,6 +80,8 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	capabilities = append(capabilities, forward.DiagnosticCapabilities(capabilities)...)
 	// The proxy node probes Reality targets from its own network.
 	capabilities = append(capabilities, &agentv1pb.Capability{Name: realityprobe.Capability, Version: agentcontrol.CapabilityVersionV1})
+	// It also tells Control whether other nodes answer from its network.
+	capabilities = append(capabilities, &agentv1pb.Capability{Name: reachprobe.Capability, Version: agentcontrol.CapabilityVersionV1})
 
 	hostname, _ := os.Hostname()
 	keepaliveTime := time.Duration(apiConfig.GRPCKeepalive) * time.Second
@@ -155,8 +158,9 @@ func agentMetrics(ctx context.Context, core vCore.Core, supervisor *plugin.Super
 }
 
 // proxyNodeDiagnostics is a proxy node's agent.diagnostic executor: the
-// generic tasks on the Agent's own unit, the Reality target probe, and,
-// when the node forwards with component, Control's forward checks.
+// generic tasks on the Agent's own unit, the Reality target and
+// reachability probes, and, when the node forwards with component,
+// Control's forward checks.
 func proxyNodeDiagnostics(component *forward.Component) *diagnostic.Executor {
 	executor := &diagnostic.Executor{Units: map[string]string{}}
 	if component != nil {
@@ -167,6 +171,7 @@ func proxyNodeDiagnostics(component *forward.Component) *diagnostic.Executor {
 	}
 	executor.Self = diagnostic.AgentService
 	executor.Reality = &realityprobe.Prober{}
+	executor.Reach = &reachprobe.Prober{}
 	return executor
 }
 
