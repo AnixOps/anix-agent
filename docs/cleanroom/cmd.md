@@ -25,7 +25,7 @@ itself) log it with logrus at error level; return it.
 Constants: command name `anix-agent`, product name `AnixOps Agent`;
 `serviceName = layout.Service + ".service"`, `defaultConfigPath =
 layout.ConfigDir + "/config.json"`. The package variable `version`
-(default `"v5.0.8"`) is set by release builds with
+(default `"v5.0.9"`) is set by release builds with
 `-ldflags "-X github.com/AnixOps/anix-agent/v5/cmd.version=<tag>"`;
 keep that exact symbol. The root command imports
 `github.com/AnixOps/anix-agent/v5/core/imports` for its side effects.
