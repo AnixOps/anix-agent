@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+// CoreConfig is one entry of Cores. Its settings are members of the same
+// object, decoded into the config of its Type.
 type CoreConfig struct {
 	Type            string           `json:"Type"`
 	Name            string           `json:"Name"`
@@ -12,38 +14,33 @@ type CoreConfig struct {
 	AnixcoreConfig  *AnixcoreConfig  `json:"-"`
 }
 
-type _CoreConfig CoreConfig
+// installedAnxNode tells whether InstalledAnxNodePath is a regular file.
+var installedAnxNode = func() bool {
+	info, err := os.Stat(InstalledAnxNodePath)
+	return err == nil && info.Mode().IsRegular()
+}
 
-func (c *CoreConfig) UnmarshalJSON(b []byte) error {
-	err := json.Unmarshal(b, (*_CoreConfig)(c))
-	if err != nil {
+type coreConfig CoreConfig
+
+func (c *CoreConfig) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, (*coreConfig)(c)); err != nil {
 		return err
 	}
 	switch c.Type {
-	// The third-party cores are gone: a configuration that still lists
-	// one runs on anixcore: the anx-node Agent upgrades install when it is
-	// there, like a configuration without cores, else anixcore on PATH.
+	case "anixcore":
+		c.AnixcoreConfig = NewAnixcoreConfig()
+		return json.Unmarshal(data, c.AnixcoreConfig)
+	case "wireguard":
+		c.WireGuardConfig = NewWireGuardConfig()
+		return json.Unmarshal(data, c.WireGuardConfig)
 	case "xray", "sing", "hysteria2":
+		// Retired cores run on anixcore, as anx-node when it is installed.
 		c.Type = "anixcore"
 		c.AnixcoreConfig = NewAnixcoreConfig()
 		if installedAnxNode() {
 			c.AnixcoreConfig.BinaryPath = InstalledAnxNodePath
 			c.AnixcoreConfig.AnxLine = true
 		}
-		return nil
-	case "wireguard":
-		c.WireGuardConfig = NewWireGuardConfig()
-		return json.Unmarshal(b, c.WireGuardConfig)
-	case "anixcore":
-		c.AnixcoreConfig = NewAnixcoreConfig()
-		return json.Unmarshal(b, c.AnixcoreConfig)
 	}
 	return nil
-}
-
-// installedAnxNode tells whether an Agent upgrade installed anx-node
-// (InstalledAnxNodePath); a variable for the tests.
-var installedAnxNode = func() bool {
-	info, err := os.Stat(InstalledAnxNodePath)
-	return err == nil && info.Mode().IsRegular()
 }
