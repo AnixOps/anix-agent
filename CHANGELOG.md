@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.9 - 2026-11-22
+
+Shipped with AnixOps Control 5.0.11 and anx-node 0.1.0-alpha.24. First
+release under AGPL-3.0.
+
 ### Licence
 
 - The Agent is now released under AGPL-3.0 (was MPL-2.0), after the
