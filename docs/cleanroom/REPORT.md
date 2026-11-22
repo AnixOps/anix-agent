@@ -122,3 +122,20 @@ residual similarity and the CI runs it merged on.
   listed in the classification above. `GOOS=windows` builds fail in
   `upgrade/upgrade.go` (`syscall.O_NOFOLLOW`), as before this work;
   Windows is not a release target.
+
+## 6. Owner decisions after the rewrite
+
+Decided by the repository owner on 2026-11-22 (12:55 UTC), choosing the
+recommended option for all three:
+
+- **Licence:** `LICENSE` is the AGPL-3.0 text (as AnixOps Control adopts
+  for 5.1); releases up to 5.0.8 stay available under MPL-2.0.
+- **README:** the upstream acknowledgement is removed; a "许可证与历史"
+  section states the fork origin, this rewrite and the licence of older
+  releases and commits.
+- **History:** kept as is (rewriting it would break every clone, tag and
+  pull request reference); the README says that older commits contain
+  MPL-2.0 code.
+- **Fork relation:** the owner asks GitHub Support to detach the
+  repository from the fork network; issues, pull requests and stars are
+  kept by that process.

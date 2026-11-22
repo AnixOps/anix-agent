@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Licence
+
+- The Agent is now released under AGPL-3.0 (was MPL-2.0), after the
+  clean-room rewrite removed the code derived from the forked project
+  (`docs/cleanroom/REPORT.md`). Releases up to 5.0.8 stay available under
+  MPL-2.0; earlier commits in the git history keep their MPL-2.0 code.
+
 ### Added
 
 - Reachability probe: the `agent.diagnostic` action `reach.probe` (capability

@@ -7,11 +7,9 @@
 AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，只通过 mTLS 的
 `anix.agent.v1` 控制流连接 AnixOps Control；它执行节点配置同步、用户认证、
 流量统计、在线状态上报和证书管理。
-最初派生自 V2bX，现已独立开发。
 
 - Agent 仓库: [AnixOps/anix-agent](https://github.com/AnixOps/anix-agent)
 - Control 仓库: [AnixOps/anix-control](https://github.com/AnixOps/anix-control)
-- 上游项目: [wyx2685/V2bX](https://github.com/wyx2685/V2bX)
 
 ## 主要能力
 
@@ -330,8 +328,17 @@ bash api/anxmgmt/gen.sh && git diff --exit-code -- api/anxmgmt
 - [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)
 - [WireGuard 运行时测试](docs/WIREGUARD_RUNTIME_TESTS.md)
 
+## 许可证与历史
+
+本仓库的代码以 [AGPL-3.0](LICENSE) 发布，5.0.8 之后的发布版本都使用 AGPL-3.0。
+
+本项目最早 fork 自 [V2bX](https://github.com/wyx2685/V2bX)（MPL-2.0）。2026-11-22 起，所有仍可追溯到它的代码都按
+两方 clean-room 流程重写，方法、前后对比和相似度检测见
+[docs/cleanroom/REPORT.md](docs/cleanroom/REPORT.md)。5.0.8 及以前发布的版本仍按
+当时附带的 MPL-2.0 许可证提供；git 历史保留原样，其中较早的提交包含 V2bX 的代码，
+这些代码仍受 MPL-2.0 约束。
+
 ## 致谢
 
-- [V2bX](https://github.com/wyx2685/V2bX)
 - [Project X](https://github.com/XTLS/)
 - [V2Fly](https://github.com/v2fly)
