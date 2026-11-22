@@ -33,6 +33,9 @@
   link, `scripts/V2bX.sh` and the migration guide are gone, and neither
   uninstall (manager script or `anix-agent uninstall`) handles those names.
   Leftover V2bX files on a host are left alone.
+- `docs/PROTOCOL_CONFIG_SPECIFICATION.md`: it described the removed REST
+  node API and the removed Xray core. `ROADMAP.md` now points to the
+  Control roadmap and keeps only current WireGuard notes.
 
 ## 5.0.8 - 2026-11-18
 
