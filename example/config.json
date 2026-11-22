@@ -20,9 +20,9 @@
         "CertDir": "/var/lib/anixops-agent/pki",
         "EnrollCredentialFile": "/var/lib/anixops-agent/enroll.credential"
       },
-      "AgentStream": {"StateDir": "/var/lib/anixops-agent/stream"},
-      "ListenIP": "0.0.0.0",
-      "SendIP": "0.0.0.0",
+      "AgentStream": {
+        "StateDir": "/var/lib/anixops-agent/stream"
+      },
       "DeviceOnlineMinTraffic": 200,
       "CertConfig": {
         "CertMode": "self"

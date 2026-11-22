@@ -19,6 +19,11 @@
   config reload now replaces the core and the nodes under one lock, the
   current core is closed at exit, and a log file that cannot be opened
   leaves logging on stdout.
+- The configuration loader (`conf`) is rewritten in a clean room from a
+  functional specification (`docs/cleanroom/conf.md`). Comments and
+  trailing commas in `config.json` are now handled by a small stripper
+  inside `conf` (`common/json5` is removed). `Options.SendIP` is gone (it
+  was ignored); the key in old files is still accepted and ignored.
 
 ### Removed
 

@@ -1,40 +1,18 @@
 package conf
 
+// LimitConfig is a node's local speed limits.
 type LimitConfig struct {
-	EnableRealtime          bool                     `json:"EnableRealtime"`
+	// SpeedLimit is in Mbps; 0 is no limit.
 	SpeedLimit              int                      `json:"SpeedLimit"`
-	IPLimit                 int                      `json:"DeviceLimit"`
-	ConnLimit               int                      `json:"ConnLimit"`
-	EnableIpRecorder        bool                     `json:"EnableIpRecorder"`
-	IpRecorderConfig        *IpReportConfig          `json:"IpRecorderConfig"`
 	EnableDynamicSpeedLimit bool                     `json:"EnableDynamicSpeedLimit"`
 	DynamicSpeedLimitConfig *DynamicSpeedLimitConfig `json:"DynamicSpeedLimitConfig"`
 }
 
-type RecorderConfig struct {
-	Url     string `json:"Url"`
-	Token   string `json:"Token"`
-	Timeout int    `json:"Timeout"`
-}
-
-type RedisConfig struct {
-	Address  string `json:"Address"`
-	Password string `json:"Password"`
-	Db       int    `json:"Db"`
-	Expiry   int    `json:"Expiry"`
-}
-
-type IpReportConfig struct {
-	Periodic       int             `json:"Periodic"`
-	Type           string          `json:"Type"`
-	RecorderConfig *RecorderConfig `json:"RecorderConfig"`
-	RedisConfig    *RedisConfig    `json:"RedisConfig"`
-	EnableIpSync   bool            `json:"EnableIpSync"`
-}
-
+// DynamicSpeedLimitConfig limits a user who used more than Traffic within
+// Periodic to SpeedLimit for ExpireTime.
 type DynamicSpeedLimitConfig struct {
-	Periodic   int   `json:"Periodic"`
-	Traffic    int64 `json:"Traffic"`
-	SpeedLimit int   `json:"SpeedLimit"`
-	ExpireTime int   `json:"ExpireTime"`
+	Periodic   int   `json:"Periodic"`   // seconds
+	Traffic    int64 `json:"Traffic"`    // bytes
+	SpeedLimit int   `json:"SpeedLimit"` // Mbps
+	ExpireTime int   `json:"ExpireTime"` // minutes
 }

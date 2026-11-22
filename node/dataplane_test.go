@@ -191,7 +191,7 @@ func (f *streamNodeFixture) nodeConfig(t *testing.T) conf.NodeConfig {
 			AgentIdentity: conf.AgentIdentityConfig{CertDir: f.pkiDir, EnrollCredentialFile: f.credential, Cluster: f.control.Cluster},
 			AgentStream:   conf.AgentStreamConfig{StateDir: f.stateDir},
 		},
-		Options: conf.Options{ListenIP: "0.0.0.0", SendIP: "0.0.0.0", CertConfig: conf.NewCertConfig()},
+		Options: conf.Options{ListenIP: "0.0.0.0", CertConfig: conf.NewCertConfig()},
 	}
 }
 

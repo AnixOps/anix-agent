@@ -2,58 +2,52 @@ package conf
 
 import (
 	"fmt"
-	"log"
-	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	log "github.com/sirupsen/logrus"
 )
 
-func (p *Conf) Watch(filePath string, reload func()) error {
+// Watch reloads the file at path into p when it changes and then calls
+// reload. A file that does not load is logged and the running config kept.
+func (p *Conf) Watch(path string, reload func()) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return fmt.Errorf("new watcher error: %s", err)
+		return fmt.Errorf("create config watcher: %w", err)
 	}
-
-	err = watcher.Add(filePath)
-	if err != nil {
+	if err := watcher.Add(path); err != nil {
 		watcher.Close()
-		return fmt.Errorf("watch file error: %s", err)
+		return fmt.Errorf("watch config %s: %w", path, err)
 	}
-
-	var reloadMu sync.Mutex
 	go func() {
-		var pre time.Time
 		defer watcher.Close()
+		var pending <-chan time.Time
 		for {
 			select {
-			case e := <-watcher.Events:
-				if e.Has(fsnotify.Chmod) {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				// Changes within the wait fold into one reload.
+				if event.Op != fsnotify.Chmod && pending == nil {
+					pending = time.After(5 * time.Second)
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.WithError(err).Error("config watcher")
+			case <-pending:
+				pending = nil
+				// An editor that replaced the file dropped the watch.
+				_ = watcher.Add(path)
+				next := New()
+				if err := next.LoadFromPath(path); err != nil {
+					log.WithError(err).Error("reload config failed, keeping the running config")
 					continue
 				}
-				if pre.Add(10 * time.Second).After(time.Now()) {
-					continue
-				}
-				pre = time.Now()
-				go func() {
-					time.Sleep(5 * time.Second)
-					reloadMu.Lock()
-					defer reloadMu.Unlock()
-					log.Println("config file changed, reloading...")
-					next := New()
-					err := next.LoadFromPath(filePath)
-					if err != nil {
-						log.Printf("reload config error: %s", err)
-						return
-					}
-					*p = *next
-					reload()
-					log.Println("reload config success")
-				}()
-			case err := <-watcher.Errors:
-				if err != nil {
-					log.Printf("File watcher error: %s", err)
-				}
+				*p = *next
+				reload()
 			}
 		}
 	}()

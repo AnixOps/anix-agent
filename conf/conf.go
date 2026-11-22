@@ -1,81 +1,55 @@
 package conf
 
 import (
+	jsonv2 "encoding/json/v2"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/anxserver"
-	"github.com/AnixOps/anix-agent/v5/common/json5"
-
-	"encoding/json/v2"
 )
 
+// Conf is the Agent's config.json.
 type Conf struct {
-	Environment string       `json:"Environment"`
-	LogConfig   LogConfig    `json:"Log"`
-	CoresConfig []CoreConfig `json:"Cores"`
-	NodeConfig  []NodeConfig `json:"Nodes"`
-	// Forward turns on the forward component (forward.go).
-	Forward *ForwardConfig `json:"Forward"`
-	// AnxLine is the host side of ANX-Line links: fake-TCP RST rules and
-	// MPTCP path switching (anxline).
-	AnxLine *anxline.Config `json:"AnxLine"`
-	// AnxKeyRotation rotates the anx-server key periodically and reports
-	// each new public key to Control once every process serves it. Off by
-	// default; needs an anx-server with rotate-key.
+	// Environment is development (default), test, staging or production.
+	Environment    string                    `json:"Environment"`
+	LogConfig      LogConfig                 `json:"Log"`
+	CoresConfig    []CoreConfig              `json:"Cores"`
+	NodeConfig     []NodeConfig              `json:"Nodes"`
+	Forward        *ForwardConfig            `json:"Forward"`
+	AnxLine        *anxline.Config           `json:"AnxLine"`
 	AnxKeyRotation *anxserver.RotationConfig `json:"AnxKeyRotation"`
 }
 
+// New returns the defaults.
 func New() *Conf {
 	return &Conf{
 		Environment: "development",
-		LogConfig: LogConfig{
-			Level:  "info",
-			Output: "",
-		},
+		LogConfig:   LogConfig{Level: "info"},
 	}
 }
 
-func (p *Conf) LoadFromPath(filePath string) error {
-	f, err := os.Open(filePath)
+// LoadFromPath reads, decodes and validates the file at path.
+func (p *Conf) LoadFromPath(path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("open config file error: %s", err)
+		return fmt.Errorf("read config %s: %w", path, err)
 	}
-	defer f.Close()
-
-	reader := json5.NewTrimNodeReader(f)
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return fmt.Errorf("read config file error: %s", err)
+	if err := jsonv2.Unmarshal(stripJSONC(data), p); err != nil {
+		return fmt.Errorf("decode config %s: %w", path, err)
 	}
-
-	err = json.Unmarshal(data, p)
-	if err != nil {
-		return fmt.Errorf("unmarshal config error: %s", err)
+	for _, check := range []func() error{
+		p.normalizeAgentNodes,
+		p.validateAgentIdentities,
+		p.validateNodeCredentials,
+		p.Forward.Validate,
+		p.AnxLine.Validate,
+		p.AnxKeyRotation.Validate,
+		p.ValidateForProduction,
+	} {
+		if err := check(); err != nil {
+			return fmt.Errorf("config %s: %w", path, err)
+		}
 	}
-	if err = p.normalizeAgentNodes(); err != nil {
-		return err
-	}
-	if err = p.validateAgentIdentities(); err != nil {
-		return err
-	}
-	if err = p.validateNodeCredentials(); err != nil {
-		return err
-	}
-	if err = p.Forward.Validate(); err != nil {
-		return err
-	}
-	if err = p.AnxLine.Validate(); err != nil {
-		return err
-	}
-	if err = p.AnxKeyRotation.Validate(); err != nil {
-		return err
-	}
-	if err = p.ValidateForProduction(); err != nil {
-		return err
-	}
-
 	return nil
 }
