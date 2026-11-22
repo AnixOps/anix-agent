@@ -115,18 +115,18 @@ func TestEnrolledAgentRunsTheWholeDataPlaneOnTheStream(t *testing.T) {
 		assert.True(t, client.Negotiated(capability), capability)
 	}
 
-	// The alive list from the stream: the limiter counts it, and the next
-	// list replaces it.
+	// The alive list from the stream: the controller counts it, and the
+	// next list replaces it.
 	require.Eventually(t, func() bool {
 		controller.reconcileMu.Lock()
 		defer controller.reconcileMu.Unlock()
-		return controller.limiter != nil && controller.limiter.AliveList[1] == 2 && controller.limiter.AliveList[9] == 1
+		return controller.rates != nil && controller.aliveMap[1] == 2 && controller.aliveMap[9] == 1
 	}, 5*time.Second, 10*time.Millisecond)
 	control.SetAlive(map[uint64]uint32{2: 1})
 	require.Eventually(t, func() bool {
 		controller.reconcileMu.Lock()
 		defer controller.reconcileMu.Unlock()
-		alive := controller.limiter.AliveList
+		alive := controller.aliveMap
 		return len(alive) == 1 && alive[2] == 1
 	}, 5*time.Second, 10*time.Millisecond)
 

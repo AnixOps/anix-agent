@@ -9,7 +9,6 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 )
 
 // gateCore is a core whose AddNode runs a hook first: a test stops a node
@@ -31,7 +30,6 @@ func (c *gateCore) AddNode(tag string, info *panel.NodeInfo, options *conf.Optio
 // so no periodic task fires).
 func startingController(t *testing.T, name string, core *gateCore) (*Controller, *panel.NodeInfo) {
 	t.Helper()
-	limiter.Init()
 	controller := &Controller{
 		nodeID: 1, apiHost: "https://control.test",
 		server:  core,
@@ -43,7 +41,8 @@ func startingController(t *testing.T, name string, core *gateCore) (*Controller,
 	return controller, info
 }
 
-// assertAlive fails unless both the controller and its limiter hold want.
+// assertAlive fails unless the controller holds want and has its rate
+// limits.
 func assertAlive(t *testing.T, controller *Controller, want map[int]int) {
 	t.Helper()
 	controller.reconcileMu.Lock()
@@ -51,11 +50,8 @@ func assertAlive(t *testing.T, controller *Controller, want map[int]int) {
 	if !maps.Equal(controller.aliveMap, want) {
 		t.Errorf("controller alive list = %v, want %v", controller.aliveMap, want)
 	}
-	if controller.limiter == nil {
-		t.Fatal("the node has no limiter")
-	}
-	if !maps.Equal(controller.limiter.AliveList, want) {
-		t.Errorf("limiter alive list = %v, want %v", controller.limiter.AliveList, want)
+	if controller.rates == nil {
+		t.Fatal("the node has no rate limits")
 	}
 }
 

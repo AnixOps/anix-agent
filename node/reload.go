@@ -10,7 +10,6 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -31,8 +30,8 @@ func nodeConfigEqual(a, b *panel.NodeInfo) bool {
 }
 
 // replaceNodeLocked replaces the running node with newN. When newN cannot
-// be added, the previous configuration is put back (its tag, limiter,
-// rules and inbound) so that the node keeps serving, and the error is
+// be added, the previous configuration is put back (its tag, rules and
+// inbound) so that the node keeps serving, and the error is
 // returned. c.nodeAdded always tells whether the core runs the node: a
 // later reconciliation adds it without deleting a node that is not there.
 // reconcileMu is held.
@@ -72,62 +71,31 @@ func (c *Controller) replaceNodeLocked(newN *panel.NodeInfo) error {
 	return fmt.Errorf("%w (the previous configuration of node %s was restored)", applyErr, c.tag)
 }
 
-// startNodeLocked brings up info in the core with the controller's users:
-// the tag and limiter, the rules, the certificate, the inbound and the
-// users. A node whose users fail is removed again. c.nodeAdded is set once
-// it all succeeded. reconcileMu is held.
+// startNodeLocked runs info in the core with the node's users. When the
+// users cannot be added the node is deleted again; c.nodeAdded stays true
+// only when that delete failed, so the next reconciliation deletes first.
+// reconcileMu is held.
 func (c *Controller) startNodeLocked(info *panel.NodeInfo) error {
-	alive := c.aliveMap
-	if alive == nil {
-		alive = make(map[int]int)
-	}
-	if len(c.Options.Name) == 0 {
-		oldTag := c.tag
+	if c.Name == "" {
 		c.tag = c.buildNodeTag(info)
-		// Remove the limiter under the old tag before replacing the tag.
-		limiter.DeleteLimiter(oldTag)
-		c.limiter = limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, alive)
-		c.limiterAdded = true
-	} else if c.aliveMap != nil {
-		c.limiter.AliveList = c.aliveMap
 	}
-	if err := c.limiter.UpdateRule(&info.Rules); err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Update Rule failed")
-		return fmt.Errorf("update rules for node %s: %w", c.tag, err)
+	fail := func(step string, err error) error {
+		log.WithFields(log.Fields{"tag": c.tag, "step": step, "err": err}).Error("Start node failed")
+		return fmt.Errorf("start node %s: %s: %w", c.tag, step, err)
 	}
 	if info.Security == panel.Tls {
-		if err := c.requestCert(); err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("Request cert failed")
-			return fmt.Errorf("request certificate for node %s: %w", c.tag, err)
+		if err := c.ensureCertificate(); err != nil {
+			return fail("certificate", err)
 		}
 	}
 	if err := c.addCoreNodeLocked(c.tag, info); err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Add node failed")
-		return fmt.Errorf("add node %s: %w", c.tag, err)
+		return fail("add node", err)
 	}
 	if _, err := c.server.AddUsers(c.tag, info, c.userList); err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Add users failed")
 		if delErr := c.server.DelNode(c.tag); delErr != nil && !errors.Is(delErr, vCore.ErrNodeNotFound) {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": delErr,
-			}).Error("Remove the node whose users failed")
-			// The core may still run it: delete it before the next add.
 			c.nodeAdded = true
 		}
-		return fmt.Errorf("add users to node %s: %w", c.tag, err)
+		return fail("add users", err)
 	}
 	c.nodeAdded = true
 	return nil

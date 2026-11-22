@@ -33,6 +33,13 @@
   clean room (`docs/cleanroom/core.md`): `Register`, `Core.AddUsers` /
   `DelUsers` / `UserTraffic`, `RollbackUserTraffic`; cores and callers
   follow the new names.
+- The node controller's jobs, certificates, traffic report, user diff and
+  rate limits are rewritten in a clean room (`docs/cleanroom/node.md`).
+  The `limiter` package and the `common/task`, `common/file` and
+  `common/format` helpers are gone; each node keeps its own rate table.
+  A user's own speed limit (Mbps) is now converted to bytes per second
+  before it is compared with the node limit (WireGuard shaping used to
+  read it as bytes per second). A report interval of 0 falls back to 60 s.
 
 ### Removed
 

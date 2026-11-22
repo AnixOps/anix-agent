@@ -29,7 +29,7 @@ func TestMergeOnlineDevicesDeduplicatesAndSkipsEmptyEntries(t *testing.T) {
 func TestCompareUserListReaddsAUserWithANewlyIssuedKey(t *testing.T) {
 	old := []panel.UserInfo{{Id: 7, Uuid: "user-7"}}
 	issued := []panel.UserInfo{{Id: 7, Uuid: "user-7", Extra: map[string]string{"ss2022_key": "key"}}}
-	deleted, added := compareUserList(old, issued)
+	deleted, added := diffUsers(old, issued)
 	if len(deleted) != 1 || len(added) != 1 || added[0].Extra["ss2022_key"] != "key" {
 		t.Fatalf("deleted = %v, added = %v", deleted, added)
 	}
