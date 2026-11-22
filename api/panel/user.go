@@ -1,14 +1,10 @@
 package panel
 
-type OnlineUser struct {
-	UID int
-	IP  string
-}
-
+// UserInfo is one user of a node.
 type UserInfo struct {
 	Id                    int               `json:"id"`
 	Uuid                  string            `json:"uuid"`
-	SpeedLimit            int               `json:"speed_limit"`
+	SpeedLimit            int               `json:"speed_limit"` // Mbps
 	DeviceLimit           int               `json:"device_limit"`
 	WireGuardPeerIP       string            `json:"wireguard_peer_ip"`
 	WireGuardPublicKey    string            `json:"wireguard_public_key"`
@@ -16,16 +12,15 @@ type UserInfo struct {
 	Extra                 map[string]string `json:"extra"`
 }
 
-type UserListBody struct {
-	Users []UserInfo `json:"users"`
-}
-
-type AliveMap struct {
-	Alive map[int]int `json:"alive"`
-}
-
+// UserTraffic is the traffic of one user since the last report.
 type UserTraffic struct {
 	UID      int
 	Upload   int64
 	Download int64
+}
+
+// OnlineUser is a user connected from IP.
+type OnlineUser struct {
+	UID int
+	IP  string
 }

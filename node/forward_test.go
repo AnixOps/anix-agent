@@ -40,7 +40,7 @@ func TestProxyNodeStreamCarriesForwarding(t *testing.T) {
 	// The proxy part runs, and the forwarding part too.
 	_, info := fixture.core.node()
 	require.NotNil(t, info)
-	assert.Equal(t, 443, info.VAllss.ServerPort)
+	assert.Equal(t, 443, info.VLessVMess.ServerPort)
 	assert.Equal(t, uint64(1), component.Status().Generation)
 	assert.True(t, component.Status().Applied)
 	require.Eventually(t, func() bool {

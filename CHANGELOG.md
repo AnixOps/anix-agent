@@ -24,6 +24,11 @@
   trailing commas in `config.json` are now handled by a small stripper
   inside `conf` (`common/json5` is removed). `Options.SendIP` is gone (it
   was ignored); the key in old files is still accepted and ignored.
+- Node configuration parsing (`api/panel`) is rewritten in a clean room
+  (`docs/cleanroom/panel.md`). The vless/vmess node type is now
+  `VLessVMessNode` (`NodeInfo.VLessVMess`); the unused fallback copies of
+  TLS/network settings, the Reality time-difference setting and the raw
+  DNS member are gone, and parse errors never quote the answer.
 
 ### Removed
 

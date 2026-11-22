@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/AnixOps/anix-agent/v5/anxserver"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -92,16 +91,12 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 			return nil, err
 		}
 	case "vless", "vmess":
-		node := info.VAllss
+		node := info.VLessVMess
 		if node == nil {
 			return nil, fmt.Errorf("%s node info is missing", info.Type)
 		}
 		inbound["type"] = info.Type
-		settings := node.NetworkSettings
-		if len(settings) == 0 {
-			settings = node.NetworkSettingsBack
-		}
-		if err := addTransport(inbound, node.Network, settings); err != nil {
+		if err := addTransport(inbound, node.Network, node.NetworkSettings); err != nil {
 			return nil, err
 		}
 		if info.Security == panel.Reality {
@@ -431,11 +426,8 @@ func addTransport(inbound map[string]any, network string, settings json.RawMessa
 	}
 }
 
-func realityConfig(node *panel.VAllssNode) (map[string]any, error) {
+func realityConfig(node *panel.VLessVMessNode) (map[string]any, error) {
 	settings := node.TlsSettings
-	if settings.PrivateKey == "" && node.TlsSettingsBack != nil {
-		settings = *node.TlsSettingsBack
-	}
 	if settings.PrivateKey == "" || settings.ServerName == "" {
 		return nil, errors.New("reality needs private_key and server_name")
 	}
@@ -459,11 +451,6 @@ func realityConfig(node *panel.VAllssNode) (map[string]any, error) {
 		"short_ids":    []string{settings.ShortId},
 		"server_names": []string{settings.ServerName},
 		"handshake":    map[string]any{"server": dest, "server_port": port},
-	}
-	if node.RealityConfig.MaxTimeDiff != "" {
-		if diff, err := time.ParseDuration(node.RealityConfig.MaxTimeDiff); err == nil && diff > 0 {
-			reality["max_time_difference_secs"] = int64(diff / time.Second)
-		}
 	}
 	return reality, nil
 }
@@ -603,7 +590,7 @@ func apiUserFor(info *panel.NodeInfo, user panel.UserInfo) (apiUser, error) {
 		out.Password = user.Uuid
 	case "vless":
 		out.UUID = user.Uuid
-		if info.Security == panel.Reality && info.VAllss != nil && info.VAllss.Flow == visionFlow {
+		if info.Security == panel.Reality && info.VLessVMess != nil && info.VLessVMess.Flow == visionFlow {
 			out.Flow = visionFlow
 		}
 	case "vmess":

@@ -37,7 +37,7 @@ func TestExitPolicySendsMainlandBlocksToKernelsThatTakeThem(t *testing.T) {
 			api.features = c.features
 			core := externalCore(t, server)
 			defer core.Close()
-			if err := core.AddNode("vmess", &panel.NodeInfo{Type: "vmess", Common: &panel.CommonNode{ServerPort: 443}, VAllss: &panel.VAllssNode{Network: "tcp"}}, &conf.Options{}); err != nil {
+			if err := core.AddNode("vmess", &panel.NodeInfo{Type: "vmess", Common: &panel.CommonNode{ServerPort: 443}, VLessVMess: &panel.VLessVMessNode{Network: "tcp"}}, &conf.Options{}); err != nil {
 				t.Fatal(err)
 			}
 			if err := core.ApplyExitPolicy(panel.ExitPolicy{BlockMainland: c.on}); err != nil {
