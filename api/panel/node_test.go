@@ -2,6 +2,7 @@ package panel
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -52,4 +53,31 @@ func TestParseNodeInfoParsesWireGuardExitWithoutEntryKeyMaterial(t *testing.T) {
 	require.Equal(t, "/wireguard", node.WireGuard.Relay.WSSPath)
 	require.Equal(t, "/etc/v2bx/relay-cert.pem", node.WireGuard.Relay.WSSCertFile)
 	require.Equal(t, "/etc/v2bx/relay-key.pem", node.WireGuard.Relay.WSSKeyFile)
+}
+
+func TestParseNodeInfoReadsTypeRulesAndIntervals(t *testing.T) {
+	node, category, err := ParseNodeInfo([]byte(`{
+		"node_type":"v2ray","server_port":443,"tls":1,"network":"tcp",
+		"routes":[
+			{"id":1,"match":"protocol:bittorrent,regexp:^ads\\.","action":"block"},
+			{"id":2,"match":["example.com"],"action":"block"},
+			{"id":3,"match":"main","action":"dns"}
+		],
+		"base_config":{"push_interval":"60","pull_interval":30}
+	}`), 7)
+	require.NoError(t, err)
+	require.Equal(t, "vmess", category)
+	require.Equal(t, "vmess", node.Type)
+	require.Equal(t, Tls, node.Security)
+	require.NotNil(t, node.VLessVMess)
+	require.Equal(t, []string{"bittorrent"}, node.Rules.Protocol)
+	require.Equal(t, []string{`^ads\.`, "example.com"}, node.Rules.Regexp)
+	require.Equal(t, 60*time.Second, node.PushInterval)
+	require.Equal(t, 30*time.Second, node.PullInterval)
+	require.Nil(t, node.Common.Routes)
+
+	_, _, err = ParseNodeInfo([]byte(`{"type":"unknown"}`), 1)
+	require.ErrorContains(t, err, "unsupported node type")
+	_, _, err = ParseNodeInfo([]byte(`{"type":"trojan","routes":[{"id":4,"match":5,"action":"block"}]}`), 1)
+	require.ErrorContains(t, err, "route 4")
 }

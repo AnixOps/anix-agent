@@ -1,35 +1,33 @@
 package panel
 
 import (
+	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
-
-	"encoding/json"
-
-	log "github.com/sirupsen/logrus"
 )
 
-// Security type
+// Security is how a node's inbound is secured.
 const (
 	None    = 0
 	Tls     = 1
 	Reality = 2
 )
 
+// NodeInfo is a node's configuration as Control answers it: the fields
+// every protocol has and exactly one protocol's settings.
 type NodeInfo struct {
 	Id           int
-	Type         string
+	Type         string // the protocol
 	Security     int
 	PushInterval time.Duration
 	PullInterval time.Duration
-	RawDNS       RawDNS
-	Rules        Rules
+	// Rules are the node's block rules.
+	Rules  Rules
+	Common *CommonNode
 
-	// origin
-	VAllss      *VAllssNode
+	VLessVMess  *VLessVMessNode
 	Shadowsocks *ShadowsocksNode
 	Trojan      *TrojanNode
 	Tuic        *TuicNode
@@ -39,68 +37,57 @@ type NodeInfo struct {
 	Iwan        *IwanNode
 	Anx         *AnxNode
 	Snell       *SnellNode
-	Common      *CommonNode
 }
 
+// Rules are block rules: destination patterns (regular expressions) and
+// sniffed protocols.
+type Rules struct {
+	Regexp   []string
+	Protocol []string
+}
+
+// CommonNode is what every protocol's answer carries.
 type CommonNode struct {
-	Host       string      `json:"host"`
-	ServerPort int         `json:"server_port"`
-	ServerName string      `json:"server_name"`
+	Host       string `json:"host"`
+	ServerPort int    `json:"server_port"`
+	ServerName string `json:"server_name"`
+	// Routes and BaseConfig are read into NodeInfo and then cleared.
 	Routes     []Route     `json:"routes"`
 	BaseConfig *BaseConfig `json:"base_config"`
 }
 
+// Route is a routing entry; the Agent applies "block" routes. Match is a
+// comma-separated string or a list of strings.
 type Route struct {
-	Id          int         `json:"id"`
-	Match       interface{} `json:"match"`
-	Action      string      `json:"action"`
-	ActionValue string      `json:"action_value"`
+	Id     int    `json:"id"`
+	Match  any    `json:"match"`
+	Action string `json:"action"`
 }
+
+// BaseConfig carries the report and poll intervals in seconds, as a number
+// or a string.
 type BaseConfig struct {
 	PushInterval any `json:"push_interval"`
 	PullInterval any `json:"pull_interval"`
 }
 
-// VAllssNode is vmess and vless node info
-type VAllssNode struct {
+// VLessVMessNode is a vless or vmess node. Tls is the node's Security.
+type VLessVMessNode struct {
 	CommonNode
-	Tls                 int             `json:"tls"`
-	TlsSettings         TlsSettings     `json:"tls_settings"`
-	TlsSettingsBack     *TlsSettings    `json:"tlsSettings"`
-	Network             string          `json:"network"`
-	NetworkSettings     json.RawMessage `json:"network_settings"`
-	NetworkSettingsBack json.RawMessage `json:"networkSettings"`
-	Encryption          string          `json:"encryption"`
-	EncryptionSettings  EncSettings     `json:"encryption_settings"`
-	ServerName          string          `json:"server_name"`
-
-	// vless only
-	Flow          string        `json:"flow"`
-	RealityConfig RealityConfig `json:"-"`
+	Tls             int             `json:"tls"`
+	TlsSettings     TlsSettings     `json:"tls_settings"`
+	Network         string          `json:"network"`
+	NetworkSettings json.RawMessage `json:"network_settings"`
+	Flow            string          `json:"flow"` // vless only
 }
 
+// TlsSettings are a vless node's Reality settings.
 type TlsSettings struct {
-	ServerName  string `json:"server_name"`
-	Dest        string `json:"dest"`
-	ServerPort  string `json:"server_port"`
-	ShortId     string `json:"short_id"`
-	PrivateKey  string `json:"private_key"`
-	Mldsa65Seed string `json:"mldsa65Seed"`
-	Xver        uint64 `json:"xver,string"`
-}
-
-type EncSettings struct {
-	Mode          string `json:"mode"`
-	Ticket        string `json:"ticket"`
-	ServerPadding string `json:"server_padding"`
-	PrivateKey    string `json:"private_key"`
-}
-
-type RealityConfig struct {
-	Xver         uint64 `json:"Xver"`
-	MinClientVer string `json:"MinClientVer"`
-	MaxClientVer string `json:"MaxClientVer"`
-	MaxTimeDiff  string `json:"MaxTimeDiff"`
+	ServerName string `json:"server_name"`
+	Dest       string `json:"dest"`
+	ServerPort string `json:"server_port"`
+	ShortId    string `json:"short_id"`
+	PrivateKey string `json:"private_key"`
 }
 
 type ShadowsocksNode struct {
@@ -111,16 +98,13 @@ type ShadowsocksNode struct {
 
 type TrojanNode struct {
 	CommonNode
-	Network string `json:"network"`
-	// Control sends network_settings; networkSettings is the older spelling.
-	NetworkSettings     json.RawMessage `json:"network_settings"`
-	NetworkSettingsBack json.RawMessage `json:"networkSettings"`
+	Network         string          `json:"network"`
+	NetworkSettings json.RawMessage `json:"network_settings"`
 }
 
 type TuicNode struct {
 	CommonNode
 	CongestionControl string `json:"congestion_control"`
-	ZeroRTTHandshake  bool   `json:"zero_rtt_handshake"`
 }
 
 type AnyTlsNode struct {
@@ -130,11 +114,8 @@ type AnyTlsNode struct {
 
 type Hysteria2Node struct {
 	CommonNode
-	Ignore_Client_Bandwidth bool   `json:"ignore_client_bandwidth"`
-	UpMbps                  int    `json:"up_mbps"`
-	DownMbps                int    `json:"down_mbps"`
-	ObfsType                string `json:"obfs"`
-	ObfsPassword            string `json:"obfs-password"`
+	ObfsType     string `json:"obfs"`
+	ObfsPassword string `json:"obfs-password"`
 }
 
 type WireGuardNode struct {
@@ -279,252 +260,138 @@ type WireGuardHealthCheck struct {
 	FailbackDelaySeconds int `json:"failback_delay_seconds"`
 }
 
-type RawDNS struct {
-	DNSMap  map[string]map[string]interface{}
-	DNSJson []byte
+// protocols decodes each protocol's answer into its NodeInfo field and
+// returns the common part and the node's security.
+var protocols = map[string]func(body []byte, n *NodeInfo) (*CommonNode, int, error){
+	"vless":       decodeInto(func(n *NodeInfo, p *VLessVMessNode) int { n.VLessVMess = p; return p.Tls }),
+	"vmess":       decodeInto(func(n *NodeInfo, p *VLessVMessNode) int { n.VLessVMess = p; return p.Tls }),
+	"shadowsocks": decodeInto(func(n *NodeInfo, p *ShadowsocksNode) int { n.Shadowsocks = p; return None }),
+	"trojan":      decodeInto(func(n *NodeInfo, p *TrojanNode) int { n.Trojan = p; return Tls }),
+	"tuic":        decodeInto(func(n *NodeInfo, p *TuicNode) int { n.Tuic = p; return Tls }),
+	"anytls":      decodeInto(func(n *NodeInfo, p *AnyTlsNode) int { n.AnyTls = p; return Tls }),
+	"hysteria2":   decodeInto(func(n *NodeInfo, p *Hysteria2Node) int { n.Hysteria2 = p; return Tls }),
+	"wireguard":   decodeInto(func(n *NodeInfo, p *WireGuardNode) int { n.WireGuard = p; return None }),
+	"iwan":        decodeInto(func(n *NodeInfo, p *IwanNode) int { n.Iwan = p; return None }),
+	"anx":         decodeInto(func(n *NodeInfo, p *AnxNode) int { n.Anx = p; return None }),
+	"snell":       decodeInto(func(n *NodeInfo, p *SnellNode) int { n.Snell = p; return None }),
 }
 
-type Rules struct {
-	Regexp   []string
-	Protocol []string
+// protocolNode is a protocol's settings, which embed CommonNode.
+type protocolNode interface {
+	common() *CommonNode
+}
+
+func (c *CommonNode) common() *CommonNode { return c }
+
+func decodeInto[T any, P interface {
+	*T
+	protocolNode
+}](set func(*NodeInfo, P) int) func([]byte, *NodeInfo) (*CommonNode, int, error) {
+	return func(body []byte, n *NodeInfo) (*CommonNode, int, error) {
+		p := P(new(T))
+		if err := json.Unmarshal(body, p); err != nil {
+			return nil, 0, err
+		}
+		return p.common(), set(n, p), nil
+	}
 }
 
 // ParseNodeInfo parses a node configuration answer: one entry of a
 // configuration snapshot's runtime answers, delivered on the Agent control
-// stream. nodeCategory is the node_type the answer names.
+// stream. The answer names the protocol in "type" and the node's category
+// in "node_type"; either stands in for the other when it is missing, and
+// "v2ray" means vmess. nodeCategory is the node_type.
 func ParseNodeInfo(body []byte, nodeID int) (node *NodeInfo, nodeCategory string, err error) {
-	// 先解析基础信息获取节点类型
-	var baseInfo struct {
+	var kind struct {
 		Type     string `json:"type"`
-		NodeType string `json:"node_type"` // 支持 node_type 字段
+		NodeType string `json:"node_type"`
 	}
-
-	if err = json.Unmarshal(body, &baseInfo); err != nil {
-		return nil, "", fmt.Errorf("decode node type error: %s", err)
+	if err := json.Unmarshal(body, &kind); err != nil {
+		return nil, "", fmt.Errorf("decode node type: %w", err)
 	}
-
-	log.WithFields(log.Fields{
-		"type":      baseInfo.Type,
-		"node_type": baseInfo.NodeType,
-	}).Debug("Parsed node type fields")
-
-	// 彻底分离 node_type 和 type
-	// node_type 是节点分类 (node, vmess, vless 等)
-	// type 是具体协议 (vmess, vless, trojan 等)
-	nodeCategory = strings.ToLower(baseInfo.NodeType)
-	protocolType := strings.ToLower(baseInfo.Type)
-
-	// 兼容逻辑：如果其中一个为空，尝试互相补充
-	if nodeCategory == "" && protocolType != "" {
-		nodeCategory = protocolType
-	} else if protocolType == "" && nodeCategory != "" {
-		protocolType = nodeCategory
+	protocol, category := normalizeType(kind.Type), normalizeType(kind.NodeType)
+	if protocol == "" {
+		protocol = category
 	}
-
-	if nodeCategory == "" {
+	if category == "" {
+		category = protocol
+	}
+	if category == "" {
 		// The answer holds the node's secrets: never echo it.
 		return nil, "", fmt.Errorf("node type not found in the node configuration (%d bytes)", len(body))
 	}
-
-	// 规范化
-	if protocolType == "v2ray" {
-		protocolType = "vmess"
+	decode, ok := protocols[protocol]
+	if !ok {
+		return nil, "", fmt.Errorf("unsupported node type: %s", protocol)
 	}
-	if nodeCategory == "v2ray" {
-		nodeCategory = "vmess"
+	node = &NodeInfo{Id: nodeID, Type: protocol}
+	common, security, err := decode(body, node)
+	if err != nil {
+		return nil, "", fmt.Errorf("decode %s node: %w", protocol, err)
 	}
-
-	node = &NodeInfo{
-		Id:   nodeID,
-		Type: protocolType,
-		RawDNS: RawDNS{
-			DNSMap:  make(map[string]map[string]interface{}),
-			DNSJson: []byte(""),
-		},
+	node.Security = security
+	if node.Rules, err = blockRules(common.Routes); err != nil {
+		return nil, "", err
 	}
-	// parse protocol params
-	var cm *CommonNode
-	switch protocolType {
-	case "vmess", "vless":
-		rsp := &VAllssNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode v2ray params error: %s", err)
-		}
-		if len(rsp.NetworkSettingsBack) > 0 {
-			rsp.NetworkSettings = rsp.NetworkSettingsBack
-			rsp.NetworkSettingsBack = nil
-		}
-		if rsp.TlsSettingsBack != nil {
-			rsp.TlsSettings = *rsp.TlsSettingsBack
-			rsp.TlsSettingsBack = nil
-		}
-		cm = &rsp.CommonNode
-		node.VAllss = rsp
-		node.Security = node.VAllss.Tls
-	case "shadowsocks":
-		rsp := &ShadowsocksNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode shadowsocks params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.Shadowsocks = rsp
-		node.Security = None
-	case "trojan":
-		rsp := &TrojanNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode trojan params error: %s", err)
-		}
-		if len(rsp.NetworkSettingsBack) > 0 {
-			rsp.NetworkSettings = rsp.NetworkSettingsBack
-			rsp.NetworkSettingsBack = nil
-		}
-		cm = &rsp.CommonNode
-		node.Trojan = rsp
-		node.Security = Tls
-	case "tuic":
-		rsp := &TuicNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode tuic params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.Tuic = rsp
-		node.Security = Tls
-	case "anytls":
-		rsp := &AnyTlsNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode anytls params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.AnyTls = rsp
-		node.Security = Tls
-	case "hysteria2":
-		rsp := &Hysteria2Node{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode hysteria2 params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.Hysteria2 = rsp
-		node.Security = Tls
-	case "wireguard":
-		rsp := &WireGuardNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode wireguard params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.WireGuard = rsp
-		node.Security = None
-	case "iwan":
-		rsp := &IwanNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode iwan params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.Iwan = rsp
-		node.Security = None
-	case "anx":
-		rsp := &AnxNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode anx params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.Anx = rsp
-		node.Security = None
-	case "snell":
-		rsp := &SnellNode{}
-		err = json.Unmarshal(body, rsp)
-		if err != nil {
-			return nil, "", fmt.Errorf("decode snell params error: %s", err)
-		}
-		cm = &rsp.CommonNode
-		node.Snell = rsp
-		node.Security = None
+	if b := common.BaseConfig; b != nil {
+		node.PushInterval, node.PullInterval = seconds(b.PushInterval), seconds(b.PullInterval)
 	}
-	if cm == nil {
-		return nil, "", fmt.Errorf("unsupported node type: %s", protocolType)
-	}
-
-	// parse rules and dns
-	for i := range cm.Routes {
-		var matchs []string
-		switch match := cm.Routes[i].Match.(type) {
-		case string:
-			matchs = strings.Split(match, ",")
-		case []string:
-			matchs = match
-		case []interface{}:
-			matchs = make([]string, 0, len(match))
-			for _, value := range match {
-				text, ok := value.(string)
-				if !ok {
-					return nil, "", fmt.Errorf("route %d: match entries must be strings", cm.Routes[i].Id)
-				}
-				matchs = append(matchs, text)
-			}
-		default:
-			return nil, "", fmt.Errorf("route %d: match must be a string or a list of strings", cm.Routes[i].Id)
-		}
-		if len(matchs) == 0 {
-			continue
-		}
-		switch cm.Routes[i].Action {
-		case "block":
-			for _, v := range matchs {
-				if strings.HasPrefix(v, "protocol:") {
-					// protocol
-					node.Rules.Protocol = append(node.Rules.Protocol, strings.TrimPrefix(v, "protocol:"))
-				} else {
-					// domain
-					node.Rules.Regexp = append(node.Rules.Regexp, strings.TrimPrefix(v, "regexp:"))
-				}
-			}
-		case "dns":
-			var domains []string
-			domains = append(domains, matchs...)
-			if matchs[0] != "main" {
-				node.RawDNS.DNSMap[strconv.Itoa(i)] = map[string]interface{}{
-					"address": cm.Routes[i].ActionValue,
-					"domains": domains,
-				}
-			} else {
-				dns := []byte(strings.Join(matchs[1:], ""))
-				node.RawDNS.DNSJson = dns
-			}
-		}
-	}
-
-	// set interval
-	if cm.BaseConfig != nil {
-		node.PushInterval = intervalToTime(cm.BaseConfig.PushInterval)
-		node.PullInterval = intervalToTime(cm.BaseConfig.PullInterval)
-	}
-
-	node.Common = cm
-	// clear
-	cm.Routes = nil
-	cm.BaseConfig = nil
-
-	return node, nodeCategory, nil
+	common.Routes, common.BaseConfig = nil, nil
+	node.Common = common
+	return node, category, nil
 }
 
-func intervalToTime(i interface{}) time.Duration {
-	switch reflect.TypeOf(i).Kind() {
-	case reflect.Int:
-		return time.Duration(i.(int)) * time.Second
-	case reflect.String:
-		i, _ := strconv.Atoi(i.(string))
-		return time.Duration(i) * time.Second
-	case reflect.Float64:
-		return time.Duration(i.(float64)) * time.Second
-	default:
-		return time.Duration(reflect.ValueOf(i).Int()) * time.Second
+func normalizeType(t string) string {
+	t = strings.ToLower(t)
+	if t == "v2ray" {
+		return "vmess"
 	}
+	return t
+}
+
+// blockRules collects the "block" routes: "protocol:<name>" entries are
+// protocols, any other entry (optionally "regexp:<expression>") a
+// destination pattern.
+func blockRules(routes []Route) (Rules, error) {
+	var rules Rules
+	for _, route := range routes {
+		var matches []string
+		switch m := route.Match.(type) {
+		case string:
+			matches = strings.Split(m, ",")
+		case []any:
+			for _, v := range m {
+				s, ok := v.(string)
+				if !ok {
+					return Rules{}, fmt.Errorf("route %d: match entries must be strings", route.Id)
+				}
+				matches = append(matches, s)
+			}
+		default:
+			return Rules{}, fmt.Errorf("route %d: match must be a string or a list of strings", route.Id)
+		}
+		if route.Action != "block" {
+			continue
+		}
+		for _, m := range matches {
+			if name, ok := strings.CutPrefix(m, "protocol:"); ok {
+				rules.Protocol = append(rules.Protocol, name)
+			} else {
+				rules.Regexp = append(rules.Regexp, strings.TrimPrefix(m, "regexp:"))
+			}
+		}
+	}
+	return rules, nil
+}
+
+// seconds reads an interval in seconds given as a JSON number or string.
+func seconds(v any) time.Duration {
+	switch v := v.(type) {
+	case float64:
+		return time.Duration(v * float64(time.Second))
+	case string:
+		n, _ := strconv.Atoi(v)
+		return time.Duration(n) * time.Second
+	}
+	return 0
 }

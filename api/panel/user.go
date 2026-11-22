@@ -1,10 +1,7 @@
 package panel
 
-type OnlineUser struct {
-	UID int
-	IP  string
-}
-
+// UserInfo is a user of a node as Control delivers it. SpeedLimit is in
+// Mbps; 0 is no limit.
 type UserInfo struct {
 	Id                    int               `json:"id"`
 	Uuid                  string            `json:"uuid"`
@@ -16,16 +13,15 @@ type UserInfo struct {
 	Extra                 map[string]string `json:"extra"`
 }
 
-type UserListBody struct {
-	Users []UserInfo `json:"users"`
-}
-
-type AliveMap struct {
-	Alive map[int]int `json:"alive"`
-}
-
+// UserTraffic is a user's traffic in bytes since the last report.
 type UserTraffic struct {
 	UID      int
 	Upload   int64
 	Download int64
+}
+
+// OnlineUser is one IP a user is connected from.
+type OnlineUser struct {
+	UID int
+	IP  string
 }

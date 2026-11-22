@@ -217,14 +217,14 @@ func TestSnapshotReloadsOnlyWhenTheNodeConfigurationChanged(t *testing.T) {
 	}
 }
 
-func TestNodeConfigEqualSeesFieldsKeptOutOfJSON(t *testing.T) {
+func TestNodeConfigEqualSeesDerivedFields(t *testing.T) {
 	a, b := vlessNode(443), vlessNode(443)
 	if !nodeConfigEqual(a, b) {
 		t.Fatal("two parses of one answer differ")
 	}
-	b.VAllss.RealityConfig.MaxTimeDiff = "rotated"
+	b.Rules.Protocol = append(b.Rules.Protocol, "bittorrent")
 	if nodeConfigEqual(a, b) {
-		t.Fatal("a Reality key change (json:\"-\") is judged unchanged")
+		t.Fatal("a block rule change is judged unchanged")
 	}
 	if nodeConfigEqual(nil, a) {
 		t.Fatal("no running configuration is judged equal")

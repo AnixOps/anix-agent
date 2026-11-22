@@ -32,6 +32,12 @@
   read. Unused keys are no longer modelled: `SendIP`, `RuleListPath`,
   `CertConfig.RejectUnknownSni` and the `LimitConfig` IP-recorder,
   connection, device and Redis settings (they had no effect).
+- Node configuration parsing (`api/panel`) is rewritten: one decoder per
+  protocol and our own type names (`VLessVMessNode`). The camelCase
+  `tlsSettings` / `networkSettings` fallbacks, the DNS routes, the Reality
+  `MaxTimeDiff` that nothing filled, and the unused Hysteria2 bandwidth,
+  TUIC 0-RTT and vless encryption fields are gone; Control sends none of
+  them. A missing `base_config` interval no longer risks a panic.
 
 ### Removed
 
