@@ -35,8 +35,8 @@ func (c *recordingCore) tagsByPort() map[int]string {
 	defer c.mu.Unlock()
 	ports := map[int]string{}
 	for tag, info := range c.nodes {
-		if info.VAllss != nil {
-			ports[info.VAllss.ServerPort] = tag
+		if info.VLessVMess != nil {
+			ports[info.VLessVMess.ServerPort] = tag
 		}
 	}
 	return ports
@@ -121,7 +121,7 @@ func TestSnapshotExtraProtocols(t *testing.T) {
 
 	info, err := nodeInfoFromSnapshot(agenttest.Snapshot(1, multiProtocolDocument(1, 2)), "", 101, 12)
 	require.NoError(t, err)
-	assert.Equal(t, 2, info.VAllss.ServerPort)
+	assert.Equal(t, 2, info.VLessVMess.ServerPort)
 	_, err = nodeInfoFromSnapshot(agenttest.Snapshot(1, multiProtocolDocument(1, 2)), "", 105, 12)
 	assert.ErrorContains(t, err, "runtime.protocols")
 }

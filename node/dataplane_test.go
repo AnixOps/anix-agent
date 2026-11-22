@@ -223,8 +223,8 @@ func TestStreamConfigurationStartsTheNode(t *testing.T) {
 	tag, info := fixture.core.node()
 	require.NotNil(t, info, "the node runs the snapshot")
 	assert.Equal(t, "vless", info.Type)
-	require.NotNil(t, info.VAllss)
-	assert.Equal(t, 443, info.VAllss.ServerPort)
+	require.NotNil(t, info.VLessVMess)
+	assert.Equal(t, 443, info.VLessVMess.ServerPort)
 	assert.Equal(t, 60*time.Second, info.PullInterval)
 	assert.Contains(t, tag, "vless:12")
 
@@ -262,7 +262,7 @@ func TestStreamConfigurationReloadsTheNodeOnANewSnapshot(t *testing.T) {
 	assert.True(t, lastStatus(fixture.control).Applied)
 	_, info := fixture.core.node()
 	require.NotNil(t, info)
-	assert.Equal(t, 8443, info.VAllss.ServerPort)
+	assert.Equal(t, 8443, info.VLessVMess.ServerPort)
 	addNodes, delNodes := fixture.core.counts()
 	assert.Equal(t, 2, addNodes, "the node restarted once")
 	assert.Equal(t, 1, delNodes)
@@ -280,7 +280,7 @@ func TestStreamConfigurationReloadsTheNodeOnANewSnapshot(t *testing.T) {
 	assert.Contains(t, lastStatus(fixture.control).Error, "runtime.default")
 	_, info = fixture.core.node()
 	require.NotNil(t, info)
-	assert.Equal(t, 8443, info.VAllss.ServerPort)
+	assert.Equal(t, 8443, info.VLessVMess.ServerPort)
 }
 
 func TestStreamConfigurationRestartRunsTheStoredSnapshotWhileControlIsDown(t *testing.T) {
@@ -301,7 +301,7 @@ func TestStreamConfigurationRestartRunsTheStoredSnapshotWhileControlIsDown(t *te
 	assert.Less(t, time.Since(began), streamStartupWait, "a stored snapshot needs no wait for Control")
 	tag, info := restarted.node()
 	require.NotNil(t, info)
-	assert.Equal(t, 443, info.VAllss.ServerPort)
+	assert.Equal(t, 443, info.VLessVMess.ServerPort)
 	assert.ElementsMatch(t, []string{"stream-user-1", "stream-user-2"}, restarted.userUUIDs(tag))
 
 	// The stream carried config.v1 and users.v1 before the restart: they
@@ -349,7 +349,7 @@ func TestStreamFirstConfigurationThatFailsKeepsTheAgentConnected(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 	tag, info := fixture.core.node()
 	require.NotNil(t, info)
-	assert.Equal(t, 443, info.VAllss.ServerPort)
+	assert.Equal(t, 443, info.VLessVMess.ServerPort)
 	assert.True(t, node.controllers[0].isStarted())
 	assert.ElementsMatch(t, []string{"user-1"}, fixture.core.userUUIDs(tag))
 }
@@ -369,7 +369,7 @@ func TestNodeInfoFromSnapshotPicksTheControllersNodeType(t *testing.T) {
 	info, err = nodeInfoFromSnapshot(snapshot, "V2Ray", 0, 12)
 	require.NoError(t, err)
 	assert.Equal(t, "vmess", info.Type)
-	assert.Equal(t, 10086, info.VAllss.ServerPort)
+	assert.Equal(t, 10086, info.VLessVMess.ServerPort)
 
 	_, err = nodeInfoFromSnapshot(snapshot, "trojan", 0, 12)
 	require.Error(t, err)

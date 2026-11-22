@@ -463,9 +463,9 @@ func TestUserLimitsGoOnlyToKernelsThatTakeThem(t *testing.T) {
 		api.features = features
 		core := externalCore(t, server)
 		info := &panel.NodeInfo{
-			Type:   "vmess",
-			Common: &panel.CommonNode{ServerPort: 443},
-			VAllss: &panel.VAllssNode{Network: "tcp"},
+			Type:       "vmess",
+			Common:     &panel.CommonNode{ServerPort: 443},
+			VLessVMess: &panel.VLessVMessNode{Network: "tcp"},
 		}
 		if err := core.AddNode("vmess", info, &conf.Options{}); err != nil {
 			t.Fatal(err)
@@ -489,10 +489,10 @@ func TestUserLimitsGoOnlyToKernelsThatTakeThem(t *testing.T) {
 func TestBlockRulesOfAllNodesGoToKernelsThatTakeThem(t *testing.T) {
 	vmess := func(port int, rules panel.Rules) *panel.NodeInfo {
 		return &panel.NodeInfo{
-			Type:   "vmess",
-			Common: &panel.CommonNode{ServerPort: port},
-			VAllss: &panel.VAllssNode{Network: "tcp"},
-			Rules:  rules,
+			Type:       "vmess",
+			Common:     &panel.CommonNode{ServerPort: port},
+			VLessVMess: &panel.VLessVMessNode{Network: "tcp"},
+			Rules:      rules,
 		}
 	}
 

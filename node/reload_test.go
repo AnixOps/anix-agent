@@ -226,7 +226,7 @@ func TestNodeConfigEqualSeesFieldsKeptOutOfJSON(t *testing.T) {
 	if !nodeConfigEqual(a, b) {
 		t.Fatal("two parses of one answer differ")
 	}
-	b.VAllss.RealityConfig.MaxTimeDiff = "rotated"
+	b.VLessVMess.TlsSettings.PrivateKey = "rotated"
 	if nodeConfigEqual(a, b) {
 		t.Fatal("a Reality key change (json:\"-\") is judged unchanged")
 	}

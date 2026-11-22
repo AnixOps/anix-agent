@@ -21,7 +21,7 @@ func TestVlessRealityNodesBecomeRealityInbounds(t *testing.T) {
 		Type:     "vless",
 		Security: panel.Reality,
 		Common:   &panel.CommonNode{ServerPort: 443},
-		VAllss: &panel.VAllssNode{
+		VLessVMess: &panel.VLessVMessNode{
 			Network: "tcp",
 			Flow:    visionFlow,
 			TlsSettings: panel.TlsSettings{
@@ -30,7 +30,6 @@ func TestVlessRealityNodesBecomeRealityInbounds(t *testing.T) {
 				ShortId:    "0123abcd",
 				PrivateKey: "private",
 			},
-			RealityConfig: panel.RealityConfig{MaxTimeDiff: "1m30s"},
 		},
 	}
 	inbound, err := inboundConfig("vless-1", info, &conf.Options{ListenIP: "0.0.0.0"})
@@ -38,11 +37,10 @@ func TestVlessRealityNodesBecomeRealityInbounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]any{
-		"private_key":              "private",
-		"short_ids":                []string{"0123abcd"},
-		"server_names":             []string{"www.example.com"},
-		"handshake":                map[string]any{"server": "www.example.com", "server_port": 8443},
-		"max_time_difference_secs": int64(90),
+		"private_key":  "private",
+		"short_ids":    []string{"0123abcd"},
+		"server_names": []string{"www.example.com"},
+		"handshake":    map[string]any{"server": "www.example.com", "server_port": 8443},
 	}
 	if !reflect.DeepEqual(inbound["reality"], want) {
 		t.Fatalf("reality = %#v", inbound["reality"])
@@ -58,12 +56,12 @@ func TestVlessRealityNodesBecomeRealityInbounds(t *testing.T) {
 		t.Fatalf("user = %+v", user)
 	}
 
-	info.VAllss.Network = "ws"
+	info.VLessVMess.Network = "ws"
 	if _, err := inboundConfig("vless-1", info, &conf.Options{}); err == nil {
 		t.Fatal("reality over ws should be refused")
 	}
-	info.VAllss.Network = "xhttp"
-	info.VAllss.NetworkSettings = json.RawMessage(`{"path": "/xh"}`)
+	info.VLessVMess.Network = "xhttp"
+	info.VLessVMess.NetworkSettings = json.RawMessage(`{"path": "/xh"}`)
 	inbound, err = inboundConfig("vless-1", info, &conf.Options{})
 	if err != nil || inbound["reality"] == nil || inbound["transport"] == nil {
 		t.Fatalf("reality over xhttp = %#v, %v", inbound, err)
@@ -89,10 +87,10 @@ func TestTransportsFollowTheNetworkSettings(t *testing.T) {
 		{"splithttp", "splithttp", `{"path": "/sh"}`, map[string]any{"type": "xhttp", "path": "/sh"}},
 	} {
 		info := &panel.NodeInfo{
-			Type:     "vmess",
-			Security: panel.Tls,
-			Common:   &panel.CommonNode{ServerPort: 443},
-			VAllss:   &panel.VAllssNode{Network: test.network, NetworkSettings: json.RawMessage(test.settings)},
+			Type:       "vmess",
+			Security:   panel.Tls,
+			Common:     &panel.CommonNode{ServerPort: 443},
+			VLessVMess: &panel.VLessVMessNode{Network: test.network, NetworkSettings: json.RawMessage(test.settings)},
 		}
 		inbound, err := inboundConfig("vmess", info, certOptions())
 		if err != nil {
@@ -279,7 +277,7 @@ func TestUnsupportedNodesAreRefused(t *testing.T) {
 		}
 	}
 	if _, err := inboundConfig("x", &panel.NodeInfo{
-		Type: "vmess", Common: &panel.CommonNode{ServerPort: 1}, VAllss: &panel.VAllssNode{},
+		Type: "vmess", Common: &panel.CommonNode{ServerPort: 1}, VLessVMess: &panel.VLessVMessNode{},
 	}, &conf.Options{ListenIP: "not an ip"}); err == nil {
 		t.Fatal("an invalid listen ip should be refused")
 	}
