@@ -19,6 +19,13 @@
   config reload now replaces the core and the nodes under one lock, the
   current core is closed at exit, and a log file that cannot be opened
   leaves logging on stdout.
+- The `limiter` package is replaced by per-node rate limits in `node`. A
+  user's own speed limit now counts in bytes per second like the node's
+  limit and the dynamic penalty (it was compared as a raw Mbps number, so a
+  WireGuard user with an own limit was shaped far below it). The unused
+  block-rule copy, online-IP table and alive-list copy are gone: anixcore
+  applies the rules, the cores report online devices and the controller
+  keeps the alive list.
 
 ### Removed
 

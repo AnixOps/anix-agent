@@ -82,9 +82,8 @@ func (c *Controller) reconcileLocked(newN *panel.NodeInfo, newU []panel.UserInfo
 		// exit
 		return nil
 	}
-	// update alive list
 	if newA != nil {
-		c.limiter.AliveList = newA
+		c.aliveMap = newA
 	}
 	c.reportRuntimeHealth()
 	// node no changed, check users
@@ -125,8 +124,7 @@ func (c *Controller) applyUserDiffLocked(newU []panel.UserInfo) (err error) {
 		}
 	}
 	if len(added) > 0 || len(deleted) > 0 {
-		// update Limiter
-		c.limiter.UpdateUser(c.tag, added, deleted)
+		c.rates.update(added, deleted)
 		// clear traffic record
 		if c.LimitConfig.EnableDynamicSpeedLimit {
 			for i := range deleted {
@@ -154,12 +152,8 @@ func (c *Controller) SpeedChecker() error {
 	}
 	for u, t := range c.traffic {
 		if t >= c.LimitConfig.DynamicSpeedLimitConfig.Traffic {
-			err := c.limiter.UpdateDynamicSpeedLimit(c.tag, u,
-				c.LimitConfig.DynamicSpeedLimitConfig.SpeedLimit,
+			c.rates.penalize(u, c.LimitConfig.DynamicSpeedLimitConfig.SpeedLimit,
 				time.Now().Add(time.Duration(c.LimitConfig.DynamicSpeedLimitConfig.ExpireTime)*time.Minute))
-			if err != nil {
-				log.WithField("err", err).Error("Update dynamic speed limit failed")
-			}
 			delete(c.traffic, u)
 		}
 	}

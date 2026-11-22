@@ -12,7 +12,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
@@ -167,7 +166,6 @@ type streamNodeFixture struct {
 
 func newStreamNodeFixture(t *testing.T, mode string, serves ...string) *streamNodeFixture {
 	t.Helper()
-	limiter.Init()
 	control := agenttest.New(t, mode, serves...)
 	previous := agentControlRootCAs
 	agentControlRootCAs = control.ServerCAs

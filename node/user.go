@@ -49,11 +49,6 @@ func (c *Controller) reportUserTrafficTask() (err error) {
 // many online devices were seen. Users whose traffic in the window is
 // below DeviceOnlineMinTraffic are left out (a ping test is not a device).
 func (c *Controller) onlineToReport(userTraffic []panel.UserTraffic) (map[int][]string, int) {
-	onlineDevice, err := c.limiter.GetOnlineDevice()
-	if err != nil {
-		log.Print(err)
-		onlineDevice = &[]panel.OnlineUser{}
-	}
 	coreOnlineDevice, err := c.getCoreOnlineDevice()
 	if err != nil {
 		log.WithFields(log.Fields{
@@ -61,7 +56,7 @@ func (c *Controller) onlineToReport(userTraffic []panel.UserTraffic) (map[int][]
 			"err": err,
 		}).Info("Get core online users failed")
 	}
-	mergedOnlineDevice := mergeOnlineDevices(append(*onlineDevice, coreOnlineDevice...))
+	mergedOnlineDevice := mergeOnlineDevices(coreOnlineDevice)
 	data := make(map[int][]string)
 	if len(mergedOnlineDevice) == 0 {
 		return data, 0
@@ -111,7 +106,7 @@ func (c *Controller) rollbackTraffic(userTraffic []panel.UserTraffic) {
 }
 
 func (c *Controller) syncCoreUserRateLimits() {
-	if c.limiter == nil {
+	if c.rates == nil {
 		return
 	}
 	updater, ok := c.server.(vCore.RateLimitUpdater)
@@ -119,7 +114,7 @@ func (c *Controller) syncCoreUserRateLimits() {
 		return
 	}
 	for _, user := range c.userList {
-		if err := updater.UpdateUserRateLimit(c.tag, user.Uuid, c.limiter.GetUserSpeedLimit(c.tag, user.Uuid)); err != nil {
+		if err := updater.UpdateUserRateLimit(c.tag, user.Uuid, c.rates.rate(user.Uuid)); err != nil {
 			log.WithFields(log.Fields{"tag": c.tag, "uuid": user.Uuid, "err": err}).Warn("Sync WireGuard rate limit failed")
 		}
 	}

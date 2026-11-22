@@ -12,7 +12,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/diagnostic"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 	"github.com/AnixOps/anix-agent/v5/plugin"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -26,7 +25,7 @@ type Controller struct {
 	nodeID                    int
 	apiHost                   string
 	tag                       string
-	limiter                   *limiter.Limiter
+	rates                     *rateLimits
 	traffic                   map[string]int64
 	userList                  []panel.UserInfo
 	aliveMap                  map[int]int
@@ -38,7 +37,6 @@ type Controller struct {
 	logHook                   *RemoteLogHook
 	reconcileMu               sync.Mutex
 	pluginSupervisor          *plugin.Supervisor
-	limiterAdded              bool
 	nodeAdded                 bool
 	// stream is the node's control-stream data plane: it carries the
 	// node's configuration, users and reports.
@@ -62,7 +60,7 @@ type Controller struct {
 	started atomic.Bool
 	// aliveFromStream is set once the control stream delivered an alive
 	// list: a node that starts after it keeps that list instead of the one
-	// its caller read before. aliveMap, limiter and aliveFromStream are
+	// its caller read before. aliveMap, rates and aliveFromStream are
 	// guarded by reconcileMu: the alive list is applied from the data
 	// plane's goroutine, also while the node starts.
 	aliveFromStream bool
@@ -111,17 +109,14 @@ func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 
 // applyStreamAlive makes the node's device limits count alive, Control's
 // alive list (alive.v1). It runs on the data plane's goroutine, also while
-// the node is starting: a limiter that exists takes the list at once (the
-// node may be half started), and a controller that has no limiter yet takes
-// it at startup (addLimiter).
+// the node is starting: a started or half-started node takes the list at once,
+// and a controller that has not started keeps it for
+// startup (setUsers).
 func (c *Controller) applyStreamAlive(alive map[int]int) {
 	c.reconcileMu.Lock()
 	defer c.reconcileMu.Unlock()
 	c.aliveMap = alive
 	c.aliveFromStream = true
-	if c.limiter != nil {
-		c.limiter.AliveList = alive
-	}
 }
 
 // applyStreamUsers brings the running node to users, the node's set from
@@ -168,12 +163,12 @@ func (c *Controller) label() string {
 	return fmt.Sprintf("node %d (%s)", c.nodeID, nodeType)
 }
 
-// addLimiter sets the node's users and alive list and adds its limiter,
+// setUsers sets the node's users, alive list and rate limits,
 // under reconcileMu: the data plane applies an alive list (applyStreamAlive)
 // from its own goroutine while the node starts. A list that came from the
 // stream before this point is newer than alive, which the caller read
 // earlier, so it stays.
-func (c *Controller) addLimiter(users []panel.UserInfo, alive map[int]int) *limiter.Limiter {
+func (c *Controller) setUsers(users []panel.UserInfo, alive map[int]int) {
 	c.reconcileMu.Lock()
 	defer c.reconcileMu.Unlock()
 	c.userList = users
@@ -183,10 +178,7 @@ func (c *Controller) addLimiter(users []panel.UserInfo, alive map[int]int) *limi
 	if c.aliveMap == nil {
 		c.aliveMap = make(map[int]int)
 	}
-	l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
-	c.limiter = l
-	c.limiterAdded = true
-	return l
+	c.rates = newRateLimits(c.LimitConfig.SpeedLimit, c.userList)
 }
 
 // startWith starts the node with its configuration, users and alive list.
@@ -203,12 +195,7 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 	c.logHook = newRemoteLogHook(c.reportNodeLogs, c.tag)
 	log.StandardLogger().AddHook(c.logHook)
 
-	// add limiter
-	l := c.addLimiter(users, alive)
-	// add rule limiter
-	if err = l.UpdateRule(&node.Rules); err != nil {
-		return fmt.Errorf("update rule error: %s", err)
-	}
+	c.setUsers(users, alive)
 	if node.Security == panel.Tls {
 		err = c.requestCert()
 		if err != nil {
@@ -241,10 +228,6 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 func (c *Controller) Close() error {
 	var closeErr error
 
-	if c.limiterAdded {
-		limiter.DeleteLimiter(c.tag)
-		c.limiterAdded = false
-	}
 	if c.userReportPeriodic != nil {
 		c.userReportPeriodic.Close()
 	}

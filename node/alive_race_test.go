@@ -9,11 +9,10 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 )
 
 // gateCore is a core whose AddNode runs a hook first: a test stops a node
-// start half way (after its limiter exists, before it is started).
+// start half way (after its users are set, before it is started).
 type gateCore struct {
 	*recordingCore
 	onAddNode func()
@@ -31,7 +30,6 @@ func (c *gateCore) AddNode(tag string, info *panel.NodeInfo, options *conf.Optio
 // so no periodic task fires).
 func startingController(t *testing.T, name string, core *gateCore) (*Controller, *panel.NodeInfo) {
 	t.Helper()
-	limiter.Init()
 	controller := &Controller{
 		nodeID: 1, apiHost: "https://control.test",
 		server:  core,
@@ -43,7 +41,7 @@ func startingController(t *testing.T, name string, core *gateCore) (*Controller,
 	return controller, info
 }
 
-// assertAlive fails unless both the controller and its limiter hold want.
+// assertAlive fails unless the started controller holds want.
 func assertAlive(t *testing.T, controller *Controller, want map[int]int) {
 	t.Helper()
 	controller.reconcileMu.Lock()
@@ -51,17 +49,14 @@ func assertAlive(t *testing.T, controller *Controller, want map[int]int) {
 	if !maps.Equal(controller.aliveMap, want) {
 		t.Errorf("controller alive list = %v, want %v", controller.aliveMap, want)
 	}
-	if controller.limiter == nil {
-		t.Fatal("the node has no limiter")
-	}
-	if !maps.Equal(controller.limiter.AliveList, want) {
-		t.Errorf("limiter alive list = %v, want %v", controller.limiter.AliveList, want)
+	if controller.rates == nil {
+		t.Fatal("the node has no rate limits")
 	}
 }
 
 // An alive list from the control stream that arrives while the node is
-// starting (its limiter exists, the node is not started yet) is not lost: it
-// reaches the limiter the node runs with.
+// starting (its users are set, the node is not started yet) is not lost: it
+// is the list the node runs with.
 func TestStreamAliveDuringStartReachesTheLimiter(t *testing.T) {
 	inAddNode, release := make(chan struct{}), make(chan struct{})
 	core := &gateCore{recordingCore: newRecordingCore(), onAddNode: func() {
@@ -106,7 +101,7 @@ func TestStreamAliveBeforeStartIsNotOverwrittenByTheStartupList(t *testing.T) {
 
 // startWith and applyStreamAlive run on different goroutines when a node
 // starts on the control stream: the alive list arrives while the
-// configuration is applied. Both write the alive list and the limiter, so
+// configuration is applied. Both write the alive list, so
 // this is a data race unless startWith holds the reconcile lock for them
 // (go test -race), and whichever goes first, the stream's list wins.
 func TestStartWithAndStreamAliveDoNotRace(t *testing.T) {

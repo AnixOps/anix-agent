@@ -7,7 +7,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 )
 
 var _ vCore.Core = (*errorTestCore)(nil)
@@ -44,7 +43,6 @@ func reconcile(controller *Controller, newN *panel.NodeInfo, newU []panel.UserIn
 }
 
 func TestControllerReloadFailureDoesNotDeleteMissingCoreNodeTwice(t *testing.T) {
-	limiter.Init()
 	addErr := errors.New("replacement add failed")
 	core := &errorTestCore{addNodeErr: addErr}
 	controller := &Controller{
@@ -56,8 +54,7 @@ func TestControllerReloadFailureDoesNotDeleteMissingCoreNodeTwice(t *testing.T) 
 		userList:  []panel.UserInfo{},
 		aliveMap:  map[int]int{},
 	}
-	controller.limiter = limiter.AddLimiter(controller.tag, &controller.LimitConfig, controller.userList, controller.aliveMap)
-	controller.limiterAdded = true
+	controller.rates = newRateLimits(0, controller.userList)
 
 	err := reconcile(controller, &panel.NodeInfo{Id: 1, Type: "vless"}, nil)
 	if !errors.Is(err, addErr) {

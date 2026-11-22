@@ -10,7 +10,6 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -31,7 +30,7 @@ func nodeConfigEqual(a, b *panel.NodeInfo) bool {
 }
 
 // replaceNodeLocked replaces the running node with newN. When newN cannot
-// be added, the previous configuration is put back (its tag, limiter,
+// be added, the previous configuration is put back (its tag,
 // rules and inbound) so that the node keeps serving, and the error is
 // returned. c.nodeAdded always tells whether the core runs the node: a
 // later reconciliation adds it without deleting a node that is not there.
@@ -73,30 +72,12 @@ func (c *Controller) replaceNodeLocked(newN *panel.NodeInfo) error {
 }
 
 // startNodeLocked brings up info in the core with the controller's users:
-// the tag and limiter, the rules, the certificate, the inbound and the
+// the tag, the certificate, the inbound and the
 // users. A node whose users fail is removed again. c.nodeAdded is set once
 // it all succeeded. reconcileMu is held.
 func (c *Controller) startNodeLocked(info *panel.NodeInfo) error {
-	alive := c.aliveMap
-	if alive == nil {
-		alive = make(map[int]int)
-	}
 	if len(c.Options.Name) == 0 {
-		oldTag := c.tag
 		c.tag = c.buildNodeTag(info)
-		// Remove the limiter under the old tag before replacing the tag.
-		limiter.DeleteLimiter(oldTag)
-		c.limiter = limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, alive)
-		c.limiterAdded = true
-	} else if c.aliveMap != nil {
-		c.limiter.AliveList = c.aliveMap
-	}
-	if err := c.limiter.UpdateRule(&info.Rules); err != nil {
-		log.WithFields(log.Fields{
-			"tag": c.tag,
-			"err": err,
-		}).Error("Update Rule failed")
-		return fmt.Errorf("update rules for node %s: %w", c.tag, err)
 	}
 	if info.Security == panel.Tls {
 		if err := c.requestCert(); err != nil {

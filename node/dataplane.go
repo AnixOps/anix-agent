@@ -467,11 +467,11 @@ func (n *nodeDataPlane) startupAliveList() map[int]int {
 	return make(map[int]int)
 }
 
-// aliveMap converts an alive list to the limiter's map.
+// aliveMap converts an alive list to the controller's map.
 func aliveMap(alive map[uint64]uint32) map[int]int {
 	converted := make(map[int]int, len(alive))
 	for uid, count := range alive {
-		converted[int(uid)] = int(count) // #nosec G115 -- user ids and device counts fit the limiter's int fields.
+		converted[int(uid)] = int(count) // #nosec G115 -- user ids and device counts fit int.
 	}
 	return converted
 }
