@@ -1,43 +1,31 @@
-name: "CodeQL"
+name: CodeQL
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    # The branches below must be a subset of the branches above
-    branches: [ main ]
+    branches: [main]
   schedule:
     - cron: '43 22 * * 3'
 
-# Uploading results to code scanning needs security-events: write; the
-# default read-only token fails the upload on main with "Resource not
-# accessible by integration".
 permissions:
   actions: read
   contents: read
   security-events: write
 
-# A newer push to a pull request replaces the run in progress. Every other
-# run (main, tags, the schedule, manual runs) is its own group and finishes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
-    name: Analyze
+    name: Analyze (go)
     runs-on: ubuntu-24.04
-
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'go' ]
-
     steps:
-      - name: Checkout repository
+      - name: Checkout codebase
         uses: actions/checkout@v4
 
-      - name: Install Go
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -45,12 +33,12 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: ${{ matrix.language }}
+          languages: go
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
-      - name: Perform CodeQL Analysis
+      - name: Analyze
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:${{ matrix.language }}"
+          category: /language:go

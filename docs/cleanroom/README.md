@@ -21,13 +21,13 @@ derived from it, with a two-party process:
 
 How "upstream-derived" was measured, the before and after numbers and a
 similarity check of the new code against the upstream project are in
-`REPORT.md` (written when the last area is done).
+[REPORT.md](REPORT.md).
 
 | Area | Specification | Pull request |
 |---|---|---|
-| Configuration (`conf`) | [conf.md](conf.md) | |
-| Node configuration parsing (`api/panel`) | [panel.md](panel.md) | |
-| Core registry and selector (`core`) | [core.md](core.md) | |
-| Node controller, rate limits, certificates (`node`, `limiter`) | [node.md](node.md) | |
-| Command line (`cmd`, `main.go`) | [cmd.md](cmd.md) | |
-| Repository files (workflows, examples, module) | [repo.md](repo.md) | |
+| Configuration (`conf`) | [conf.md](conf.md) | #167 |
+| Node configuration parsing (`api/panel`) | [panel.md](panel.md) | #168 |
+| Core registry and selector (`core`) | [core.md](core.md) | #169 |
+| Node controller, rate limits, certificates (`node`, `limiter`) | [node.md](node.md) | #170 |
+| Command line (`cmd`, `main.go`) | [cmd.md](cmd.md) | #171 |
+| Repository files (workflows, examples, module) | [repo.md](repo.md) | this pull request |

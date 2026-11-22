@@ -41,6 +41,12 @@
   A user's own speed limit (Mbps) is now converted to bytes per second
   before it is compared with the node limit (WireGuard shaping used to
   read it as bytes per second). A report interval of 0 falls back to 60 s.
+- Release, CodeQL and Dependabot workflows, the bug report template and
+  `.gitignore` are rewritten in a clean room (`docs/cleanroom/repo.md`);
+  `.github/build/friendly-filenames.json` (unused) is removed. Release
+  assets, `.dgst`, `SHA256SUMS` and signatures keep their names and
+  formats. `docs/cleanroom/REPORT.md` records the before/after
+  measurements of the whole clean-room rewrite.
 
 ### Removed
 
