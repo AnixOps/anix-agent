@@ -12,16 +12,15 @@ import (
 func init() {
 	command.AddCommand(&cobra.Command{
 		Use:   "x25519",
-		Short: "Generate a random X25519 key pair",
+		Short: "Generate a new X25519 key pair",
 		Args:  cobra.NoArgs,
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			key, err := ecdh.X25519().GenerateKey(rand.Reader)
 			if err != nil {
 				return err
 			}
-			enc := base64.RawURLEncoding
-			fmt.Fprintf(c.OutOrStdout(), "Private key: %s\nPublic key: %s\n",
-				enc.EncodeToString(key.Bytes()), enc.EncodeToString(key.PublicKey().Bytes()))
+			encode := base64.RawURLEncoding.EncodeToString
+			fmt.Fprintf(cmd.OutOrStdout(), "Private key: %s\nPublic key: %s\n", encode(key.Bytes()), encode(key.PublicKey().Bytes()))
 			return nil
 		},
 	})

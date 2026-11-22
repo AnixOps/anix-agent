@@ -15,10 +15,11 @@
 
 ### Changed
 
-- The command line is rewritten without code from the forked upstream. A
-  config reload now replaces the core and the nodes under one lock, the
-  current core is closed at exit, and a log file that cannot be opened
-  leaves logging on stdout.
+- The command line is rewritten in a clean room (`docs/cleanroom/cmd.md`),
+  replacing the earlier rewrite, whose author had read the forked
+  upstream. A config reload replaces the core and the nodes under one
+  lock, the current core is closed at exit, and a log file that cannot be
+  opened leaves logging on stdout.
 - The configuration loader (`conf`) is rewritten in a clean room from a
   functional specification (`docs/cleanroom/conf.md`). Comments and
   trailing commas in `config.json` are now handled by a small stripper
