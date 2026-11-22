@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/AnixOps/anix-agent/v5/anxline"
@@ -27,86 +27,26 @@ var (
 	watch  bool
 )
 
-var serverCommand = cobra.Command{
-	Use:   "server",
-	Short: "Run AnixOps Agent",
-	RunE:  serverHandle,
-	Args:  cobra.NoArgs,
-}
-
 func init() {
-	serverCommand.PersistentFlags().
-		StringVarP(&config, "config", "c",
-			getDefaultConfigPath(), "config file path")
-	serverCommand.PersistentFlags().
-		BoolVarP(&watch, "watch", "w",
-			true, "watch file path change")
-	command.AddCommand(&serverCommand)
-}
-
-// getDefaultConfigPath 根据操作系统返回默认配置文件路径
-func getDefaultConfigPath() string {
-	if runtime.GOOS == "windows" {
-		// Windows: 使用可执行文件所在目录或当前目录
-		exe, err := os.Executable()
-		if err == nil {
-			configPath := filepath.Join(filepath.Dir(exe), "config.json")
-			if _, err := os.Stat(configPath); err == nil {
-				return configPath
-			}
-		}
-		// 尝试当前目录
-		if _, err := os.Stat("config.json"); err == nil {
-			return "config.json"
-		}
-		return "config.json"
-	}
-	// Linux/macOS 使用 AnixOps Agent 的标准配置目录。
-	return defaultConfigPath
+	flags := command.PersistentFlags()
+	flags.StringVarP(&config, "config", "c", defaultConfigPath, "config file path")
+	flags.BoolVarP(&watch, "watch", "w", true, "reload when the config file changes")
+	command.AddCommand(&cobra.Command{
+		Use:   "server",
+		Short: "Run " + productName,
+		Args:  cobra.NoArgs,
+		RunE:  serverHandle,
+	})
 }
 
 func serverHandle(_ *cobra.Command, _ []string) error {
-	showVersion()
-
-	// 检查配置文件是否存在
-	if _, err := os.Stat(config); os.IsNotExist(err) {
-		log.WithField("path", config).Error("Config file not found")
-		log.Info("Usage: anix-agent server -c /path/to/config.json")
-		log.Info("       anix-agent -c /path/to/config.json")
-		if runtime.GOOS == "windows" {
-			log.Info("On Windows, you can place config.json in the same directory as the executable")
-		} else {
-			log.Info("On Linux/macOS, the default config path is " + defaultConfigPath)
-		}
-		return fmt.Errorf("config file not found: %s", config)
-	}
-
-	log.WithField("config", config).Info("Loading config file")
+	log.Info(versionLine())
 	c := conf.New()
-	err := c.LoadFromPath(config)
-	if err != nil {
-		log.WithField("err", err).Error("Load config file failed")
-		return fmt.Errorf("load config file: %w", err)
+	if err := c.LoadFromPath(config); err != nil {
+		return fmt.Errorf("load config %s: %w", config, err)
 	}
-	switch c.LogConfig.Level {
-	case "debug":
-		log.SetLevel(log.DebugLevel)
-	case "info":
-		log.SetLevel(log.InfoLevel)
-	case "warn":
-		log.SetLevel(log.WarnLevel)
-	case "error":
-		log.SetLevel(log.ErrorLevel)
-	}
-	if c.LogConfig.Output != "" {
-		f, err := os.OpenFile(c.LogConfig.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			log.WithField("err", err).Error("Open log file failed, using stdout instead")
-		}
-		log.SetOutput(f)
-	}
+	setupLog(c.LogConfig)
 	limiter.Init()
-	log.Info("Start AnixOps Agent...")
 	migrateLegacyPaths(c)
 	tuneHostTCP()
 	// The outcome of the last Control-pushed upgrade, which restarted us.
@@ -117,16 +57,15 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	var forwardComponent *forward.Component
 	forwardProxyNode := 0
 	if c.Forward.Enabled() {
+		var err error
 		forwardComponent, forwardProxyNode, err = node.NewForwardComponent(c.Forward, c.NodeConfig)
 		if err != nil {
-			log.WithField("err", err).Error("Start the forward component failed")
 			return fmt.Errorf("start forwarding: %w", err)
 		}
 		defer forwardComponent.Close()
 		if c.Forward.ForwardNodeOnly() {
 			forwardNode, err := node.StartForward(c.Forward, forwardComponent)
 			if err != nil {
-				log.WithField("err", err).Error("Start the forward node failed")
 				return fmt.Errorf("start the forward node: %w", err)
 			}
 			defer forwardNode.Close()
@@ -143,7 +82,6 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 	if c.AnxLine.Enabled() {
 		anxLine, err := anxline.Start(*c.AnxLine, anxline.Options{})
 		if err != nil {
-			log.WithField("err", err).Error("Start ANX-Line host support failed")
 			return fmt.Errorf("start ANX-Line host support: %w", err)
 		}
 		defer anxLine.Close()
@@ -160,66 +98,88 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	vc, err := vCore.NewForConfig(c.CoresConfig, len(c.NodeConfig))
-	if err != nil {
-		log.WithField("err", err).Error("new core failed")
-		return fmt.Errorf("create core: %w", err)
-	}
-	err = vc.Start()
-	if err != nil {
-		log.WithField("err", err).Error("Start core failed")
-		return fmt.Errorf("start core: %w", err)
-	}
-	defer vc.Close()
-	log.Info("Core ", vc.Type(), " started")
-
-	nodes := node.New()
+	plane := &dataPlane{nodes: node.New()}
 	if forwardComponent != nil && !c.Forward.ForwardNodeOnly() {
-		nodes.SetForward(forwardComponent, forwardProxyNode)
+		plane.nodes.SetForward(forwardComponent, forwardProxyNode)
 	}
-	err = nodes.Start(c.NodeConfig, vc)
-	if err != nil {
-		log.WithField("err", err).Error("Run nodes failed")
-		return fmt.Errorf("start nodes: %w", err)
+	defer plane.close()
+	if err := plane.start(c); err != nil {
+		return err
 	}
-	log.Info("Nodes started")
 	if watch {
-		err = c.Watch(config, func() {
-			migrateLegacyPaths(c)
-			nodes.Close()
-			err = vc.Close()
-			if err != nil {
-				log.WithField("err", err).Error("Restart node failed")
-				return
-			}
-			vc, err = vCore.NewForConfig(c.CoresConfig, len(c.NodeConfig))
-			if err != nil {
-				log.WithField("err", err).Error("New core failed")
-				return
-			}
-			err = vc.Start()
-			if err != nil {
-				log.WithField("err", err).Error("Start core failed")
-				return
-			}
-			log.Info("Core ", vc.Type(), " restarted")
-			err = nodes.Start(c.NodeConfig, vc)
-			if err != nil {
-				log.WithField("err", err).Error("Run nodes failed")
-				return
-			}
-			log.Info("Nodes restarted")
-			runtime.GC()
-		})
-		if err != nil {
-			log.WithField("err", err).Error("start watch failed")
+		// Watch loads the changed file into c before it calls back.
+		if err := c.Watch(config, func() { plane.reload(c) }); err != nil {
 			return fmt.Errorf("start config watcher: %w", err)
 		}
 	}
-	// clear memory
-	runtime.GC()
 	waitForExitSignal()
 	return nil
+}
+
+// setupLog applies the configured log level and output file.
+func setupLog(c conf.LogConfig) {
+	if level, err := log.ParseLevel(c.Level); err == nil {
+		log.SetLevel(level)
+	}
+	if c.Output == "" {
+		return
+	}
+	f, err := os.OpenFile(c.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		log.WithError(err).Error("Open log file failed, logging to stdout")
+		return
+	}
+	log.SetOutput(f)
+}
+
+// dataPlane is the running core and the nodes on it; a config reload
+// replaces both.
+type dataPlane struct {
+	mu    sync.Mutex
+	core  vCore.Core
+	nodes *node.Node
+}
+
+func (d *dataPlane) start(c *conf.Conf) error {
+	core, err := vCore.NewForConfig(c.CoresConfig, len(c.NodeConfig))
+	if err != nil {
+		return fmt.Errorf("create core: %w", err)
+	}
+	if err := core.Start(); err != nil {
+		return fmt.Errorf("start core: %w", err)
+	}
+	d.core = core
+	log.Info("Core ", core.Type(), " started")
+	if err := d.nodes.Start(c.NodeConfig, core); err != nil {
+		return fmt.Errorf("start nodes: %w", err)
+	}
+	log.Info("Nodes started")
+	return nil
+}
+
+func (d *dataPlane) reload(c *conf.Conf) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	migrateLegacyPaths(c)
+	d.nodes.Close()
+	if err := d.core.Close(); err != nil {
+		log.WithError(err).Error("Reload: close core failed")
+		return
+	}
+	d.core = nil
+	if err := d.start(c); err != nil {
+		log.WithError(err).Error("Reload failed")
+		return
+	}
+	runtime.GC()
+}
+
+func (d *dataPlane) close() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.core != nil {
+		_ = d.core.Close()
+	}
 }
 
 // migrateLegacyPaths moves the earlier default directories the
@@ -241,9 +201,9 @@ func migrateLegacyPaths(c *conf.Conf) {
 
 // waitForExitSignal blocks until SIGINT or SIGTERM.
 func waitForExitSignal() {
-	osSignals := make(chan os.Signal, 1)
-	signal.Notify(osSignals, syscall.SIGINT, syscall.SIGTERM)
-	<-osSignals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
 }
 
 // tuneHostTCP applies hosttune's TCP settings on Linux unless

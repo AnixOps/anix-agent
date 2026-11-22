@@ -9,7 +9,7 @@ import (
 
 // The log names a node by its id, never its protocol or Control host.
 func TestLogHidesNodeTags(t *testing.T) {
-	f := &LocalTimeFormatter{TextFormatter: log.TextFormatter{DisableTimestamp: true}}
+	f := &logFormatter{TextFormatter: log.TextFormatter{DisableTimestamp: true}}
 	entry := log.WithField("tag", "[new-x.example.com]-vless:62")
 	entry.Message = "inbound [new-x.example.com]-vless:62 refused"
 	line, err := f.Format(entry)
