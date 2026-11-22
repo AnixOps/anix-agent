@@ -30,4 +30,4 @@ similarity check of the new code against the upstream project are in
 | Core registry and selector (`core`) | [core.md](core.md) | #169 |
 | Node controller, rate limits, certificates (`node`, `limiter`) | [node.md](node.md) | #170 |
 | Command line (`cmd`, `main.go`) | [cmd.md](cmd.md) | #171 |
-| Repository files (workflows, examples, module) | [repo.md](repo.md) | this pull request |
+| Repository files (workflows, examples, module) | [repo.md](repo.md) | #172 |

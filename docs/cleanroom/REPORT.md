@@ -94,7 +94,7 @@ Two parties, per [README.md](README.md):
 | `core` | [core.md](core.md) | #169 | none |
 | `node`, `limiter` | [node.md](node.md) | #170 | none |
 | `cmd`, `main.go` | [cmd.md](cmd.md) | #171 | none |
-| repository files | [repo.md](repo.md) | this pull request | CodeQL job named `Analyze (go)` so the check keeps its name |
+| repository files | [repo.md](repo.md) | #172 | CodeQL job named `Analyze (go)` so the check keeps its name; `scripts/test_install.sh` checks the zip name in the new workflow |
 
 Each pull request lists the upstream-derived files it replaced, the
 method, the sources the implementer read, intentional behaviour changes,
