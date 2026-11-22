@@ -12,7 +12,6 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
-	vCore "github.com/AnixOps/anix-agent/v5/core"
 )
 
 // fakeAPI records management API calls and answers like anixcore.
@@ -202,11 +201,11 @@ func TestShadowsocksNodesStartWithTheirFirstUsers(t *testing.T) {
 	if len(api.inbounds) != 0 {
 		t.Fatalf("a shadowsocks inbound without users was created: %v", api.inbounds)
 	}
-	if traffic, err := core.GetUserTrafficSlice("ss", true); err != nil || traffic != nil {
+	if traffic, err := core.UserTraffic("ss", true); err != nil || traffic != nil {
 		t.Fatalf("traffic before the inbound exists = %v, %v", traffic, err)
 	}
 	user := panel.UserInfo{Id: 7, Uuid: "0123456789abcdef0123456789abcdef"}
-	added, err := core.AddUsers(&vCore.AddUsersParams{Tag: "ss", Users: []panel.UserInfo{user}, NodeInfo: info})
+	added, err := core.AddUsers("ss", info, []panel.UserInfo{user})
 	if err != nil || added != 1 {
 		t.Fatalf("AddUsers = %d, %v", added, err)
 	}
@@ -222,14 +221,14 @@ func TestShadowsocksNodesStartWithTheirFirstUsers(t *testing.T) {
 	}
 
 	more := panel.UserInfo{Id: 8, Uuid: "fedcba9876543210fedcba9876543210"}
-	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "ss", Users: []panel.UserInfo{more}, NodeInfo: info}); err != nil {
+	if _, err := core.AddUsers("ss", info, []panel.UserInfo{more}); err != nil {
 		t.Fatal(err)
 	}
 	if len(api.users["ss"]) != 2 {
 		t.Fatalf("users = %v", api.users["ss"])
 	}
 
-	traffic, err := core.GetUserTrafficSlice("ss", true)
+	traffic, err := core.UserTraffic("ss", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +241,7 @@ func TestShadowsocksNodesStartWithTheirFirstUsers(t *testing.T) {
 		t.Fatalf("online = %v, %v", online, err)
 	}
 
-	if err := core.DelUsers([]panel.UserInfo{user}, "ss", info); err != nil {
+	if err := core.DelUsers("ss", info, []panel.UserInfo{user}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := api.users["ss"]["7"]; ok {
@@ -274,10 +273,10 @@ func TestSnellNodesAlwaysCheckUserKeys(t *testing.T) {
 		t.Fatalf("users of a new snell inbound = %v", api.users["snell"])
 	}
 	user := panel.UserInfo{Id: 7, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"}
-	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "snell", Users: []panel.UserInfo{user}, NodeInfo: info}); err != nil {
+	if _, err := core.AddUsers("snell", info, []panel.UserInfo{user}); err != nil {
 		t.Fatal(err)
 	}
-	if err := core.DelUsers([]panel.UserInfo{user}, "snell", info); err != nil {
+	if err := core.DelUsers("snell", info, []panel.UserInfo{user}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(api.users["snell"], map[string]apiUser{snellGuardUser: guard}) {
@@ -300,7 +299,7 @@ func TestShadowsocksIssuedKeyIsASecondUser(t *testing.T) {
 	key := "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" // bytes 0..31
 	user := panel.UserInfo{Id: 7, Uuid: "0123456789abcdef0123456789abcdef", Extra: map[string]string{"ss2022_key": key}}
 	plain := panel.UserInfo{Id: 8, Uuid: "fedcba9876543210fedcba9876543210"}
-	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "ss", Users: []panel.UserInfo{user, plain}, NodeInfo: info}); err != nil {
+	if _, err := core.AddUsers("ss", info, []panel.UserInfo{user, plain}); err != nil {
 		t.Fatal(err)
 	}
 	users := api.users["ss"]
@@ -316,7 +315,7 @@ func TestShadowsocksIssuedKeyIsASecondUser(t *testing.T) {
 		t.Fatalf("issued key user = %+v", got)
 	}
 
-	if err := core.DelUsers([]panel.UserInfo{user}, "ss", info); err != nil {
+	if err := core.DelUsers("ss", info, []panel.UserInfo{user}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := api.users["ss"]["7.k"]; ok || len(api.users["ss"]) != 1 {
@@ -341,7 +340,7 @@ func TestReplayRestoresNodesAndUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := panel.UserInfo{Id: 3, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11"}
-	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "trojan", Users: []panel.UserInfo{user}, NodeInfo: info}); err != nil {
+	if _, err := core.AddUsers("trojan", info, []panel.UserInfo{user}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -471,7 +470,7 @@ func TestUserLimitsGoOnlyToKernelsThatTakeThem(t *testing.T) {
 			t.Fatal(err)
 		}
 		user := panel.UserInfo{Id: 4, Uuid: "c9a1e7b0-5b0e-4a4b-9a54-2f3f1c1b0d11", SpeedLimit: 50, DeviceLimit: 3}
-		if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "vmess", Users: []panel.UserInfo{user}, NodeInfo: info}); err != nil {
+		if _, err := core.AddUsers("vmess", info, []panel.UserInfo{user}); err != nil {
 			t.Fatal(err)
 		}
 		got := api.users["vmess"]["4"]

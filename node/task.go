@@ -6,7 +6,6 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/task"
-	vCore "github.com/AnixOps/anix-agent/v5/core"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -100,7 +99,7 @@ func (c *Controller) applyUserDiffLocked(newU []panel.UserInfo) (err error) {
 	deleted, added := compareUserList(c.userList, newU)
 	if len(deleted) > 0 {
 		// have deleted users
-		err = c.server.DelUsers(deleted, c.tag, c.info)
+		err = c.server.DelUsers(c.tag, c.info, deleted)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"tag": c.tag,
@@ -111,11 +110,7 @@ func (c *Controller) applyUserDiffLocked(newU []panel.UserInfo) (err error) {
 	}
 	if len(added) > 0 {
 		// have added users
-		_, err = c.server.AddUsers(&vCore.AddUsersParams{
-			Tag:      c.tag,
-			NodeInfo: c.info,
-			Users:    added,
-		})
+		_, err = c.server.AddUsers(c.tag, c.info, added)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"tag": c.tag,

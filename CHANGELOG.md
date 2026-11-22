@@ -29,6 +29,10 @@
   `VLessVMessNode` (`NodeInfo.VLessVMess`); the unused fallback copies of
   TLS/network settings, the Reality time-difference setting and the raw
   DNS member are gone, and parse errors never quote the answer.
+- The core registry, interface and selector (`core`) are rewritten in a
+  clean room (`docs/cleanroom/core.md`): `Register`, `Core.AddUsers` /
+  `DelUsers` / `UserTraffic`, `RollbackUserTraffic`; cores and callers
+  follow the new names.
 
 ### Removed
 

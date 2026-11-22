@@ -78,5 +78,5 @@ Control 可以提供的「协议 × TLS 模式 × 传输」组合列在
 不支持的会在 `AddNode` 时报错：chacha20 的 SS-2022（无多用户模式）、旧 SS 方法、
 h2 等其他传输、reality 配 ws / grpc、Hysteria v1、WireGuard。
 
-用户名是面板用户 id，流量（`GetUserTrafficSlice`，支持 reset）和在线 IP
+用户名是面板用户 id，流量（`UserTraffic`，支持 reset）和在线 IP
 （`GetOnlineDevice`）按 id 回报。

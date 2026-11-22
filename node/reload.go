@@ -114,11 +114,7 @@ func (c *Controller) startNodeLocked(info *panel.NodeInfo) error {
 		}).Error("Add node failed")
 		return fmt.Errorf("add node %s: %w", c.tag, err)
 	}
-	if _, err := c.server.AddUsers(&vCore.AddUsersParams{
-		Tag:      c.tag,
-		Users:    c.userList,
-		NodeInfo: info,
-	}); err != nil {
+	if _, err := c.server.AddUsers(c.tag, info, c.userList); err != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
 			"err": err,

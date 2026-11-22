@@ -7,51 +7,50 @@ import (
 	"strings"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
-	vCore "github.com/AnixOps/anix-agent/v5/core"
 )
 
-func (c *Core) AddUsers(p *vCore.AddUsersParams) (int, error) {
+func (c *Core) AddUsers(tag string, _ *panel.NodeInfo, users []panel.UserInfo) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	n, ok := c.nodes[p.Tag]
+	n, ok := c.nodes[tag]
 	if !ok {
-		return 0, fmt.Errorf("anixcore node %s does not exist", p.Tag)
+		return 0, fmt.Errorf("anixcore node %s does not exist", tag)
 	}
-	users := make([]apiUser, 0, len(p.Users))
-	for _, user := range p.Users {
+	added := make([]apiUser, 0, len(users))
+	for _, user := range users {
 		converted, err := apiUsersFor(n.info, user)
 		if err != nil {
 			return 0, err
 		}
-		users = append(users, converted...)
+		added = append(added, converted...)
 	}
-	if len(users) == 0 {
+	if len(added) == 0 {
 		return 0, nil
 	}
 	if !n.created {
-		for _, user := range users {
+		for _, user := range added {
 			n.users[user.Name] = user
 		}
-		if err := c.create(p.Tag, n); err != nil {
-			for _, user := range users {
+		if err := c.create(tag, n); err != nil {
+			for _, user := range added {
 				delete(n.users, user.Name)
 			}
-			return 0, fmt.Errorf("anixcore node %s: %w", p.Tag, err)
+			return 0, fmt.Errorf("anixcore node %s: %w", tag, err)
 		}
-		return len(users), nil
+		return len(added), nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	if err := c.client.addUsers(ctx, p.Tag, users); err != nil {
-		return 0, fmt.Errorf("anixcore node %s: %w", p.Tag, err)
+	if err := c.client.addUsers(ctx, tag, added); err != nil {
+		return 0, fmt.Errorf("anixcore node %s: %w", tag, err)
 	}
-	for _, user := range users {
+	for _, user := range added {
 		n.users[user.Name] = user
 	}
-	return len(users), nil
+	return len(added), nil
 }
 
-func (c *Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
+func (c *Core) DelUsers(tag string, _ *panel.NodeInfo, users []panel.UserInfo) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	n, ok := c.nodes[tag]
@@ -79,7 +78,7 @@ func (c *Core) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) e
 	return nil
 }
 
-func (c *Core) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
+func (c *Core) UserTraffic(tag string, reset bool) ([]panel.UserTraffic, error) {
 	api, created := c.clientFor(tag)
 	if !created {
 		return nil, nil

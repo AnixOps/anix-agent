@@ -11,7 +11,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/api/agent/agenttest"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
-	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/limiter"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -29,7 +28,7 @@ type recordingCore struct {
 	delNodes []string
 	addUsers int
 	delUsers int
-	// traffic is the next window GetUserTrafficSlice returns; online the
+	// traffic is the next window UserTraffic returns; online the
 	// online devices.
 	traffic    []panel.UserTraffic
 	online     []panel.OnlineUser
@@ -58,19 +57,19 @@ func (c *recordingCore) DelNode(tag string) error {
 	c.delNodes = append(c.delNodes, tag)
 	return nil
 }
-func (c *recordingCore) AddUsers(params *vCore.AddUsersParams) (int, error) {
+func (c *recordingCore) AddUsers(tag string, _ *panel.NodeInfo, users []panel.UserInfo) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.users[params.Tag] == nil {
-		c.users[params.Tag] = map[string]panel.UserInfo{}
+	if c.users[tag] == nil {
+		c.users[tag] = map[string]panel.UserInfo{}
 	}
-	for _, user := range params.Users {
-		c.users[params.Tag][user.Uuid] = user
+	for _, user := range users {
+		c.users[tag][user.Uuid] = user
 	}
 	c.addUsers++
-	return len(params.Users), nil
+	return len(users), nil
 }
-func (c *recordingCore) GetUserTrafficSlice(string, bool) ([]panel.UserTraffic, error) {
+func (c *recordingCore) UserTraffic(string, bool) ([]panel.UserTraffic, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	traffic := c.traffic
@@ -82,7 +81,7 @@ func (c *recordingCore) GetOnlineDevice(string) ([]panel.OnlineUser, error) {
 	defer c.mu.Unlock()
 	return append([]panel.OnlineUser(nil), c.online...), nil
 }
-func (c *recordingCore) RollbackUserTrafficSlice(string, []panel.UserTraffic) error {
+func (c *recordingCore) RollbackUserTraffic(string, []panel.UserTraffic) error {
 	c.mu.Lock()
 	c.rolledBack++
 	c.mu.Unlock()
@@ -93,7 +92,7 @@ func (c *recordingCore) setWindow(traffic []panel.UserTraffic, online []panel.On
 	c.traffic, c.online = traffic, online
 	c.mu.Unlock()
 }
-func (c *recordingCore) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
+func (c *recordingCore) DelUsers(tag string, _ *panel.NodeInfo, users []panel.UserInfo) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, user := range users {
