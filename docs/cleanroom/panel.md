@@ -100,5 +100,6 @@ be removed from their users: anixcore reads `TlsSettings` and
 (relay members read, `server_port` 0 kept); type/category fallback and
 `v2ray`; security per protocol; block rules from string and list matches,
 non-string match errors; intervals from number, string, missing; unknown
-type error; no error message contains the body. Then
+type error; no error message contains the body. Example file paths in
+fixtures live under `/etc/anixops/agent/`. Then
 `GOEXPERIMENT=jsonv2 GOWORK=off go test ./api/... ./core/... ./node/ ./cmd/...`.

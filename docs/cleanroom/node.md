@@ -228,6 +228,14 @@ from the core only), and a copy of the alive list (the controller's
 `aliveMap` is the only copy; `applyStreamAlive` and `reconcileLocked`
 just set it).
 
+## Test names
+
+The optional ACME DNS integration test is skipped unless
+`ANIXOPS_ACME_INTEGRATION=1`; it reads `ANIXOPS_ACME_EMAIL`,
+`ANIXOPS_ACME_DOMAIN` and `ANIXOPS_ACME_PROVIDER` (defaults
+`test@example.com`, `test.example.com`, `cloudflare`) and the provider's
+own environment variables.
+
 ## Rules for the implementer
 
 - Do not read the forked upstream project (V2bX, InazumaV/V2bX,
