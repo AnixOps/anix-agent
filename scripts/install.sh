@@ -20,13 +20,6 @@ DATA_DIR="${INSTALL_DIR}/data"
 BIN_PATH="${INSTALL_DIR}/anix-agent"
 MANAGE_CMD_NAME="anix-agent"
 
-LEGACY_SERVICE_NAME="V2bX"
-LEGACY_INSTALL_DIR="/usr/local/V2bX"
-LEGACY_CONFIG_DIR="/etc/V2bX"
-LEGACY_DATA_DIR="${LEGACY_INSTALL_DIR}/data"
-LEGACY_BIN_PATH="${LEGACY_INSTALL_DIR}/V2bX"
-LEGACY_MANAGE_CMD_NAME="v2bx-anixops"
-MIGRATION_DIR="${CONFIG_DIR}/migration"
 # The O1 layout (H13): state under /var/lib/anixops-agent, runtime files in
 # the unit's RuntimeDirectory /run/anixops-agent.
 STATE_ROOT="/var/lib/anixops-agent"
@@ -59,11 +52,6 @@ VERSION_FILE="${INSTALL_DIR}/.release-version"
 release=""
 tmp_dir=""
 backup_path=""
-legacy_service_backup=""
-legacy_service_was_active="false"
-legacy_service_was_enabled="false"
-legacy_service_captured="false"
-migration_detected="false"
 command_backup_dir=""
 command_backup_manifest=""
 rollback_armed="false"
@@ -71,10 +59,6 @@ rollback_completed="false"
 COMMAND_PATHS=(
     "/usr/bin/${MANAGE_CMD_NAME}"
     "/usr/local/bin/${MANAGE_CMD_NAME}"
-    "/usr/bin/${LEGACY_MANAGE_CMD_NAME}"
-    "/usr/local/bin/${LEGACY_MANAGE_CMD_NAME}"
-    "/usr/bin/${LEGACY_SERVICE_NAME}"
-    "/usr/local/bin/${LEGACY_SERVICE_NAME}"
 )
 
 cleanup() {
@@ -229,23 +213,13 @@ download_release_zip() {
     local asset_suffix="$2"
     local asset_name download_url zip_path
 
-    for asset_name in "anix-agent-${asset_suffix}.zip" "V2bX-${asset_suffix}.zip"; do
-        download_url="${RELEASE_BASE}/${version}/${asset_name}"
-        zip_path="${tmp_dir}/${asset_name}"
-        info "下载 ${asset_name} (${version})..."
-        if curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 \
-            "${download_url}" -o "${zip_path}"; then
-            if [[ "${asset_name}" == V2bX-* ]]; then
-                warn "未找到新命名资产，已回退使用兼容资产：${asset_name}"
-            fi
-            echo "${zip_path}"
-            return
-        fi
-        rm -f "${zip_path}"
-    done
-
-    error "下载失败：${version} 未提供 anix-agent 或 V2bX 兼容资产"
-    exit 1
+    asset_name="anix-agent-${asset_suffix}.zip"
+    download_url="${RELEASE_BASE}/${version}/${asset_name}"
+    zip_path="${tmp_dir}/${asset_name}"
+    info "下载 ${asset_name} (${version})..."
+    curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 600 \
+        "${download_url}" -o "${zip_path}"
+    echo "${zip_path}"
 }
 
 download_release_digest() {
@@ -282,20 +256,15 @@ verify_release_zip() {
 }
 
 backup_existing_binary() {
-    local source_path="${BIN_PATH}"
-    if [[ ! -x "${source_path}" && -x "${LEGACY_BIN_PATH}" ]]; then
-        source_path="${LEGACY_BIN_PATH}"
-        migration_detected="true"
-    fi
-    if [[ ! -x "${source_path}" ]]; then
+    if [[ ! -x "${BIN_PATH}" ]]; then
         return
     fi
 
     backup_path="${INSTALL_DIR}/backups/anix-agent.$(date -u +%Y%m%dT%H%M%SZ)"
     mkdir -p "$(dirname "${backup_path}")"
-    cp -a "${source_path}" "${backup_path}"
+    cp -a "${BIN_PATH}" "${backup_path}"
     chmod 0700 "$(dirname "${backup_path}")" || true
-    info "已备份现有二进制：${source_path} -> ${backup_path}"
+    info "已备份现有二进制：${backup_path}"
 }
 
 restore_existing_binary() {
@@ -305,53 +274,6 @@ restore_existing_binary() {
 
     warn "启动失败，恢复旧二进制：${backup_path}"
     install -m 0755 "${backup_path}" "${BIN_PATH}"
-}
-
-copy_legacy_config() {
-    if [[ ! -d "${LEGACY_CONFIG_DIR}" ]]; then
-        return
-    fi
-
-    migration_detected="true"
-    mkdir -p "${CONFIG_DIR}"
-    while IFS= read -r -d '' source_path; do
-        local relative_path target_path
-        relative_path="${source_path#"${LEGACY_CONFIG_DIR}"/}"
-        target_path="${CONFIG_DIR}/${relative_path}"
-
-        if [[ -d "${source_path}" && ! -L "${source_path}" ]]; then
-            mkdir -p "${target_path}"
-        elif [[ ! -e "${target_path}" && ! -L "${target_path}" ]]; then
-            mkdir -p "$(dirname "${target_path}")"
-            cp -a "${source_path}" "${target_path}"
-        fi
-    done < <(find "${LEGACY_CONFIG_DIR}" -mindepth 1 -print0)
-
-    info "已迁移旧配置中的缺失文件：${LEGACY_CONFIG_DIR} -> ${CONFIG_DIR}"
-    info "旧配置目录保持不变，可用于回滚"
-}
-
-copy_legacy_credentials() {
-    if [[ ! -d "${LEGACY_DATA_DIR}" ]]; then
-        return
-    fi
-
-    local credential_name source_path target_path
-    for credential_name in credential.json credential.json.enc; do
-        source_path="${LEGACY_DATA_DIR}/${credential_name}"
-        target_path="${DATA_DIR}/${credential_name}"
-        if [[ ! -e "${source_path}" && ! -L "${source_path}" ]]; then
-            continue
-        fi
-        migration_detected="true"
-        if [[ -e "${target_path}" || -L "${target_path}" ]]; then
-            info "保留现有 Agent 凭证，未覆盖：${target_path}"
-            continue
-        fi
-        mkdir -p "${DATA_DIR}"
-        cp -a "${source_path}" "${target_path}"
-        info "已迁移旧节点凭证：${source_path} -> ${target_path}"
-    done
 }
 
 capture_command_entries() {
@@ -386,7 +308,7 @@ restore_command_entries() {
             cp -a "${command_backup_dir}/${backup_name}" "${command_path}"
         fi
     done <"${command_backup_manifest}"
-    warn "已恢复安装前的命令入口和兼容别名"
+    warn "已恢复安装前的命令入口"
 }
 
 rollback_install_state() {
@@ -398,141 +320,7 @@ rollback_install_state() {
     warn "安装未完成，正在恢复安装前状态"
     restore_existing_binary || true
     restore_command_entries || true
-    if [[ "${legacy_service_captured}" == "true" ]]; then
-        restore_legacy_service || true
-    else
-        restart_service || true
-    fi
-}
-
-capture_legacy_service() {
-    mkdir -p "${MIGRATION_DIR}"
-
-    if [[ "${release}" == "alpine" ]]; then
-        if [[ ! -e "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}" ]]; then
-            return
-        fi
-        if [[ "$(readlink -f "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}" 2>/dev/null || true)" == "${OPENRC_INIT_DIR}/${SERVICE_NAME}" ]]; then
-            return
-        fi
-
-        migration_detected="true"
-        legacy_service_backup="${MIGRATION_DIR}/${LEGACY_SERVICE_NAME}.openrc.$(date -u +%Y%m%dT%H%M%SZ).bak"
-        cp -a "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}" "${legacy_service_backup}"
-        legacy_service_captured="true"
-        if rc-service "${LEGACY_SERVICE_NAME}" status >/dev/null 2>&1; then
-            legacy_service_was_active="true"
-        fi
-        if rc-update show 2>/dev/null | grep -Eq "^${LEGACY_SERVICE_NAME}[[:space:]]"; then
-            legacy_service_was_enabled="true"
-        fi
-        rc-service "${LEGACY_SERVICE_NAME}" stop >/dev/null 2>&1 || true
-        rc-update del "${LEGACY_SERVICE_NAME}" default >/dev/null 2>&1 || true
-        return
-    fi
-
-    local fragment_path resolved_fragment
-    fragment_path="$(systemctl show -p FragmentPath --value "${LEGACY_SERVICE_NAME}.service" 2>/dev/null || true)"
-    if [[ -z "${fragment_path}" ]]; then
-        for candidate in \
-            "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service" \
-            "/usr/lib/systemd/system/${LEGACY_SERVICE_NAME}.service" \
-            "/lib/systemd/system/${LEGACY_SERVICE_NAME}.service"; do
-            if [[ -e "${candidate}" || -L "${candidate}" ]]; then
-                fragment_path="${candidate}"
-                break
-            fi
-        done
-    fi
-    resolved_fragment="$(readlink -f "${fragment_path}" 2>/dev/null || true)"
-    if [[ -z "${fragment_path}" || "${resolved_fragment}" == "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service" ]]; then
-        return
-    fi
-
-    migration_detected="true"
-    legacy_service_backup="${MIGRATION_DIR}/${LEGACY_SERVICE_NAME}.service.$(date -u +%Y%m%dT%H%M%SZ).bak"
-    if [[ -f "${resolved_fragment}" ]]; then
-        cp -a "${resolved_fragment}" "${legacy_service_backup}"
-        legacy_service_captured="true"
-    fi
-    if systemctl is-active --quiet "${LEGACY_SERVICE_NAME}.service"; then
-        legacy_service_was_active="true"
-    fi
-    if systemctl is-enabled --quiet "${LEGACY_SERVICE_NAME}.service"; then
-        legacy_service_was_enabled="true"
-    fi
-    systemctl stop "${LEGACY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    systemctl disable "${LEGACY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-}
-
-restore_legacy_service() {
-    if [[ "${legacy_service_captured}" != "true" || ! -f "${legacy_service_backup}" ]]; then
-        return 1
-    fi
-
-    warn "新服务启动失败，恢复旧 ${LEGACY_SERVICE_NAME} 服务定义和状态"
-    if [[ "${release}" == "alpine" ]]; then
-        rc-service "${SERVICE_NAME}" stop >/dev/null 2>&1 || true
-        rc-update del "${SERVICE_NAME}" default >/dev/null 2>&1 || true
-        rm -f "${OPENRC_INIT_DIR}/${SERVICE_NAME}" "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}"
-        install -m 0755 "${legacy_service_backup}" "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}"
-        if [[ "${legacy_service_was_enabled}" == "true" ]]; then
-            rc-update add "${LEGACY_SERVICE_NAME}" default >/dev/null 2>&1 || true
-        else
-            rc-update del "${LEGACY_SERVICE_NAME}" default >/dev/null 2>&1 || true
-        fi
-        if [[ "${legacy_service_was_active}" == "true" ]]; then
-            rc-service "${LEGACY_SERVICE_NAME}" start
-        else
-            rc-service "${LEGACY_SERVICE_NAME}" stop >/dev/null 2>&1 || true
-        fi
-        return
-    fi
-
-    systemctl stop "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    systemctl disable "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    rm -f "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service" "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service"
-    install -m 0644 "${legacy_service_backup}" "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service"
-    systemctl daemon-reload
-    if [[ "${legacy_service_was_enabled}" == "true" ]]; then
-        systemctl enable "${LEGACY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    else
-        systemctl disable "${LEGACY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    fi
-    if [[ "${legacy_service_was_active}" == "true" ]]; then
-        systemctl start "${LEGACY_SERVICE_NAME}.service"
-    else
-        systemctl stop "${LEGACY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    fi
-}
-
-install_compat_link() {
-    local target_path="$1"
-    local link_path="$2"
-    local resolved_target=""
-    local backup_name=""
-
-    if [[ -L "${link_path}" ]]; then
-        resolved_target="$(readlink -f "${link_path}" 2>/dev/null || true)"
-        if [[ "${resolved_target}" == "$(readlink -f "${target_path}" 2>/dev/null || printf '%s' "${target_path}")" ]]; then
-            return
-        fi
-    fi
-
-    if [[ -d "${link_path}" && ! -L "${link_path}" ]]; then
-        error "兼容命令路径是目录，无法迁移：${link_path}"
-        exit 1
-    fi
-    if [[ -e "${link_path}" || -L "${link_path}" ]]; then
-        mkdir -p "${MIGRATION_DIR}/commands"
-        backup_name="${link_path#/}"
-        backup_name="${backup_name//\//_}.$(date -u +%Y%m%dT%H%M%SZ).bak"
-        cp -a "${link_path}" "${MIGRATION_DIR}/commands/${backup_name}"
-        info "已备份旧命令入口：${link_path}"
-    fi
-
-    rm -f "${link_path}"
-    ln -s "${target_path}" "${link_path}"
+    restart_service || true
 }
 
 install_files() {
@@ -544,12 +332,8 @@ install_files() {
     unzip -oq "${zip_path}" -d "${extract_dir}"
 
     local extracted_binary="${extract_dir}/anix-agent"
-    if [[ ! -f "${extracted_binary}" && -f "${extract_dir}/V2bX" ]]; then
-        extracted_binary="${extract_dir}/V2bX"
-        warn "压缩包使用旧二进制名 V2bX，将按新路径安装"
-    fi
     if [[ ! -f "${extracted_binary}" ]]; then
-        error "压缩包中未找到 anix-agent 或 V2bX 可执行文件"
+        error "压缩包中未找到 anix-agent 可执行文件"
         exit 1
     fi
 
@@ -662,8 +446,6 @@ depend() {
 EOF
         chmod +x "${OPENRC_INIT_DIR}/${SERVICE_NAME}"
         rc-update add ${SERVICE_NAME} default >/dev/null 2>&1 || true
-        rm -f "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}"
-        ln -s "${OPENRC_INIT_DIR}/${SERVICE_NAME}" "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}"
     else
         mkdir -p "${SYSTEMD_UNIT_DIR}"
         cat >"${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service" <<EOF
@@ -688,8 +470,6 @@ RuntimeDirectoryMode=0750
 [Install]
 WantedBy=multi-user.target
 EOF
-        rm -f "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service"
-        ln -s "${SERVICE_NAME}.service" "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service"
         systemctl daemon-reload
         systemctl enable ${SERVICE_NAME} >/dev/null 2>&1 || true
     fi
@@ -712,11 +492,7 @@ install_manage_script() {
     info "安装管理脚本 /usr/bin/${MANAGE_CMD_NAME} ..."
     install -m 0755 "${manager_path}" "/usr/bin/${MANAGE_CMD_NAME}"
 
-    install_compat_link "/usr/bin/${MANAGE_CMD_NAME}" "/usr/local/bin/${MANAGE_CMD_NAME}"
-    install_compat_link "/usr/bin/${MANAGE_CMD_NAME}" "/usr/bin/${LEGACY_MANAGE_CMD_NAME}"
-    install_compat_link "/usr/bin/${MANAGE_CMD_NAME}" "/usr/local/bin/${LEGACY_MANAGE_CMD_NAME}"
-    install_compat_link "/usr/bin/${MANAGE_CMD_NAME}" "/usr/bin/${LEGACY_SERVICE_NAME}"
-    install_compat_link "/usr/bin/${MANAGE_CMD_NAME}" "/usr/local/bin/${LEGACY_SERVICE_NAME}"
+    ln -sfn "/usr/bin/${MANAGE_CMD_NAME}" "/usr/local/bin/${MANAGE_CMD_NAME}"
 }
 
 restart_service() {
@@ -744,7 +520,7 @@ Usage:
 
 新节点请使用 AnixOps Control 节点页面的一键安装命令（Control 的 /install.sh：
 anixops-agent 用户、CAP_NET_ADMIN/CAP_NET_BIND_SERVICE、systemd 沙箱）。
-本脚本保留给已有的 root 安装（含 V2bX 迁移）升级使用；遇到 Control 安装器
+本脚本保留给已有的 root 安装升级使用；遇到 Control 安装器
 安装的节点会拒绝执行。
 
 安装器只下载 GitHub Release 资产，不会克隆仓库或在节点机执行本地构建。
@@ -758,10 +534,6 @@ ${INSTALL_DIR}/backups/ 以便服务启动失败时自动恢复。
   插件目录: ${PLUGIN_ROOT}
   插件 Socket: ${PLUGIN_SOCKET_DIR}
   服务名称: ${SERVICE_NAME}.service
-
-检测到 ${LEGACY_CONFIG_DIR}、${LEGACY_INSTALL_DIR} 或 ${LEGACY_SERVICE_NAME}.service
-时会自动迁移。旧目录不会删除，${LEGACY_SERVICE_NAME} 和
-${LEGACY_MANAGE_CMD_NAME} 命令继续作为兼容别名。
 
 环境变量（可选）:
   ANIXOPS_FORWARD=1  准备转发节点：转发状态目录、
@@ -792,12 +564,6 @@ main() {
         exit 1
     }
 
-    copy_legacy_config
-    copy_legacy_credentials
-    if [[ -d "${LEGACY_INSTALL_DIR}" ]]; then
-        migration_detected="true"
-    fi
-
     local first_install=false
     if [[ ! -f "${CONFIG_DIR}/config.json" ]]; then
         first_install=true
@@ -826,7 +592,6 @@ main() {
 
     capture_command_entries
     rollback_armed="true"
-    capture_legacy_service
     backup_existing_binary
     install_files "${zip_path}" "${version}"
     migrate_layout
@@ -836,10 +601,6 @@ main() {
     [[ "${release}" == "alpine" ]] || retire_relay
     setup_forward
     install_service
-
-    if [[ "${migration_detected}" == "true" ]]; then
-        info "已完成旧版安装迁移；${LEGACY_CONFIG_DIR} 和 ${LEGACY_INSTALL_DIR} 均未删除"
-    fi
 
     if [[ "${first_install}" == "true" ]]; then
         warn "检测到首次安装，已写入默认配置：${CONFIG_DIR}/config.json"

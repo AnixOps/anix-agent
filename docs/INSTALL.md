@@ -340,7 +340,7 @@ check the packages but do not sign).
 ## Root Install With scripts/install.sh
 
 `scripts/install.sh` keeps the earlier root layout for existing root installs
-(including V2bX migrations) and their upgrades. It refuses a node that
+and their upgrades. It refuses a node that
 Control's installer set up (`User=anixops-agent` in `anix-agent.service`):
 upgrade such a node by running its install command from Control again.
 
@@ -431,10 +431,10 @@ the tables here.
 
 | Removed by `uninstall` | Installer |
 |---|---|
-| `anixops-agent-updater.path`, `anixops-agent-updater.service`, `anix-agent.service`, `anixops-gost.service`, `anixops-relay.service` (disabled and stopped in that order), and the `V2bX.service` link to `anix-agent.service` | both |
+| `anixops-agent-updater.path`, `anixops-agent-updater.service`, `anix-agent.service`, `anixops-gost.service`, `anixops-relay.service` (disabled and stopped in that order) | both |
 | `/etc/polkit-1/rules.d/50-anixops-agent.rules` | Control |
 | `/usr/lib/anixops-agent` (the Agent, `gost`, `anixops-relay`, `anix-agent.prev`, `anix-agent.prev.json`) and the `/usr/local/bin/anix-agent` link | Control (`gost` and `anixops-relay` also: root) |
-| `/usr/local/anixops-agent` (binary, backups; `data/` only with `--purge`), `/usr/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links | root |
+| `/usr/local/anixops-agent` (binary, backups; `data/` only with `--purge`), `/usr/bin/anix-agent` | root |
 
 Without `--purge` the configuration and the node's identity and state stay,
 with gost's directory and the sysctl drop-in, so that installing again finds
@@ -464,21 +464,21 @@ On a root install `sudo anix-agent uninstall [--purge]` runs
 first), accepts only `--purge` (any other argument is ignored with a warning
 and the keep-everything behaviour applies), prints what it removed and what it
 kept, goes on past a path it cannot remove and exits non-zero in that case.
-Like the binary's command above, it keeps `data/` (the credentials, a migrated
-V2bX one included) without `--purge`.
+Like the binary's command above, it keeps `data/` (the credentials) without
+`--purge`.
 
 | Removed in both modes |
 |---|
-| `anix-agent.service` (stopped and disabled) and the `V2bX.service` link (a V2bX unit backed up by the installer is put back, not started) |
+| `anix-agent.service` (stopped and disabled) |
 | `anixops-gost.service`, when the node was installed with `ANIXOPS_FORWARD=1` (stopped and disabled after the Agent, so the Agent cannot start it again) |
 | `anixops-relay.service`, when the node was installed with `ANIXOPS_RELAY=1` (stopped and disabled after gost) |
 | `/usr/local/anixops-agent` (binary, `.release-version`, `backups/`; `data/` stays unless `--purge`) |
-| `/usr/bin/anix-agent` (the manager script itself), `/usr/local/bin/anix-agent` and the `V2bX` / `v2bx-anixops` links that point to it |
+| `/usr/bin/anix-agent` (the manager script itself) and the `/usr/local/bin/anix-agent` link to it |
 | `/usr/lib/anixops-agent/gost` (the release's pinned gost) and `anixops-relay` (the release's relay), and that directory when it is empty |
 
 | Kept, removed by `--purge` |
 |---|
-| `/usr/local/anixops-agent/data` (the node's credentials, `credential.json` and `credential.json.enc`, including the ones migrated from V2bX) |
+| `/usr/local/anixops-agent/data` (the node's credentials, `credential.json` and `credential.json.enc`) |
 | `/etc/anixops/agent` (and `/etc/anixops`, when empty) |
 | `/var/lib/anixops-agent` (identity, stream state, forwarding state, plugins) |
 | `/var/lib/anixops-gost` (gost's state directory) |
@@ -486,32 +486,8 @@ V2bX one included) without `--purge`.
 | `/etc/sysctl.d/90-anixops-forward.conf` (forwarding stays on until the next boot) |
 
 Never removed: the users `anixops-gost` and `anixops-relay`, the nftables table `inet anixops_fwd`
-and the tc qdiscs the forward drivers create, and `/usr/local/V2bX` and
-`/etc/V2bX`. The root installer writes no polkit rule (only Control's
+and the tc qdiscs the forward drivers create. The root installer writes no polkit rule (only Control's
 installer does), so the manager script touches none.
-
-## Legacy V2bX_AnixOps Upgrade
-
-The installer automatically detects `/etc/V2bX`, `/usr/local/V2bX`, and
-`V2bX.service`. It copies only files missing from the new configuration
-directory, backs up the old binary and service definition, then switches to
-`anix-agent.service`.
-
-The old directories are not deleted. These compatibility entries remain:
-
-| Legacy entry | Compatibility target |
-|---|---|
-| `V2bX` | `anix-agent` manager/CLI |
-| `v2bx-anixops` | `anix-agent` manager/CLI |
-| `V2bX.service` | `anix-agent.service` |
-| Legacy `V2bX-*` release ZIP | Installer fallback when a migration-period tag has no new-named asset |
-
-New releases publish only `anix-agent-*`. The new installer can consume an
-older `V2bX-*` asset and its `V2bX` executable name as a verified fallback.
-The v4 release line does not promise old asset filenames; its new archive only
-keeps a `V2bX -> anix-agent` executable symlink for command compatibility. See
-[ANIX_AGENT_MIGRATION.md](ANIX_AGENT_MIGRATION.md) before upgrading a
-production node.
 
 ## Panel Pairing
 

@@ -1,15 +1,12 @@
 # AnixOps Agent Runtime Migration And Rollback
 
-For the automatic V2bX_AnixOps brand, service, and filesystem migration, read
-[ANIX_AGENT_MIGRATION.md](ANIX_AGENT_MIGRATION.md) first. This document covers
-configuration and runtime changes that still require operator validation.
+This document covers configuration and runtime changes that require operator
+validation.
 
 ## Supported Paths
 
 | Source | Support level | Migration method |
 |---|---|---|
-| Legacy V2bX_AnixOps release | Automatic base migration | Run the release installer, then verify configuration and traffic |
-| Upstream V2bX configuration | Operator-guided | Map fields and validate with a canary node |
 | WireGuard node without relay runtime | Operator-guided | Add Linux/GOST prerequisites and test one entry/exit pair |
 | Unrelated node agent | Not automatic | Build a field mapping and register a new node credential |
 
@@ -24,8 +21,7 @@ configuration and runtime changes that still require operator validation.
 5. Prepare a maintenance window and a tested rollback command.
 
 ```bash
-sudo systemctl status anix-agent.service --no-pager || \
-  sudo systemctl status V2bX.service --no-pager
+sudo systemctl status anix-agent.service --no-pager
 sudo install -d -m 0700 /root/anix-agent-runtime-backup
 sudo tar -C /etc/anixops -czf \
   /root/anix-agent-runtime-backup/agent-config.tgz agent

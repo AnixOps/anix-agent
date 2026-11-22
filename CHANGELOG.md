@@ -13,6 +13,16 @@
   nodes in different regions to tell a node that is down from one that is
   unreachable from some regions only.
 
+### Removed
+
+- The V2bX install migration: `scripts/install.sh` no longer reads
+  `/etc/V2bX` or `/usr/local/V2bX`, takes over or restores `V2bX.service`,
+  falls back to `V2bX-*` release assets, or links the `V2bX` /
+  `v2bx-anixops` commands; the release zip no longer carries the `V2bX`
+  link, `scripts/V2bX.sh` and the migration guide are gone, and neither
+  uninstall (manager script or `anix-agent uninstall`) handles those names.
+  Leftover V2bX files on a host are left alone.
+
 ## 5.0.8 - 2026-11-18
 
 Shipped with AnixOps Control 5.0.10 and anx-node 0.1.0-alpha.24.

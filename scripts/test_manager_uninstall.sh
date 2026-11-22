@@ -25,8 +25,7 @@ fail() {
 
 # The variables of the manager script that hold an install path.
 path_variables=(
-    INSTALL_DIR BIN_PATH CONFIG_DIR MIGRATION_DIR
-    LEGACY_INSTALL_DIR LEGACY_CONFIG_DIR
+    INSTALL_DIR BIN_PATH CONFIG_DIR
     SYSTEMD_UNIT_DIR OPENRC_INIT_DIR SYSCTL_DROPIN USR_BIN_DIR USR_LOCAL_BIN_DIR
     STATE_ROOT GOST_DIR GOST_BINARY RELAY_DIR RELAY_BINARY
 )
@@ -38,9 +37,6 @@ use_root() {
     INSTALL_DIR="${root}/usr/local/anixops-agent"
     BIN_PATH="${INSTALL_DIR}/anix-agent"
     CONFIG_DIR="${root}/etc/anixops/agent"
-    MIGRATION_DIR="${CONFIG_DIR}/migration"
-    LEGACY_INSTALL_DIR="${root}/usr/local/V2bX"
-    LEGACY_CONFIG_DIR="${root}/etc/V2bX"
     SYSTEMD_UNIT_DIR="${root}/etc/systemd/system"
     OPENRC_INIT_DIR="${root}/etc/init.d"
     SYSCTL_DROPIN="${root}/etc/sysctl.d/90-anixops-forward.conf"
@@ -80,7 +76,7 @@ assert_confined() {
         esac
     done < <(grep -Eo '^[A-Z_]+_(DIR|ROOT|PATH|BINARY|DROPIN)=' "${manager}" | tr -d '=' | sort -u)
     # And the code of uninstall names no absolute host path of its own.
-    if sed -n '/^restore_legacy_service_definition() {/,/^confirm() {/p' "${manager}" |
+    if sed -n '/^account_exists() {/,/^confirm() {/p' "${manager}" |
         grep -v '^[[:space:]]*#' |
         grep -Eq '(^|[^A-Za-z0-9_$}])/(etc|usr|var|opt|run|root|home|lib|bin|sbin)/'; then
         fail "uninstall in the manager script uses a literal host path; use a path variable"
@@ -148,16 +144,15 @@ no_violations() {
 }
 
 # populate lays out what scripts/install.sh writes for a root install, with
-# ANIXOPS_FORWARD=1 (gost's unit, sysctl drop-in and directories), and a
-# V2bX migration; $1 is "plain" to leave the forwarding parts out.
+# ANIXOPS_FORWARD=1 (gost's unit, sysctl drop-in and directories); $1 is
+# "plain" to leave the forwarding parts out.
 populate() {
     local mode="${1:-forward}"
     put "${SYSTEMD_UNIT_DIR}/anix-agent.service" "[Service]"
-    link "${SYSTEMD_UNIT_DIR}/V2bX.service" "anix-agent.service"
     for f in anix-agent .release-version backups/anix-agent.20260101T000000Z data/credential.json.enc data/credential.json; do
         put "${INSTALL_DIR}/${f}"
     done
-    for f in config.json geoip.dat migration/commands/note; do
+    for f in config.json geoip.dat certs/node.pem; do
         put "${CONFIG_DIR}/${f}"
     done
     put "${STATE_ROOT}/pki/proxy-1/identity.pem"
@@ -165,14 +160,7 @@ populate() {
     put "${GOST_BINARY}"
     put "${USR_BIN_DIR}/anix-agent" "$(cat "${manager}")"
     command chmod 0755 "${USR_BIN_DIR}/anix-agent"
-    for l in "${USR_LOCAL_BIN_DIR}/anix-agent" "${USR_BIN_DIR}/v2bx-anixops" "${USR_LOCAL_BIN_DIR}/v2bx-anixops" \
-        "${USR_BIN_DIR}/V2bX" "${USR_LOCAL_BIN_DIR}/V2bX"; do
-        link "${l}" "${USR_BIN_DIR}/anix-agent"
-    done
-    # Left by the V2bX era: never removed.
-    put "${LEGACY_INSTALL_DIR}/V2bX"
-    put "${LEGACY_INSTALL_DIR}/data/credential.json"
-    put "${LEGACY_CONFIG_DIR}/config.json"
+    link "${USR_LOCAL_BIN_DIR}/anix-agent" "${USR_BIN_DIR}/anix-agent"
     if [[ "${mode}" == "forward" ]]; then
         put "${SYSTEMD_UNIT_DIR}/anixops-gost.service" "[Service]"
         put "${SYSCTL_DROPIN}" "net.ipv4.ip_forward = 1"
@@ -215,19 +203,13 @@ assert_bystanders() {
         present "${path}"
     done < <(bystander_paths)
 }
-assert_legacy_dirs() {
-    present "${LEGACY_INSTALL_DIR}/V2bX" "${LEGACY_INSTALL_DIR}/data/credential.json" "${LEGACY_CONFIG_DIR}/config.json"
-}
-
 # The part of uninstall every case shares: the agent, the program directory,
-# the commands and the gost binary go; the V2bX directories stay.
+# the commands and the gost binary go.
 assert_program_removed() {
-    absent "${SYSTEMD_UNIT_DIR}/anix-agent.service" "${SYSTEMD_UNIT_DIR}/V2bX.service" \
+    absent "${SYSTEMD_UNIT_DIR}/anix-agent.service" \
         "${INSTALL_DIR}/anix-agent" "${INSTALL_DIR}/.release-version" "${INSTALL_DIR}/backups" \
         "${USR_BIN_DIR}/anix-agent" "${USR_LOCAL_BIN_DIR}/anix-agent" \
-        "${USR_BIN_DIR}/v2bx-anixops" "${USR_LOCAL_BIN_DIR}/v2bx-anixops" "${USR_BIN_DIR}/V2bX" "${USR_LOCAL_BIN_DIR}/V2bX" \
         "${GOST_BINARY}" "${SYSTEMD_UNIT_DIR}/anixops-gost.service"
-    assert_legacy_dirs
 }
 
 systemctl_calls() { cat "${systemctl_log}"; }
@@ -245,10 +227,10 @@ systemctl_calls() { cat "${systemctl_log}"; }
 
     assert_program_removed
     # Kept: the credentials of data/ (the bug was removing them), the
-    # configuration with its migration backups, the identity and state, gost's
+    # configuration, the identity and state, gost's
     # state directory and the sysctl drop-in.
     present "${INSTALL_DIR}/data/credential.json.enc" "${INSTALL_DIR}/data/credential.json"
-    present "${CONFIG_DIR}/config.json" "${CONFIG_DIR}/geoip.dat" "${CONFIG_DIR}/migration/commands/note"
+    present "${CONFIG_DIR}/config.json" "${CONFIG_DIR}/geoip.dat" "${CONFIG_DIR}/certs/node.pem"
     present "${STATE_ROOT}/pki/proxy-1/identity.pem" "${STATE_ROOT}/stream/state.json" "${STATE_ROOT}/forward/state.json"
     present "${GOST_DIR}/gost.json" "${GOST_DIR}/tls/link.pem" "${SYSCTL_DROPIN}"
     [[ "$(cat "${INSTALL_DIR}/data/credential.json.enc")" == "credential.json.enc" ]] || fail "credential changed"
@@ -258,12 +240,12 @@ systemctl_calls() { cat "${systemctl_log}"; }
     # (not empty) stays.
     [[ "$(find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 | wc -l)" == "1" ]] || fail "INSTALL_DIR holds more than data/"
     # The Agent stops first, then gost; the units are gone before the reload.
-    expected=$'stop anix-agent\ndisable anix-agent\ndisable --now anixops-gost.service\ndaemon-reload\ndaemon-reload\nreset-failed anix-agent.service anixops-gost.service'
+    expected=$'stop anix-agent\ndisable anix-agent\ndisable --now anixops-gost.service\ndaemon-reload\nreset-failed anix-agent.service anixops-gost.service'
     [[ "$(systemctl_calls)" == "${expected}" ]] || fail "systemctl calls: $(systemctl_calls)"
     # The report lists what was removed and what stays.
-    for line in "已移除:" "${SYSTEMD_UNIT_DIR}/V2bX.service" "${SYSTEMD_UNIT_DIR}/anixops-gost.service" "${GOST_BINARY}" "已保留:" \
+    for line in "已移除:" "${SYSTEMD_UNIT_DIR}/anix-agent.service" "${SYSTEMD_UNIT_DIR}/anixops-gost.service" "${GOST_BINARY}" "已保留:" \
         "${INSTALL_DIR}/data：" "${CONFIG_DIR}：" "${STATE_ROOT}：" "${GOST_DIR}：" "${SYSCTL_DROPIN}：" \
-        "用户 anixops-gost" "inet anixops_fwd" "${LEGACY_INSTALL_DIR}：" "${LEGACY_CONFIG_DIR}：" "保留配置、数据和状态"; do
+        "用户 anixops-gost" "inet anixops_fwd" "保留配置、数据和状态"; do
         grep -Fq -- "${line}" <<<"${out}" || fail "report lacks: ${line}"$'\n'"${out}"
     done
     ! grep -Fq "polkit" <<<"${out}" || fail "the manager has no polkit rule to report"
@@ -301,7 +283,7 @@ systemctl_calls() { cat "${systemctl_log}"; }
     populate forward
     uninstall_agent --purge >/dev/null 2>&1
     absent "${case_root}/etc/anixops" "${case_root}/usr/lib/anixops-agent" "${INSTALL_DIR}" "${STATE_ROOT}" "${GOST_DIR}"
-    present "${case_root}/etc" "${case_root}/usr/local" "${LEGACY_CONFIG_DIR}/config.json"
+    present "${case_root}/etc" "${case_root}/usr/local"
     no_violations
 )
 
@@ -355,56 +337,23 @@ systemctl_calls() { cat "${systemctl_log}"; }
     present "${INSTALL_DIR}/data/credential.json.enc"
     uninstall_agent --purge >/dev/null 2>&1
     absent "${INSTALL_DIR}" "${CONFIG_DIR}" "${STATE_ROOT}" "${GOST_DIR}" "${SYSCTL_DROPIN}"
-    assert_legacy_dirs
     no_violations
 )
 
-# G: entries that carry the installer's names but are not its own stay: a
-# V2bX / v2bx-anixops command that is not a link to the manager script.
+# G: OpenRC (Alpine): no systemd unit is touched, the init script is removed,
+# data/ stays.
 (
     # shellcheck source=scripts/anix-agent.sh
     source "${manager}"
     use_root "${test_root}/g"
-    populate forward
-    command rm -f "${USR_LOCAL_BIN_DIR}/V2bX" "${USR_BIN_DIR}/v2bx-anixops"
-    link "${USR_LOCAL_BIN_DIR}/V2bX" "${case_root}/opt/other/V2bX"
-    put "${USR_BIN_DIR}/v2bx-anixops" "the old binary"
-    uninstall_agent >/dev/null 2>&1
-    present "${USR_BIN_DIR}/v2bx-anixops" "${USR_LOCAL_BIN_DIR}/V2bX"
-    [[ "$(cat "${USR_BIN_DIR}/v2bx-anixops")" == "the old binary" ]] || fail "a foreign v2bx-anixops was changed"
-    absent "${USR_BIN_DIR}/anix-agent" "${USR_LOCAL_BIN_DIR}/anix-agent" "${USR_LOCAL_BIN_DIR}/v2bx-anixops" "${USR_BIN_DIR}/V2bX"
-    no_violations
-)
-
-# H: the V2bX service definition backed up by the installer is restored, as before.
-(
-    # shellcheck source=scripts/anix-agent.sh
-    source "${manager}"
-    use_root "${test_root}/h"
-    populate plain
-    put "${MIGRATION_DIR}/V2bX.service.20260101T000000Z.bak" "legacy-service-definition"
-    uninstall_agent >/dev/null 2>&1
-    absent "${SYSTEMD_UNIT_DIR}/anix-agent.service"
-    [[ -f "${SYSTEMD_UNIT_DIR}/V2bX.service" && ! -L "${SYSTEMD_UNIT_DIR}/V2bX.service" ]] || fail "V2bX.service not restored"
-    [[ "$(cat "${SYSTEMD_UNIT_DIR}/V2bX.service")" == "legacy-service-definition" ]] || fail "V2bX.service has other content"
-    no_violations
-)
-
-# I: OpenRC (Alpine): no systemd unit is touched, the init script and the V2bX
-# link are removed, data/ stays.
-(
-    # shellcheck source=scripts/anix-agent.sh
-    source "${manager}"
-    use_root "${test_root}/i"
     alpine=true
     gost_account=false
     populate plain
-    command rm -f "${SYSTEMD_UNIT_DIR}/anix-agent.service" "${SYSTEMD_UNIT_DIR}/V2bX.service"
+    command rm -f "${SYSTEMD_UNIT_DIR}/anix-agent.service"
     put "${OPENRC_INIT_DIR}/anix-agent" "#!/sbin/openrc-run"
-    link "${OPENRC_INIT_DIR}/V2bX" "${OPENRC_INIT_DIR}/anix-agent"
     : >"${rc_log}"
     uninstall_agent >/dev/null 2>&1
-    absent "${OPENRC_INIT_DIR}/anix-agent" "${OPENRC_INIT_DIR}/V2bX" "${INSTALL_DIR}/anix-agent" "${GOST_BINARY}"
+    absent "${OPENRC_INIT_DIR}/anix-agent" "${INSTALL_DIR}/anix-agent" "${GOST_BINARY}"
     present "${INSTALL_DIR}/data/credential.json.enc" "${CONFIG_DIR}/config.json"
     [[ ! -s "${systemctl_log}" ]] || fail "systemctl ran on OpenRC: $(cat "${systemctl_log}")"
     grep -Fq "rc-service anix-agent stop" "${rc_log}" || fail "the OpenRC service was not stopped"
@@ -412,12 +361,12 @@ systemctl_calls() { cat "${systemctl_log}"; }
     no_violations
 )
 
-# J: a removal that fails does not stop the others, and the command reports
+# H: a removal that fails does not stop the others, and the command reports
 # failure (non-zero) with the path.
 (
     # shellcheck source=scripts/anix-agent.sh
     source "${manager}"
-    use_root "${test_root}/j"
+    use_root "${test_root}/h"
     populate forward
     stuck="${USR_BIN_DIR}/anix-agent"
     rm() {
@@ -436,13 +385,13 @@ systemctl_calls() { cat "${systemctl_log}"; }
     no_violations
 )
 
-# K: the experimental anixops relay (ANIXOPS_RELAY=1): its unit is stopped after
+# I: the experimental anixops relay (ANIXOPS_RELAY=1): its unit is stopped after
 # gost's and removed with its binary, its state directory stays unless --purge,
 # and its account is reported, never removed.
 (
     # shellcheck source=scripts/anix-agent.sh
     source "${manager}"
-    use_root "${test_root}/k"
+    use_root "${test_root}/i"
     relay_account=true
     populate forward
     populate_relay
@@ -452,7 +401,7 @@ systemctl_calls() { cat "${systemctl_log}"; }
     absent "${SYSTEMD_UNIT_DIR}/anixops-relay.service" "${RELAY_BINARY}"
     present "${RELAY_DIR}/relay.json" "${RELAY_DIR}/tls/link.pem" "${GOST_DIR}/gost.json"
     assert_bystanders
-    expected=$'stop anix-agent\ndisable anix-agent\ndisable --now anixops-gost.service\ndisable --now anixops-relay.service\ndaemon-reload\ndaemon-reload\nreset-failed anix-agent.service anixops-gost.service anixops-relay.service'
+    expected=$'stop anix-agent\ndisable anix-agent\ndisable --now anixops-gost.service\ndisable --now anixops-relay.service\ndaemon-reload\nreset-failed anix-agent.service anixops-gost.service anixops-relay.service'
     [[ "$(systemctl_calls)" == "${expected}" ]] || fail "systemctl calls: $(systemctl_calls)"
     for line in "${SYSTEMD_UNIT_DIR}/anixops-relay.service" "${RELAY_BINARY}" "${RELAY_DIR}：" "用户 anixops-relay"; do
         grep -Fq -- "${line}" <<<"${out}" || fail "report lacks: ${line}"$'\n'"${out}"

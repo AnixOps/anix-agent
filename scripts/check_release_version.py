@@ -29,7 +29,6 @@ def check_release_version(repo_root: Path, tag: str) -> str:
     require_pattern(repo_root / "api/panel/version.go", r'^var Version = "([^"]+)"', version, "panel")
     require_pattern(repo_root / "README.md", r'^`v([^`]+)` 提供 AnixOps 官方签名软件包', version, "README preview")
     require_pattern(repo_root / "docs/INSTALL.md", r'^export VERSION=v([^\s]+)', version, "install guide")
-    require_pattern(repo_root / "docs/ANIX_AGENT_MIGRATION.md", r'^export VERSION=v([^\s]+)', version, "migration guide")
     require_pattern(repo_root / "CHANGELOG.md", r'^## ([^\s]+) - \d{4}-\d{2}-\d{2}$', version, "changelog")
     return version
 
@@ -40,7 +39,6 @@ def write_fixture(root: Path, version: str) -> None:
         "api/panel/version.go": f'package panel\nvar Version = "{version}"\n',
         "README.md": f"`v{version}` 提供 AnixOps 官方签名软件包\n",
         "docs/INSTALL.md": f"export VERSION=v{version}\n",
-        "docs/ANIX_AGENT_MIGRATION.md": f"export VERSION=v{version}\n",
         "CHANGELOG.md": f"# Changelog\n\n## {version} - 2026-07-17\n",
     }
     for relative, content in files.items():

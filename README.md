@@ -7,7 +7,7 @@
 AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，只通过 mTLS 的
 `anix.agent.v1` 控制流连接 AnixOps Control；它执行节点配置同步、用户认证、
 流量统计、在线状态上报和证书管理。
-项目源自 V2bX，迁移期间继续保留必要的旧命令和发行资产兼容入口。
+最初派生自 V2bX，现已独立开发。
 
 - Agent 仓库: [AnixOps/anix-agent](https://github.com/AnixOps/anix-agent)
 - Control 仓库: [AnixOps/anix-control](https://github.com/AnixOps/anix-control)
@@ -130,36 +130,14 @@ anix-agent server -c /etc/anixops/agent/config.json
 安装器接受稳定版以及 `alpha`、`beta`、`rc` 预发布 tag，例如
 `v3.1.0-alpha.2`、`v3.1.0-beta.1` 和 `v3.1.0-rc.1`。
 
-## 从 V2bX_AnixOps 升级
+## Release 资产
 
-新安装器会自动检测以下旧版安装：
-
-- `/etc/V2bX`
-- `/usr/local/V2bX`
-- `V2bX.service` 或 `/etc/init.d/V2bX`
-- `V2bX`、`v2bx-anixops` 命令
-
-迁移时只把新目录中缺失的配置复制到 `/etc/anixops/agent`，不会删除或覆盖
-旧配置目录。旧二进制和旧服务定义会在切换前备份；新服务无法启动时，安装器
-会尝试恢复旧二进制和旧服务。迁移成功后，`V2bX`、`v2bx-anixops` 和
-`V2bX.service` 继续作为兼容别名。
-
-完整步骤与回滚说明见
-[AnixOps Agent 迁移指南](docs/ANIX_AGENT_MIGRATION.md)。
-
-## Release 资产兼容
-
-新 Release 的主资产名为：
+Release 资产名为：
 
 ```text
 anix-agent-linux-64.zip
 anix-agent-linux-arm64-v8a.zip
 ```
-
-新 Release 只发布 `anix-agent-*` 主资产。迁移期安装器在找不到新命名资产时，
-会自动回退到同一 tag 的 `V2bX-*` 资产，并接受包内旧 `V2bX` 二进制名，
-最终仍安装到新的程序和配置路径。v3 Release 不承诺继续发布 `V2bX-*`
-资产名；`anix-agent-*` 包内只保留 `V2bX -> anix-agent` 二进制兼容链接。
 
 ## 配置与运行
 
@@ -348,7 +326,6 @@ bash api/anxmgmt/gen.sh && git diff --exit-code -- api/anxmgmt
 ## 文档
 
 - [Release 安装指南](docs/INSTALL.md)
-- [AnixOps Agent 迁移指南](docs/ANIX_AGENT_MIGRATION.md)
 - [运行时与协议迁移](docs/MIGRATION.md)
 - [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)
 - [WireGuard 运行时测试](docs/WIREGUARD_RUNTIME_TESTS.md)

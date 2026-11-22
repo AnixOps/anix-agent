@@ -108,7 +108,7 @@ func TestApplyInstallsKeepsThePreviousAndRestartsOnlyTheAgent(t *testing.T) {
 	newAgent := fakeAgent("v4.2.0", false)
 	f.stage(t, "v4.2.0", releaseZip(t,
 		zipEntry{name: "LICENSE", data: []byte("license")},
-		zipEntry{name: "V2bX", data: []byte(BinaryName), symlink: true},
+		zipEntry{name: "agent-link", data: []byte(BinaryName), symlink: true},
 		zipEntry{name: BinaryName, data: newAgent},
 		zipEntry{name: "gost", data: []byte("a gost of an older release")},
 	))
