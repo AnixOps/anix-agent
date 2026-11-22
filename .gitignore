@@ -9,7 +9,6 @@ example/cert
 ./vscode
 output/*
 .idea/*
-newV2bX.sh
 V2bX_windows_amd64.exe
 V2bX
 V2bX.exe

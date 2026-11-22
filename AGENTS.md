@@ -35,7 +35,7 @@ anx-server 只作为独立进程，经 gRPC、HTTP 管理接口、配置文件�
 | `kernelfwd/` | 网络计划的内核转发跳：一张 nft 表（DNAT + masquerade + 计数器）与目标 TCP 探测 |
 | `networkroute/`、`realityprobe/`、`diagnostic/` | 路由健康、Reality 目标探测、诊断任务 |
 | `plugin/` | 插件 Supervisor 与机器监控插件 |
-| `upgrade/` | 自升级与旧安装（V2bX、gost、nftables）清理 |
+| `upgrade/` | 自升级与旧安装（gost、nftables）清理 |
 | `limiter/` | 用户 / 节点限速与设备数限制 |
 | `scripts/` | `install.sh`、管理脚本 `anix-agent.sh`、发布检查脚本 |
 
@@ -43,8 +43,6 @@ anx-server 只作为独立进程，经 gRPC、HTTP 管理接口、配置文件�
 
 - 服务名与管理命令：`anix-agent`；安装目录 `/usr/local/anixops-agent`；
   配置 `/etc/anixops/agent/config.json`；状态 `/var/lib/anixops-agent`。
-- 旧的 `V2bX` / `v2bx-anixops` 名称和 `/etc/V2bX` 路径只为迁移老节点保留
-  （`cmd/migrate_paths.go`、`upgrade/`、`scripts/install.sh`），5.0 GA 后再删除。
 - 配置示例见 `example/config.json`（与 Control 安装脚本一致）。
 
 ## 构建、测试与发布

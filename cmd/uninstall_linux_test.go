@@ -235,12 +235,11 @@ func TestUninstallPurgeKeepsAnEtcAnixopsThatHoldsOtherFiles(t *testing.T) {
 
 func TestUninstallRemovesTheRootLayout(t *testing.T) {
 	root, log := useUninstallRoot(t)
-	// scripts/install.sh: the unit, the V2bX.service link, the program
-	// directory, the manager script and the compatibility links; the
+	// scripts/install.sh: the unit, the program directory, the manager
+	// script and its /usr/local/bin link; the
 	// release's gost lands in /usr/lib/anixops-agent; ANIXOPS_FORWARD=1 adds
 	// gost's unit and the sysctl drop-in.
 	writeTree(t, root, "/etc/systemd/system/anix-agent.service", "[Service]\nUser=root\n")
-	linkTree(t, root, "/etc/systemd/system/V2bX.service", "anix-agent.service")
 	writeTree(t, root, "/etc/systemd/system/anixops-gost.service", "[Service]\n")
 	for _, name := range []string{"anix-agent", ".release-version", "backups/anix-agent.1", "data/credential.json"} {
 		writeTree(t, root, "/usr/local/anixops-agent/"+name, name)
@@ -249,9 +248,7 @@ func TestUninstallRemovesTheRootLayout(t *testing.T) {
 	require.NoError(t, err)
 	writeTree(t, root, "/usr/bin/anix-agent", string(manager))
 	require.NoError(t, os.Chmod(filepath.Join(root, "/usr/bin/anix-agent"), 0o755))
-	for _, link := range []string{"/usr/local/bin/anix-agent", "/usr/bin/v2bx-anixops", "/usr/local/bin/v2bx-anixops", "/usr/bin/V2bX", "/usr/local/bin/V2bX"} {
-		linkTree(t, root, link, "/usr/bin/anix-agent")
-	}
+	linkTree(t, root, "/usr/local/bin/anix-agent", "/usr/bin/anix-agent")
 	writeTree(t, root, "/usr/lib/anixops-agent/gost", "gost")
 	writeTree(t, root, "/etc/anixops/agent/config.json", "{}")
 	writeTree(t, root, "/var/lib/anixops-agent/credential.json.enc", "credential")
@@ -261,10 +258,10 @@ func TestUninstallRemovesTheRootLayout(t *testing.T) {
 	require.NoError(t, err, out)
 
 	requireAbsent(t, root,
-		"/etc/systemd/system/anix-agent.service", "/etc/systemd/system/V2bX.service", "/etc/systemd/system/anixops-gost.service",
+		"/etc/systemd/system/anix-agent.service", "/etc/systemd/system/anixops-gost.service",
 		"/usr/local/anixops-agent/anix-agent", "/usr/local/anixops-agent/.release-version", "/usr/local/anixops-agent/backups",
 		"/usr/bin/anix-agent", "/usr/lib/anixops-agent",
-		"/usr/local/bin/anix-agent", "/usr/bin/v2bx-anixops", "/usr/local/bin/v2bx-anixops", "/usr/bin/V2bX", "/usr/local/bin/V2bX")
+		"/usr/local/bin/anix-agent")
 	// data/ holds the root install's credentials: it stays without --purge.
 	requirePresent(t, root, "/etc/anixops/agent/config.json", "/var/lib/anixops-agent/credential.json.enc",
 		"/usr/local/anixops-agent/data/credential.json")
@@ -310,23 +307,15 @@ func TestUninstallLeavesWhatTheInstallersDidNotWrite(t *testing.T) {
 	// Commands that carry the Agent's names but are not the installers'.
 	linkTree(t, root, "/usr/local/bin/anix-agent", "/opt/other/anix-agent")
 	writeTree(t, root, "/usr/bin/anix-agent", "#!/bin/sh\necho some other program\n")
-	writeTree(t, root, "/usr/bin/V2bX", "#!/bin/sh\necho the old binary\n")
-	linkTree(t, root, "/usr/local/bin/V2bX", "/opt/other/V2bX")
-	linkTree(t, root, "/etc/systemd/system/V2bX.service", "/etc/systemd/system/other.service")
-	// The O1 link must point at the installed binary of this layout.
-	linkTree(t, root, "/usr/bin/v2bx-anixops", "/usr/lib/anixops-agent/anix-agent")
 	writeBystanders(t, root)
 
 	out, err := uninstallCommandRun(t, "y\n", false)
 	require.NoError(t, err, out)
 
-	requirePresent(t, root,
-		"/usr/local/bin/anix-agent", "/usr/bin/anix-agent", "/usr/bin/V2bX", "/usr/local/bin/V2bX",
-		"/etc/systemd/system/V2bX.service", "/usr/bin/v2bx-anixops")
+	requirePresent(t, root, "/usr/local/bin/anix-agent", "/usr/bin/anix-agent")
 	requirePresent(t, root, bystanders...)
 	require.Contains(t, out, "/usr/local/bin/anix-agent: a link to /opt/other/anix-agent, not the installer's")
 	require.Contains(t, out, "/usr/bin/anix-agent: not the AnixOps Agent's manager script")
-	require.Contains(t, out, "/usr/bin/V2bX: not a link the installer made")
 	require.Contains(t, out, "未发现已安装")
 }
 

@@ -35,13 +35,11 @@ import (
 // script of this repository. Nothing else on the host is touched.
 const (
 	systemdUnitDir = "/etc/systemd/system"
-	legacyUnitLink = "V2bX.service"
 
 	// agentBinaryLink is the command the O1 installer links to
 	// upgrade.DefaultLibDir/anix-agent.
 	agentBinaryLink = "/usr/local/bin/anix-agent"
-	// managerScript is the root installer's management script (and the
-	// target of its compatibility links).
+	// managerScript is the root installer's management script.
 	managerScript = "/usr/bin/anix-agent"
 	// rootInstallDir is the root installer's program directory.
 	rootInstallDir = "/usr/local/anixops-agent"
@@ -53,13 +51,6 @@ const (
 	gostAccount  = "anixops-gost"
 	relayAccount = "anixops-relay"
 )
-
-// legacyCommandLinks are the root installer's compatibility links to the
-// manager script (the V2bX era names).
-var legacyCommandLinks = []string{
-	"/usr/bin/v2bx-anixops", "/usr/local/bin/v2bx-anixops",
-	"/usr/bin/V2bX", "/usr/local/bin/V2bX",
-}
 
 // uninstallUnits are the units the installers write, in the order they are
 // stopped: the updater first, so that nothing replaces the Agent meanwhile,
@@ -143,8 +134,7 @@ func (u *uninstaller) uninstall() error {
 	if u.purge {
 		u.removeTree(rootInstallDir)
 	} else {
-		// data/ holds the root install's credentials (a migrated V2bX one
-		// included): it stays unless --purge, like the configuration.
+		// data/ holds the root install's credentials: it stays unless --purge, like the configuration.
 		u.removeTreeExcept(rootInstallDir, "data")
 	}
 
@@ -194,8 +184,7 @@ func (u *uninstaller) keep(what string, exists bool) {
 	}
 }
 
-// removeUnits disables, stops and removes the installers' units that exist,
-// and the V2bX.service link of the root layout.
+// removeUnits disables, stops and removes the installers' units that exist.
 func (u *uninstaller) removeUnits() {
 	for _, unit := range uninstallUnits {
 		logical := filepath.Join(systemdUnitDir, unit)
@@ -206,17 +195,13 @@ func (u *uninstaller) removeUnits() {
 		_ = u.ctl("disable", "--now", unit)
 		u.removeFile(logical)
 	}
-	u.removeLink(filepath.Join(systemdUnitDir, legacyUnitLink), filepath.Join(systemdUnitDir, upgrade.AgentUnit))
 }
 
 // removeCommands removes the commands the installers put on the path.
 func (u *uninstaller) removeCommands() {
 	// The O1 installer links agentBinaryLink to the installed binary; the
-	// root installer links it, and the V2bX era names, to the manager script.
+	// root installer links it to the manager script.
 	u.removeLink(agentBinaryLink, managerScript, filepath.Join(upgrade.DefaultLibDir, upgrade.BinaryName))
-	for _, link := range legacyCommandLinks {
-		u.removeLink(link, managerScript)
-	}
 	u.removeManagerScript()
 }
 
@@ -312,8 +297,7 @@ func (u *uninstaller) removeLink(logical string, targets ...string) {
 		return
 	}
 	if !filepath.IsAbs(target) {
-		// A relative link (V2bX.service -> anix-agent.service) is relative
-		// to its own directory.
+		// A relative link is relative to its own directory.
 		target = filepath.Join(filepath.Dir(logical), target)
 	}
 	target = filepath.Clean(target)

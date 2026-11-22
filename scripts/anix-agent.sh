@@ -23,11 +23,6 @@ DEFAULT_PLUGIN_ROOT="/var/lib/anixops-agent/plugins"
 DEFAULT_PLUGIN_SOCKET_DIR="/run/anixops-agent/plugins"
 OFFICIAL_PLUGIN_PUBLIC_KEY="IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="
 
-LEGACY_SERVICE_NAME="V2bX"
-LEGACY_INSTALL_DIR="/usr/local/V2bX"
-LEGACY_CONFIG_DIR="/etc/V2bX"
-LEGACY_CMD_NAME="v2bx-anixops"
-MIGRATION_DIR="${CONFIG_DIR}/migration"
 
 # Where the root installer (scripts/install.sh) puts the rest of what uninstall
 # removes. They are plain assignments, never read from the environment, so the
@@ -397,36 +392,6 @@ EOF
     info "默认仍使用: ${BIN_PATH} server -c ${cfg}"
 }
 
-restore_legacy_service_definition() {
-    local backup=""
-
-    if is_alpine; then
-        if [[ -L "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}" && "$(readlink -f "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}")" == "${OPENRC_INIT_DIR}/${SERVICE_NAME}" ]]; then
-            uninstall_remove "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}"
-        fi
-        if [[ -d "${MIGRATION_DIR}" ]]; then
-            backup="$(find "${MIGRATION_DIR}" -maxdepth 1 -type f -name "${LEGACY_SERVICE_NAME}.openrc.*.bak" -print 2>/dev/null | sort | tail -n 1 || true)"
-        fi
-        if [[ -n "${backup}" && ! -e "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}" ]]; then
-            install -m 0755 "${backup}" "${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}"
-            info "已恢复旧 OpenRC 服务定义（未启动）：${OPENRC_INIT_DIR}/${LEGACY_SERVICE_NAME}"
-        fi
-        return
-    fi
-
-    if [[ -L "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service" && "$(readlink -f "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service")" == "${SYSTEMD_UNIT_DIR}/${SERVICE_NAME}.service" ]]; then
-        uninstall_remove "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service"
-    fi
-    if [[ -d "${MIGRATION_DIR}" ]]; then
-        backup="$(find "${MIGRATION_DIR}" -maxdepth 1 -type f -name "${LEGACY_SERVICE_NAME}.service.*.bak" -print 2>/dev/null | sort | tail -n 1 || true)"
-    fi
-    if [[ -n "${backup}" && ! -e "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service" ]]; then
-        install -m 0644 "${backup}" "${SYSTEMD_UNIT_DIR}/${LEGACY_SERVICE_NAME}.service"
-        info "已恢复旧 systemd 服务定义（未启动）：${LEGACY_SERVICE_NAME}.service"
-    fi
-    systemctl daemon-reload || true
-}
-
 # What uninstall removed and what it left, for the report at its end.
 UNINSTALL_REMOVED=()
 UNINSTALL_KEPT=()
@@ -467,7 +432,7 @@ account_exists() {
 }
 
 # uninstall_install_dir removes the program directory. data/ holds the node's
-# credentials (credential.json[.enc], including the ones migrated from V2bX),
+# credentials (credential.json[.enc]),
 # so without --purge everything else in the directory goes and data/ stays.
 uninstall_install_dir() {
     local purge="$1"
@@ -484,7 +449,7 @@ uninstall_install_dir() {
     done < <(find "${INSTALL_DIR}" -mindepth 1 -maxdepth 1 ! -name data -print0)
     uninstall_remove_empty_dir "${INSTALL_DIR}"
     if [[ -e "${data_dir}" || -L "${data_dir}" ]]; then
-        uninstall_keep "${data_dir}：节点凭证（credential.json / credential.json.enc，含从 V2bX 迁移的凭证），--purge 才会删除"
+        uninstall_keep "${data_dir}：节点凭证（credential.json / credential.json.enc），--purge 才会删除"
     fi
 }
 
@@ -501,7 +466,7 @@ uninstall_agent() {
     local relay_unit="${SYSTEMD_UNIT_DIR}/${RELAY_SERVICE_NAME}.service"
     local relay_unit_present="false"
     local reset_units=("${SERVICE_NAME}.service")
-    local alias_path item
+    local item
 
     UNINSTALL_REMOVED=()
     UNINSTALL_KEPT=()
@@ -535,7 +500,6 @@ uninstall_agent() {
     if [[ "${relay_unit_present}" == "true" ]]; then
         systemctl disable --now "${RELAY_SERVICE_NAME}.service" >/dev/null 2>&1 || true
     fi
-    restore_legacy_service_definition
 
     if is_alpine; then
         uninstall_remove "${OPENRC_INIT_DIR}/${SERVICE_NAME}"
@@ -548,13 +512,6 @@ uninstall_agent() {
     fi
 
     uninstall_install_dir "${purge_config}"
-    for alias_path in \
-        "${USR_BIN_DIR}/${LEGACY_CMD_NAME}" "${USR_LOCAL_BIN_DIR}/${LEGACY_CMD_NAME}" \
-        "${USR_BIN_DIR}/${LEGACY_SERVICE_NAME}" "${USR_LOCAL_BIN_DIR}/${LEGACY_SERVICE_NAME}"; do
-        if [[ -L "${alias_path}" && "$(readlink -f "${alias_path}" 2>/dev/null || true)" == "${USR_BIN_DIR}/${CMD_NAME}" ]]; then
-            uninstall_remove "${alias_path}"
-        fi
-    done
     uninstall_remove "${USR_LOCAL_BIN_DIR}/${CMD_NAME}"
     uninstall_remove "${USR_BIN_DIR}/${CMD_NAME}"
 
@@ -606,11 +563,6 @@ uninstall_agent() {
     if [[ "${forwarding}" == "true" ]]; then
         uninstall_keep "nftables 表 inet anixops_fwd 和 tc 根 qdisc af00: 中转发驱动创建的规则：留在内核中，直到重启或手动删除"
     fi
-    for item in "${LEGACY_INSTALL_DIR}" "${LEGACY_CONFIG_DIR}"; do
-        if [[ -e "${item}" ]]; then
-            uninstall_keep "${item}：旧 V2bX 目录，本脚本从不删除"
-        fi
-    done
 
     if [[ "${#UNINSTALL_REMOVED[@]}" -eq 0 ]]; then
         echo "已移除: 无 (未发现已安装的 ${PRODUCT_NAME})"
@@ -687,9 +639,6 @@ Usage:
   ${CMD_NAME} version
   ${CMD_NAME} x25519
   ${CMD_NAME} generate
-
-兼容命令: ${LEGACY_SERVICE_NAME}, ${LEGACY_CMD_NAME}
-旧目录 ${LEGACY_INSTALL_DIR} 和 ${LEGACY_CONFIG_DIR} 不会被本脚本删除。
 
 uninstall 删除安装器写入的程序目录、服务单元（含 ${GOST_SERVICE_NAME}.service）、
 命令入口和 gost 二进制；默认保留配置 ${CONFIG_DIR}、凭证 ${INSTALL_DIR}/data、

@@ -158,7 +158,6 @@ jobs:
           echo "version: $version"
           mkdir -p build_assets
           GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "anixcore" -trimpath -buildvcs=false -ldflags "-X 'github.com/AnixOps/anix-agent/v5/cmd.version=$version' -s -w -buildid="
-          ln -s anix-agent build_assets/V2bX
 
       - name: Prepare to release
         run: |
@@ -171,7 +170,6 @@ jobs:
         run: |
           pushd build_assets || exit 1
           touch -mt $(date +%Y01010000) *
-          touch -h -mt $(date +%Y01010000) V2bX
           zip -9vyr ../anix-agent-${{ matrix.asset_name }}.zip .
           popd || exit 1
           FILE=./anix-agent-${{ matrix.asset_name }}.zip

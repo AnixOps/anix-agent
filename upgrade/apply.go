@@ -524,8 +524,8 @@ func copyReader(reader io.Reader, dir, pattern string, mode os.FileMode, limit i
 }
 
 // unpack extracts the regular file anix-agent from the release zip into a
-// new file of dir; symbolic links (V2bX) and everything else (a gost in an
-// older release) are skipped.
+// new file of dir; symbolic links and everything else (a gost in an older
+// release) are skipped.
 func unpack(zipPath, dir string) (binary string, err error) {
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {

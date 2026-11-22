@@ -67,12 +67,10 @@ jobs:
         run: |
           bash -n scripts/install.sh
           bash -n scripts/anix-agent.sh
-          bash -n scripts/V2bX.sh
-          bash -n scripts/test_install_migration.sh
+          bash -n scripts/test_install.sh
           bash -n scripts/test_manager_uninstall.sh
           bash scripts/install.sh --help >/dev/null
           bash scripts/anix-agent.sh --help >/dev/null
-          bash scripts/V2bX.sh --help >/dev/null
 
       - name: Enforce release build policy
         run: bash scripts/check_release_build_policy.sh
@@ -115,8 +113,8 @@ jobs:
             --ignore github.com/go-acme/tencentclouddnspod \
             --ignore github.com/nrdcg/oci-go-sdk
 
-      - name: Test installer migration and generated production config
-        run: bash scripts/test_install_migration.sh
+      - name: Test the installer and generated production config
+        run: bash scripts/test_install.sh
 
       - name: Test the manager script uninstall (temporary root, fake systemctl)
         run: bash scripts/test_manager_uninstall.sh
