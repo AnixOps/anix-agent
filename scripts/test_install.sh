@@ -80,7 +80,7 @@ curl() {
 selected_asset="$(download_release_zip v5.0.0 linux-64)"
 [[ "$(basename "${selected_asset}")" == "anix-agent-linux-64.zip" ]]
 [[ "$(cat "${selected_asset}")" == "${RELEASE_BASE}/v5.0.0/anix-agent-linux-64.zip" ]]
-grep -Fq 'zip -9vyr ../anix-agent-' "${repo_root}/.github/workflows/release.yml"
+grep -Fq 'ASSET: anix-agent-${{ matrix.asset }}.zip' "${repo_root}/.github/workflows/release.yml"
 
 ensure_plugin_layout
 [[ "$(stat -c '%a' "${STATE_ROOT}")" == "700" ]]

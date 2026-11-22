@@ -1,36 +1,25 @@
-example/config.yml
-example/main
-example/mytest
-example/access.logo
-example/error.log
-.vscode/launch.json
-example/.lego
-example/cert
-./vscode
-output/*
-.idea/*
-V2bX_windows_amd64.exe
-V2bX
-V2bX.exe
-anix-agent
-anix-agent.exe
+# Built binaries and packages
+/anix-agent
+/build/
+/build_assets/
+/dist/
+
+# Logs
 *.log
-config.debug.json
-data/credential.json.enc
-test_data/
-test_data/*
+logs/
 
-# Local editor/agent metadata
-.vscode/
-.claude/
+# Local configuration
+/config.json
+/config.local*.json
+/config.debug.json
 
-# Local runtime secrets and machine-specific configs
-config.json
-config.local*.json
+# Local secrets
+*.enc
 node/*.key
 node/*.pem
 node/cert/
-data/*.enc
-build/
-logs/
 
+# Editor and agent metadata
+.vscode/
+.idea/
+.claude/

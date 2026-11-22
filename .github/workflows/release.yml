@@ -11,16 +11,14 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request replaces the run in progress. Every other
-# run (main, tags, the schedule, manual runs) is its own group and finishes.
+# A newer push to a pull request replaces the run in progress; every other run
+# (main, tags, manual runs) is its own group and finishes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # The official AnixOps release key (anix-control plugins.official_public_key,
-  # OFFICIAL_PUBLIC_KEY of its install.sh): base64 of the raw Ed25519 public
-  # key. The signing secret must belong to it.
+  # The official AnixOps release key (base64 of the raw Ed25519 public key).
   ANIXOPS_OFFICIAL_PUBLIC_KEY: 'jW26nr2tbthASoeq6RmIpx8Ah+uhPNIv9V1ewRVb1VE='
 
 jobs:
@@ -28,27 +26,28 @@ jobs:
     name: validate release tag
     runs-on: ubuntu-24.04
     outputs:
-      is_release_tag: ${{ steps.check.outputs.is_release_tag }}
+      is_release_tag: ${{ steps.gate.outputs.is_release_tag }}
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
 
-      - name: Check release or prerelease tag
-        id: check
-        shell: bash
+      - name: Classify the ref
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          # A tag pushed by release-tag.yml arrives as a dispatch on the tag.
-          if [[ ( "${GITHUB_EVENT_NAME}" == "push" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ) && "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]]; then
-            echo "is_release_tag=true" >> "$GITHUB_OUTPUT"
-            echo "Release tag accepted: ${GITHUB_REF_NAME}"
-          else
-            echo "is_release_tag=false" >> "$GITHUB_OUTPUT"
-            echo "Not a release or release-candidate tag; release publication will be skipped."
+          set -Eeuo pipefail
+          release=false
+          if [[ "${EVENT}" == push || "${EVENT}" == workflow_dispatch ]] && [[ "${GITHUB_REF_TYPE}" == tag ]] &&
+            [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]]; then
+            release=true
           fi
+          echo "is_release_tag=${release}" >>"$GITHUB_OUTPUT"
+          echo "release tag: ${release}"
 
-      - name: Verify release tag matches source versions
-        if: steps.check.outputs.is_release_tag == 'true'
-        run: python3 scripts/check_release_version.py --tag "${GITHUB_REF_NAME}"
+      - name: Check the tag against the version surfaces
+        if: steps.gate.outputs.is_release_tag == 'true'
+        run: python3 scripts/check_release_version.py --tag "$GITHUB_REF_NAME"
 
   test:
     name: release prerequisite tests
@@ -57,16 +56,13 @@ jobs:
       - name: Checkout codebase
         uses: actions/checkout@v4
 
-      - name: Test release version gate
-        run: python3 scripts/check_release_version.py --self-test
-
-      - name: Test release asset checks (package contents, SHA256SUMS, signatures)
+      - name: Release script self-tests
         run: |
+          python3 scripts/check_release_version.py --self-test
           python3 scripts/check_release_assets.py --self-test
           python3 scripts/check_release_assets.py workflow --file .github/workflows/release.yml
 
       - name: Set up Go
-        # CI runs this on every pull request and main push; here it gates a tag.
         if: github.ref_type == 'tag'
         uses: actions/setup-go@v5
         with:
@@ -79,57 +75,45 @@ jobs:
           version: '29.2'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install pinned protoc Go plugins
+      - name: Proto codegen check
         if: github.ref_type == 'tag'
         run: |
+          set -Eeuo pipefail
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: Check protobuf generated code
-        if: github.ref_type == 'tag'
-        shell: bash
-        run: |
           export PATH="$(go env GOPATH)/bin:${PATH}"
           bash api/anxmgmt/gen.sh
           git diff --exit-code -- api/anxmgmt
           test -z "$(git ls-files --others --exclude-standard -- api/anxmgmt)"
 
-      - name: Download dependencies
+      - name: Go tests
         if: github.ref_type == 'tag'
-        run: go mod download
-
-      - name: Check gofmt
-        if: github.ref_type == 'tag'
-        shell: bash
         run: |
+          set -Eeuo pipefail
+          go mod download
           unformatted="$(git ls-files '*.go' | xargs gofmt -l)"
-          test -z "${unformatted}" || { echo "${unformatted}"; exit 1; }
-
-      - name: Run full Go test suite
-        if: github.ref_type == 'tag'
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
-
+          if [[ -n "${unformatted}" ]]; then
+            echo "::error::Go files are not gofmt-formatted"
+            echo "${unformatted}"
+            exit 1
+          fi
+          GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
 
   build:
-    name: build (${{ matrix.asset_name }})
+    name: build (${{ matrix.asset }})
+    needs: test
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - goos: linux
-            goarch: amd64
-            asset_name: linux-64
-          - goos: linux
-            goarch: arm64
-            asset_name: linux-arm64-v8a
-
-    runs-on: ubuntu-24.04
-    needs: test
+          - { goos: linux, goarch: amd64, asset: linux-64 }
+          - { goos: linux, goarch: arm64, asset: linux-arm64-v8a }
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: 0
+      ASSET: anix-agent-${{ matrix.asset }}.zip
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
@@ -142,112 +126,85 @@ jobs:
         with:
           go-version: "1.26.11"
 
-      - name: Get project dependencies
+      - name: Download dependencies
         run: go mod download
 
-      - name: Resolve version
+      - name: Build
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
-          else
-            echo "version=${GITHUB_SHA}" >> "$GITHUB_ENV"
-          fi
-
-      - name: Build AnixOps Agent
-        run: |
-          echo "version: $version"
+          set -Eeuo pipefail
           mkdir -p build_assets
-          GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "anixcore" -trimpath -buildvcs=false -ldflags "-X 'github.com/AnixOps/anix-agent/v5/cmd.version=$version' -s -w -buildid="
+          GOEXPERIMENT=jsonv2 go build -tags anixcore -trimpath -buildvcs=false -o build_assets/anix-agent \
+            -ldflags "-X 'github.com/AnixOps/anix-agent/v5/cmd.version=${VERSION}' -s -w -buildid=" .
+          cp README.md LICENSE example/*.json build_assets/
 
-      - name: Prepare to release
+      - name: Package
         run: |
-          cp ${GITHUB_WORKSPACE}/README.md ./build_assets/README.md
-          cp ${GITHUB_WORKSPACE}/LICENSE ./build_assets/LICENSE
-          cp ${GITHUB_WORKSPACE}/example/*.json ./build_assets/
+          set -Eeuo pipefail
+          find build_assets -exec touch -d "$(date -u +%Y)-01-01T00:00:00Z" {} +
+          (cd build_assets && zip -9qrX "../${ASSET}" .)
+          for algo in md5 sha1 sha256 sha512; do
+            printf '%s= %s\n' "${algo^^}" "$("${algo}sum" "${ASSET}" | cut -d' ' -f1)"
+          done >"${ASSET}.dgst"
+          cat "${ASSET}.dgst"
+          python3 scripts/check_release_assets.py zip --zip "${ASSET}"
 
-      - name: Create ZIP archive
-        shell: bash
-        run: |
-          pushd build_assets || exit 1
-          touch -mt $(date +%Y01010000) *
-          zip -9vyr ../anix-agent-${{ matrix.asset_name }}.zip .
-          popd || exit 1
-          FILE=./anix-agent-${{ matrix.asset_name }}.zip
-          DGST=$FILE.dgst
-          for METHOD in {"md5","sha1","sha256","sha512"}
-          do
-            openssl dgst -$METHOD $FILE | sed 's/([^)]*)//g' >>$DGST
-          done
-
-      - name: Check the package holds the Agent, and no gost or anixops relay
-        run: python3 scripts/check_release_assets.py zip --zip "./anix-agent-${{ matrix.asset_name }}.zip"
-
-      - name: Upload files to Artifacts
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: package-${{ matrix.asset_name }}
+          name: package-${{ matrix.asset }}
           path: |
-            ./anix-agent-${{ matrix.asset_name }}.zip
-            ./anix-agent-${{ matrix.asset_name }}.zip.dgst
-          # Only carried to the release job of the same run.
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.dgst
           retention-days: 3
 
   release:
+    name: release
     if: needs.tag-gate.outputs.is_release_tag == 'true'
     needs: [build, tag-gate]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - name: Download build artifacts
+      - name: Download packages
         uses: actions/download-artifact@v4
         with:
           pattern: package-*
-          path: dist
           merge-multiple: true
+          path: dist
 
-      # SHA256SUMS, and a detached signature per package and for
-      # SHA256SUMS: base64 of the raw Ed25519 signature by the official
-      # AnixOps release key over the file's exact bytes, the format of
-      # anix-control's agent-install.sh.sig. The O1 installer verifies
-      # <package>.sig next to the package it downloads.
-      - name: Write SHA256SUMS and sign the release assets
-        working-directory: dist
+      - name: Sign the packages and SHA256SUMS
         env:
-          ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY: ${{ secrets.ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY }}
-          ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY: ${{ secrets.ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY }}
-        shell: bash
+          SIGNING_KEY: ${{ secrets.ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY }}
+          PUBLIC_KEY: ${{ secrets.ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY }}
+        working-directory: dist
         run: |
           set -Eeuo pipefail
-          [[ -n "${ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY}" ]] || {
-            echo "ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY is required to sign the Agent release (see docs/INSTALL.md, "Release Signing")" >&2
-            exit 1
-          }
-          [[ "${ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY}" == "${ANIXOPS_OFFICIAL_PUBLIC_KEY}" ]] || {
-            echo "ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY is not the official AnixOps release key" >&2
-            exit 1
-          }
-          key_file="$(mktemp)"
-          official_der="$(mktemp)"
-          signature_bin="$(mktemp)"
-          trap 'rm -f "${key_file}" "${official_der}" "${signature_bin}"' EXIT
-          printf '%s\n' "${ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY}" >"${key_file}"
+          [[ -n "${SIGNING_KEY}" ]] || { echo "::error::ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY is empty; see docs/INSTALL.md, Release Signing"; exit 1; }
+          [[ "${PUBLIC_KEY}" == "${ANIXOPS_OFFICIAL_PUBLIC_KEY}" ]] || { echo "::error::ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY differs from ANIXOPS_OFFICIAL_PUBLIC_KEY in release.yml"; exit 1; }
+          work="$(mktemp -d)"
+          trap 'rm -rf "${work}"' EXIT
+          key_file="${work}/key.pem"
+          (umask 077; printf '%s\n' "${SIGNING_KEY}" >"${key_file}")
           chmod 0600 "${key_file}"
-          unset ANIXOPS_PLUGIN_SIGNING_PRIVATE_KEY ANIXOPS_PLUGIN_OFFICIAL_PUBLIC_KEY
-          { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s' "${ANIXOPS_OFFICIAL_PUBLIC_KEY}" | base64 -d; } >"${official_der}"
+          unset SIGNING_KEY
+          # DER SubjectPublicKeyInfo of the raw Ed25519 key.
+          { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s' "${ANIXOPS_OFFICIAL_PUBLIC_KEY}" | base64 -d; } >"${work}/official.der"
           packages=(anix-agent-linux-64.zip anix-agent-linux-arm64-v8a.zip)
           sha256sum "${packages[@]}" >SHA256SUMS
           for file in "${packages[@]}" SHA256SUMS; do
-            openssl pkeyutl -sign -inkey "${key_file}" -rawin -in "${file}" -out "${signature_bin}"
-            printf '%s\n' "$(base64 -w0 "${signature_bin}")" >"${file}.sig"
-            openssl pkeyutl -verify -pubin -keyform DER -inkey "${official_der}" -rawin \
-              -in "${file}" -sigfile "${signature_bin}"
+            openssl pkeyutl -sign -inkey "${key_file}" -rawin -in "${file}" -out "${work}/sig.bin"
+            openssl pkeyutl -verify -pubin -keyform DER -inkey "${work}/official.der" -rawin \
+              -in "${file}" -sigfile "${work}/sig.bin" >/dev/null
+            base64 -w0 "${work}/sig.bin" >"${file}.sig"
+            echo >>"${file}.sig"
           done
 
-      - name: Show release files
-        run: ls -lh dist
+      - name: List release files
+        run: ls -l dist
 
-      - name: Create/Update GitHub release
+      - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
