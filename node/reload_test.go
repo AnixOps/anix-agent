@@ -10,7 +10,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 
@@ -81,7 +80,6 @@ func failPort(port int, err error) func(*panel.NodeInfo) error {
 // runningController is a controller whose node runs info in core.
 func runningController(t *testing.T, core vCore.Core, info *panel.NodeInfo) *Controller {
 	t.Helper()
-	limiter.Init()
 	previous := nodeAddRetryDelays
 	nodeAddRetryDelays = []time.Duration{0, 0}
 	t.Cleanup(func() { nodeAddRetryDelays = previous })
@@ -93,9 +91,7 @@ func runningController(t *testing.T, core vCore.Core, info *panel.NodeInfo) *Con
 		userList: []panel.UserInfo{{Id: 1, Uuid: "user-1"}},
 		aliveMap: map[int]int{},
 	}
-	controller.limiter = limiter.AddLimiter(controller.tag, &controller.LimitConfig, controller.userList, controller.aliveMap)
-	controller.limiterAdded = true
-	t.Cleanup(func() { limiter.DeleteLimiter(controller.tag) })
+	controller.rates = newRateLimits(controller.LimitConfig.SpeedLimit, controller.userList)
 	if err := core.AddNode(controller.tag, info, controller.Options); err != nil {
 		t.Fatal(err)
 	}
@@ -250,13 +246,11 @@ func equalInts(a, b []int) bool {
 func TestReloadFailureRestoresTheDerivedTagAndLimiter(t *testing.T) {
 	core := newReloadCore()
 	controller := runningController(t, core, vlessNode(443))
-	// The default: the tag (and the limiter's key) follows the node.
+	// The default: the tag follows the node.
 	delete(core.nodes, "fixed-tag")
-	limiter.DeleteLimiter("fixed-tag")
 	controller.Options.Name = ""
 	controller.tag = controller.buildNodeTag(controller.info)
-	controller.limiter = limiter.AddLimiter(controller.tag, &controller.LimitConfig, controller.userList, controller.aliveMap)
-	t.Cleanup(func() { limiter.DeleteLimiter(controller.tag) })
+	rates := controller.rates
 	if err := core.AddNode(controller.tag, controller.info, controller.Options); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +263,7 @@ func TestReloadFailureRestoresTheDerivedTagAndLimiter(t *testing.T) {
 	if controller.tag != oldTag || core.runningPort(t, oldTag) != 443 || !controller.nodeAdded {
 		t.Fatalf("tag %q port %d nodeAdded=%v, want %q on 443", controller.tag, core.runningPort(t, oldTag), controller.nodeAdded, oldTag)
 	}
-	if l, err := limiter.GetLimiter(oldTag); err != nil || l != controller.limiter {
-		t.Fatalf("limiter under %q = %v (%v), want the controller's", oldTag, l, err)
+	if controller.rates != rates || controller.rates.rate("user-1") != 0 {
+		t.Fatalf("rate limits = %p, want the controller's %p, user-1 unlimited", controller.rates, rates)
 	}
 }

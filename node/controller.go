@@ -8,38 +8,33 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
-	"github.com/AnixOps/anix-agent/v5/common/task"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/diagnostic"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 	"github.com/AnixOps/anix-agent/v5/plugin"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
-	log "github.com/sirupsen/logrus"
 )
 
 type Controller struct {
 	server vCore.Core
 	// nodeID is the node the controller runs; apiHost is Control's base
 	// URL, which names the node's core tag.
-	nodeID                    int
-	apiHost                   string
-	tag                       string
-	limiter                   *limiter.Limiter
-	traffic                   map[string]int64
-	userList                  []panel.UserInfo
-	aliveMap                  map[int]int
-	info                      *panel.NodeInfo
-	userReportPeriodic        *task.Task
-	renewCertPeriodic         *task.Task
-	dynamicSpeedLimitPeriodic *task.Task
-	onlineIpReportPeriodic    *task.Task
-	logHook                   *RemoteLogHook
-	reconcileMu               sync.Mutex
-	pluginSupervisor          *plugin.Supervisor
-	limiterAdded              bool
-	nodeAdded                 bool
+	nodeID           int
+	apiHost          string
+	tag              string
+	rates            *rateLimits
+	traffic          map[string]int64
+	userList         []panel.UserInfo
+	aliveMap         map[int]int
+	info             *panel.NodeInfo
+	reportJob        *job
+	certJob          *job
+	speedJob         *job
+	logHook          *RemoteLogHook
+	reconcileMu      sync.Mutex
+	pluginSupervisor *plugin.Supervisor
+	nodeAdded        bool
 	// stream is the node's control-stream data plane: it carries the
 	// node's configuration, users and reports.
 	stream *nodeDataPlane
@@ -62,8 +57,9 @@ type Controller struct {
 	started atomic.Bool
 	// aliveFromStream is set once the control stream delivered an alive
 	// list: a node that starts after it keeps that list instead of the one
-	// its caller read before. aliveMap, limiter and aliveFromStream are
-	// guarded by reconcileMu: the alive list is applied from the data
+	// its caller read before. userList, aliveMap, rates, traffic (the
+	// dynamic speed limit's counter) and aliveFromStream are guarded by
+	// reconcileMu: the alive list is applied from the data
 	// plane's goroutine, also while the node starts.
 	aliveFromStream bool
 	*conf.Options
@@ -111,17 +107,13 @@ func (c *Controller) applySnapshot(snapshot *agentv1pb.ConfigSnapshot) error {
 
 // applyStreamAlive makes the node's device limits count alive, Control's
 // alive list (alive.v1). It runs on the data plane's goroutine, also while
-// the node is starting: a limiter that exists takes the list at once (the
-// node may be half started), and a controller that has no limiter yet takes
-// it at startup (addLimiter).
+// the node is starting: a controller that has not stored its users yet
+// keeps the list at startup (setUsers).
 func (c *Controller) applyStreamAlive(alive map[int]int) {
 	c.reconcileMu.Lock()
 	defer c.reconcileMu.Unlock()
 	c.aliveMap = alive
 	c.aliveFromStream = true
-	if c.limiter != nil {
-		c.limiter.AliveList = alive
-	}
 }
 
 // applyStreamUsers brings the running node to users, the node's set from
@@ -166,108 +158,6 @@ func (c *Controller) label() string {
 		nodeType = fmt.Sprintf("protocol %d", c.protocolID)
 	}
 	return fmt.Sprintf("node %d (%s)", c.nodeID, nodeType)
-}
-
-// addLimiter sets the node's users and alive list and adds its limiter,
-// under reconcileMu: the data plane applies an alive list (applyStreamAlive)
-// from its own goroutine while the node starts. A list that came from the
-// stream before this point is newer than alive, which the caller read
-// earlier, so it stays.
-func (c *Controller) addLimiter(users []panel.UserInfo, alive map[int]int) *limiter.Limiter {
-	c.reconcileMu.Lock()
-	defer c.reconcileMu.Unlock()
-	c.userList = users
-	if !c.aliveFromStream || c.aliveMap == nil {
-		c.aliveMap = alive
-	}
-	if c.aliveMap == nil {
-		c.aliveMap = make(map[int]int)
-	}
-	l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
-	c.limiter = l
-	c.limiterAdded = true
-	return l
-}
-
-// startWith starts the node with its configuration, users and alive list.
-func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, alive map[int]int) error {
-	var err error
-	if len(users) == 0 {
-		log.Warn("No users found for this node, will continue running and check for users periodically")
-	}
-	if len(c.Options.Name) == 0 {
-		c.tag = c.buildNodeTag(node)
-	} else {
-		c.tag = c.Options.Name + c.protocolTagSuffix()
-	}
-	c.logHook = newRemoteLogHook(c.reportNodeLogs, c.tag)
-	log.StandardLogger().AddHook(c.logHook)
-
-	// add limiter
-	l := c.addLimiter(users, alive)
-	// add rule limiter
-	if err = l.UpdateRule(&node.Rules); err != nil {
-		return fmt.Errorf("update rule error: %s", err)
-	}
-	if node.Security == panel.Tls {
-		err = c.requestCert()
-		if err != nil {
-			return fmt.Errorf("request cert error: %s", err)
-		}
-	}
-	// Add new tag
-	err = c.server.AddNode(c.tag, node, c.Options)
-	if err != nil {
-		return fmt.Errorf("add new node error: %s", err)
-	}
-	c.nodeAdded = true
-	added, err := c.server.AddUsers(c.tag, node, c.userList)
-	if err != nil {
-		return fmt.Errorf("add users error: %s", err)
-	}
-	log.WithField("tag", c.tag).Infof("Added %d new users", added)
-	c.info = node
-	c.startTasks(node)
-	c.started.Store(true)
-
-	return nil
-}
-
-// Close implement the Close() function of the service interface
-func (c *Controller) Close() error {
-	var closeErr error
-
-	if c.limiterAdded {
-		limiter.DeleteLimiter(c.tag)
-		c.limiterAdded = false
-	}
-	if c.userReportPeriodic != nil {
-		c.userReportPeriodic.Close()
-	}
-	if c.renewCertPeriodic != nil {
-		c.renewCertPeriodic.Close()
-	}
-	if c.dynamicSpeedLimitPeriodic != nil {
-		c.dynamicSpeedLimitPeriodic.Close()
-	}
-	if c.onlineIpReportPeriodic != nil {
-		c.onlineIpReportPeriodic.Close()
-	}
-	if c.logHook != nil {
-		c.logHook.Close()
-		c.logHook = nil
-	}
-	if c.nodeAdded {
-		if err := c.server.DelNode(c.tag); err != nil {
-			closeErr = errors.Join(closeErr, fmt.Errorf("del node error: %w", err))
-		}
-		c.nodeAdded = false
-	}
-	return closeErr
-}
-
-func (c *Controller) buildNodeTag(node *panel.NodeInfo) string {
-	return fmt.Sprintf("[%s]-%s:%d", c.apiHost, node.Type, node.Id) + c.protocolTagSuffix()
 }
 
 // protocolTagSuffix keeps an extra controller's core tag apart from the

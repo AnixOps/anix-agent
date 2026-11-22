@@ -15,7 +15,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/conf"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/forward"
-	"github.com/AnixOps/anix-agent/v5/limiter"
 	"github.com/AnixOps/anix-agent/v5/node"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	log "github.com/sirupsen/logrus"
@@ -46,7 +45,6 @@ func serverHandle(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("load config %s: %w", config, err)
 	}
 	setupLog(c.LogConfig)
-	limiter.Init()
 	migrateLegacyPaths(c)
 	tuneHostTCP()
 	// The outcome of the last Control-pushed upgrade, which restarted us.
