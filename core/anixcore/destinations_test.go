@@ -7,7 +7,6 @@ import (
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
-	vCore "github.com/AnixOps/anix-agent/v5/core"
 )
 
 func destinationsCore(t *testing.T, features []string) (*fakeAPI, *Core) {
@@ -21,7 +20,7 @@ func destinationsCore(t *testing.T, features []string) (*fakeAPI, *Core) {
 		t.Fatal(err)
 	}
 	user := panel.UserInfo{Id: 7, Uuid: "0123456789abcdef0123456789abcdef"}
-	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "ss", Users: []panel.UserInfo{user}, NodeInfo: info}); err != nil {
+	if _, err := core.AddUsers("ss", info, []panel.UserInfo{user}); err != nil {
 		t.Fatal(err)
 	}
 	return api, core

@@ -79,7 +79,7 @@ type trafficPair struct {
 }
 
 func init() {
-	vCore.RegisterCore("wireguard", New)
+	vCore.Register("wireguard", New)
 }
 
 func New(c *conf.CoreConfig) (vCore.Core, error) {
@@ -174,12 +174,9 @@ func (w *WireGuard) DelNode(tag string) error {
 	return w.executor.Run(w.cfg.IPPath, "link", "delete", state.iface)
 }
 
-func (w *WireGuard) AddUsers(p *vCore.AddUsersParams) (int, error) {
-	if p == nil {
-		return 0, errors.New("wireguard add users params is nil")
-	}
+func (w *WireGuard) AddUsers(tag string, _ *panel.NodeInfo, users []panel.UserInfo) (int, error) {
 	w.mu.Lock()
-	state, ok := w.nodes[p.Tag]
+	state, ok := w.nodes[tag]
 	w.mu.Unlock()
 	if !ok {
 		return 0, errors.New("the node is not have")
@@ -187,12 +184,12 @@ func (w *WireGuard) AddUsers(p *vCore.AddUsersParams) (int, error) {
 	state.applyMu.Lock()
 	defer state.applyMu.Unlock()
 	w.mu.Lock()
-	if current, exists := w.nodes[p.Tag]; !exists || current != state {
+	if current, exists := w.nodes[tag]; !exists || current != state {
 		w.mu.Unlock()
 		return 0, errors.New("the node is not have")
 	}
 	previous := cloneWireGuardUsers(state.users)
-	for _, user := range p.Users {
+	for _, user := range users {
 		if err := validateWireGuardUser(user); err != nil {
 			w.mu.Unlock()
 			return 0, err
@@ -207,10 +204,10 @@ func (w *WireGuard) AddUsers(p *vCore.AddUsersParams) (int, error) {
 		_ = w.applyLocked(state)
 		return 0, err
 	}
-	return len(p.Users), nil
+	return len(users), nil
 }
 
-func (w *WireGuard) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) error {
+func (w *WireGuard) DelUsers(tag string, _ *panel.NodeInfo, users []panel.UserInfo) error {
 	w.mu.Lock()
 	state, ok := w.nodes[tag]
 	w.mu.Unlock()
@@ -279,7 +276,7 @@ func (w *WireGuard) UpdateUserRateLimit(tag, uuid string, speedLimit int) error 
 	return nil
 }
 
-func (w *WireGuard) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
+func (w *WireGuard) UserTraffic(tag string, reset bool) ([]panel.UserTraffic, error) {
 	w.mu.Lock()
 	state, ok := w.nodes[tag]
 	if !ok {
@@ -337,10 +334,10 @@ func (w *WireGuard) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTra
 	return trafficSlice, nil
 }
 
-// RollbackUserTrafficSlice moves the WireGuard traffic cursor back by the
+// RollbackUserTraffic moves the WireGuard traffic cursor back by the
 // report that the panel rejected. The next sample then includes the failed
 // interval instead of silently losing billable traffic.
-func (w *WireGuard) RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error {
+func (w *WireGuard) RollbackUserTraffic(tag string, traffic []panel.UserTraffic) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	state, ok := w.nodes[tag]

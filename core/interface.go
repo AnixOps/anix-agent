@@ -3,98 +3,76 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
+
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 )
 
-type AddUsersParams struct {
-	Tag   string
-	Users []panel.UserInfo
-	*panel.NodeInfo
-}
+// ErrNodeNotFound is answered for a tag the core does not run.
+var ErrNodeNotFound = errors.New("the node is not have")
 
+// Core is a proxy kernel that runs nodes and their users.
 type Core interface {
 	Start() error
 	Close() error
-	AddNode(tag string, info *panel.NodeInfo, config *conf.Options) error
-	DelNode(tag string) error
-	AddUsers(p *AddUsersParams) (added int, err error)
-	GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error)
-	DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo) error
-	Protocols() []string
 	Type() string
+	Protocols() []string
+	AddNode(tag string, info *panel.NodeInfo, options *conf.Options) error
+	DelNode(tag string) error
+	AddUsers(tag string, info *panel.NodeInfo, users []panel.UserInfo) (added int, err error)
+	DelUsers(tag string, info *panel.NodeInfo, users []panel.UserInfo) error
+	UserTraffic(tag string, reset bool) ([]panel.UserTraffic, error)
 }
 
+// OnlineDeviceProvider reports a node's online devices.
 type OnlineDeviceProvider interface {
 	GetOnlineDevice(tag string) ([]panel.OnlineUser, error)
 }
 
-// RuntimeHealthProvider exposes process-level health for cores that supervise
-// external runtime components. WireGuard uses it for the GOST relay process.
+// RuntimeHealthProvider reports whether a node runs as configured.
 type RuntimeHealthProvider interface {
 	RuntimeHealth(tag string) (healthy bool, message string)
 }
 
-// RateLimitUpdater is implemented by cores whose runtime can enforce a
-// per-user rate outside the protocol parser. WireGuard uses Linux tc rules
-// keyed by each peer address; the existing proxy cores keep their own limiter
-// hooks and do not need to implement this optional interface.
+// RateLimitUpdater applies a user's speed limit inside the core.
 type RateLimitUpdater interface {
-	UpdateUserRateLimit(tag, uuid string, speedLimit int) error
+	UpdateUserRateLimit(tag, uuid string, bytesPerSecond int) error
 }
 
-// TrafficRollbacker lets a core restore a traffic cursor when the panel
-// rejected an otherwise successfully sampled report. It is optional because
-// existing proxy cores do not expose reversible counters.
+// TrafficRollbacker gives back traffic that could not be reported.
 type TrafficRollbacker interface {
-	RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error
+	RollbackUserTraffic(tag string, traffic []panel.UserTraffic) error
 }
 
-// DestinationProvider is implemented by cores that count each user's
-// traffic by destination (destinations.v1): anixcore, when the kernel has
-// the `destinations` feature. GetDestinationTraffic returns tag's traffic since the
-// last call.
+// DestinationProvider reports per-user destination statistics.
 type DestinationProvider interface {
 	GetDestinationTraffic(tag string) ([]destinations.Traffic, error)
 }
 
-// EgressApplier is implemented by cores that run a node's egress routes
-// (panel.EgressConfig): the Xray and anixcore cores. ApplyEgress replaces what the core
-// ran from the previous call; an empty configuration removes it all.
+// EgressApplier runs the device's egress routes.
 type EgressApplier interface {
 	ApplyEgress(config *panel.EgressConfig) error
 }
 
-// QoSApplier is implemented by cores that run Control's traffic
-// priorities and per-user class caps (the member "qos" of a node's
-// configuration, panel.ParseQoS): the anixcore core. ApplyQoS replaces
-// what the previous call set; nil turns them off.
+// QoSApplier runs the device's traffic shaping.
 type QoSApplier interface {
 	ApplyQoS(config json.RawMessage) error
 }
 
-// ExitPolicyApplier is implemented by cores that run Control's exit policy
-// (the member "exit_policy" of a node's configuration,
-// panel.ParseExitPolicy): the anixcore core. ApplyExitPolicy replaces what
-// the previous call set; the zero policy turns it off.
+// ExitPolicyApplier runs the device's exit policy.
 type ExitPolicyApplier interface {
 	ApplyExitPolicy(policy panel.ExitPolicy) error
 }
 
-// MainlandCounter is implemented by cores that count the connections their
-// exit policy refused to mainland-China addresses; MainlandBlocked reads
-// and resets the count.
+// MainlandCounter counts the connections the exit policy blocked.
 type MainlandCounter interface {
 	MainlandBlocked(ctx context.Context) (uint64, error)
 }
 
-// NetworkApplier is implemented by cores that run the device network model
-// (anixops.network.v1, anix-control docs/design/network-model): the anixcore
-// core. NetworkKinds lists the components the core runs, empty when it runs
-// none. ApplyNetwork replaces the device's plan (nil removes it) and
-// answers the core's status of it; NetworkStatus reads that status again.
+// NetworkApplier runs the device network model.
 type NetworkApplier interface {
 	NetworkKinds() []*networkv1.KindSupport
 	ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStatus, error)
