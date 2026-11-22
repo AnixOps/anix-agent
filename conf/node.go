@@ -1,26 +1,12 @@
 package conf
 
-import (
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"strings"
+import "encoding/json"
 
-	"encoding/json"
-
-	"github.com/AnixOps/anix-agent/v5/common/json5"
-)
-
+// NodeConfig is one entry of "Nodes": the connection to Control and the
+// node's local options, both read from the same flat object.
 type NodeConfig struct {
 	ApiConfig ApiConfig `json:"-"`
 	Options   Options   `json:"-"`
-}
-
-type rawNodeConfig struct {
-	Include string          `json:"Include"`
-	ApiRaw  json.RawMessage `json:"ApiConfig"`
-	OptRaw  json.RawMessage `json:"Options"`
 }
 
 type ApiConfig struct {
@@ -51,117 +37,89 @@ type ApiConfig struct {
 	// identities do: "proxy-<id>" or "forward-<id>" (the O1 installer
 	// writes it). A forward node's entry runs the forward component on its
 	// own stream (ForwardConfig); NodeID, when set, must match.
-	AgentNode    string `json:"AgentNode"`
-	NodeID       int    `json:"NodeID"`
-	NodeType     string `json:"NodeType"`
-	RuleListPath string `json:"RuleListPath"`
+	AgentNode string `json:"AgentNode"`
+	NodeID    int    `json:"NodeID"`
+	NodeType  string `json:"NodeType"`
 }
 
-func (n *NodeConfig) UnmarshalJSON(data []byte) (err error) {
-	rn := rawNodeConfig{}
-	err = json.Unmarshal(data, &rn)
-	if err != nil {
+// Options are a node's local settings.
+type Options struct {
+	// Name, when set, is the node's core tag instead of one built from
+	// Control's host and the node.
+	Name string `json:"Name"`
+	// Core is the core that runs the node: anixcore, wireguard, or empty
+	// for the default.
+	Core     string `json:"Core"`
+	CoreName string `json:"CoreName"`
+	ListenIP string `json:"ListenIP"`
+	// DeviceOnlineMinTraffic (KB) is the traffic in a report window below
+	// which a user's online IP is not counted as a device.
+	DeviceOnlineMinTraffic int64       `json:"DeviceOnlineMinTraffic"`
+	ReportMinTraffic       int64       `json:"ReportMinTraffic"`
+	LimitConfig            LimitConfig `json:"LimitConfig"`
+	CertConfig             *CertConfig `json:"CertConfig"`
+	// RawOptions is the node's whole object, for the core to read its own
+	// settings from.
+	RawOptions json.RawMessage `json:"-"`
+}
+
+// LimitConfig is the node's speed limit (Mbps, 0 for none) and the dynamic
+// speed limit: a user whose traffic in Periodic seconds reaches Traffic is
+// held to SpeedLimit Mbps for ExpireTime minutes.
+type LimitConfig struct {
+	SpeedLimit              int                      `json:"SpeedLimit"`
+	EnableDynamicSpeedLimit bool                     `json:"EnableDynamicSpeedLimit"`
+	DynamicSpeedLimitConfig *DynamicSpeedLimitConfig `json:"DynamicSpeedLimitConfig"`
+}
+
+type DynamicSpeedLimitConfig struct {
+	Periodic   int   `json:"Periodic"`
+	Traffic    int64 `json:"Traffic"`
+	SpeedLimit int   `json:"SpeedLimit"`
+	ExpireTime int   `json:"ExpireTime"`
+}
+
+// CertConfig is where a TLS node's certificate comes from. CertMode is
+// none, file (CertFile and KeyFile), self (a self-signed certificate for
+// CertDomain), http or dns (ACME for CertDomain; dns uses Provider with
+// the credentials in DNSEnv).
+type CertConfig struct {
+	CertMode   string            `json:"CertMode"`
+	CertDomain string            `json:"CertDomain"`
+	CertFile   string            `json:"CertFile"`
+	KeyFile    string            `json:"KeyFile"`
+	Provider   string            `json:"Provider"`
+	Email      string            `json:"Email"`
+	DNSEnv     map[string]string `json:"DNSEnv"`
+}
+
+func NewCertConfig() *CertConfig {
+	return &CertConfig{CertMode: "none"}
+}
+
+func (n *NodeConfig) UnmarshalJSON(data []byte) error {
+	n.ApiConfig = ApiConfig{APIHost: "http://127.0.0.1", GRPCKeepalive: 30}
+	n.Options = Options{ListenIP: "0.0.0.0", CertConfig: NewCertConfig()}
+	if err := json.Unmarshal(data, &n.ApiConfig); err != nil {
 		return err
 	}
-	if len(rn.Include) != 0 {
-		file, _ := strings.CutPrefix(rn.Include, ":")
-		switch file {
-		case "http", "https":
-			rsp, err := http.Get(file)
-			if err != nil {
-				return err
-			}
-			defer rsp.Body.Close()
-			data, err = io.ReadAll(json5.NewTrimNodeReader(rsp.Body))
-			if err != nil {
-				return fmt.Errorf("open include file error: %s", err)
-			}
-		default:
-			f, err := os.Open(rn.Include)
-			if err != nil {
-				return fmt.Errorf("open include file error: %s", err)
-			}
-			defer f.Close()
-			data, err = io.ReadAll(json5.NewTrimNodeReader(f))
-			if err != nil {
-				return fmt.Errorf("open include file error: %s", err)
-			}
-		}
-		err = json.Unmarshal(data, &rn)
-		if err != nil {
-			return fmt.Errorf("unmarshal include file error: %s", err)
-		}
-	}
-
-	n.ApiConfig = ApiConfig{
-		APIHost:       "http://127.0.0.1",
-		GRPCKeepalive: 30,
-	}
-	if len(rn.ApiRaw) > 0 {
-		err = json.Unmarshal(rn.ApiRaw, &n.ApiConfig)
-		if err != nil {
-			return
-		}
-	} else {
-		err = json.Unmarshal(data, &n.ApiConfig)
-		if err != nil {
-			return
-		}
-	}
-
-	n.Options = Options{
-		ListenIP:   "0.0.0.0",
-		SendIP:     "0.0.0.0",
-		CertConfig: NewCertConfig(),
-	}
-	if len(rn.OptRaw) > 0 {
-		err = json.Unmarshal(rn.OptRaw, &n.Options)
-		if err != nil {
-			return
-		}
-	} else {
-		err = json.Unmarshal(data, &n.Options)
-		if err != nil {
-			return
-		}
-	}
-	return
-}
-
-type Options struct {
-	Name                   string          `json:"Name"`
-	Core                   string          `json:"Core"`
-	CoreName               string          `json:"CoreName"`
-	ListenIP               string          `json:"ListenIP"`
-	SendIP                 string          `json:"SendIP"`
-	DeviceOnlineMinTraffic int64           `json:"DeviceOnlineMinTraffic"`
-	ReportMinTraffic       int64           `json:"ReportMinTraffic"`
-	LimitConfig            LimitConfig     `json:"LimitConfig"`
-	RawOptions             json.RawMessage `json:"RawOptions"`
-	CertConfig             *CertConfig     `json:"CertConfig"`
+	return json.Unmarshal(data, &n.Options)
 }
 
 func (o *Options) UnmarshalJSON(data []byte) error {
-	type opt Options
-	err := json.Unmarshal(data, (*opt)(o))
-	if err != nil {
+	type plain Options
+	if err := json.Unmarshal(data, (*plain)(o)); err != nil {
 		return err
 	}
+	o.RawOptions = append(json.RawMessage(nil), data...)
 	switch o.Core {
-	// The third-party cores are gone: a node that still names one runs on
-	// anixcore.
-	case "xray", "sing", "hysteria2", "anixcore":
+	case "anixcore", "wireguard":
+	case "xray", "sing", "hysteria2":
+		// The third-party cores are gone: a node that still names one runs
+		// on anixcore.
 		o.Core = "anixcore"
-		o.RawOptions = data
-		return nil
-	case "wireguard":
-		// WireGuard has no nested per-node options, but keeping the explicit
-		// core selection is required when a process hosts multiple core types.
-		o.RawOptions = data
-		return nil
 	default:
 		o.Core = ""
-		o.RawOptions = data
 	}
 	return nil
 }

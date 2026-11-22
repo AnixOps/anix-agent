@@ -1,17 +1,16 @@
+// Package conf is the Agent's configuration file.
 package conf
 
 import (
+	"encoding/json/v2"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/anxserver"
-	"github.com/AnixOps/anix-agent/v5/common/json5"
-
-	"encoding/json/v2"
 )
 
+// Conf is config.json.
 type Conf struct {
 	Environment string       `json:"Environment"`
 	LogConfig   LogConfig    `json:"Log"`
@@ -28,54 +27,39 @@ type Conf struct {
 	AnxKeyRotation *anxserver.RotationConfig `json:"AnxKeyRotation"`
 }
 
-func New() *Conf {
-	return &Conf{
-		Environment: "development",
-		LogConfig: LogConfig{
-			Level:  "info",
-			Output: "",
-		},
-	}
+// LogConfig is the log level (debug, info, warn, error) and an optional
+// file to append to instead of stdout.
+type LogConfig struct {
+	Level  string `json:"Level"`
+	Output string `json:"Output"`
 }
 
-func (p *Conf) LoadFromPath(filePath string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("open config file error: %s", err)
-	}
-	defer f.Close()
+func New() *Conf {
+	return &Conf{Environment: "development", LogConfig: LogConfig{Level: "info"}}
+}
 
-	reader := json5.NewTrimNodeReader(f)
-	data, err := io.ReadAll(reader)
+// LoadFromPath reads the file into p and validates it. The file may carry
+// comments and trailing commas (see stripJSONComments).
+func (p *Conf) LoadFromPath(path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read config file error: %s", err)
-	}
-
-	err = json.Unmarshal(data, p)
-	if err != nil {
-		return fmt.Errorf("unmarshal config error: %s", err)
-	}
-	if err = p.normalizeAgentNodes(); err != nil {
 		return err
 	}
-	if err = p.validateAgentIdentities(); err != nil {
-		return err
+	if err := json.Unmarshal(stripJSONComments(data), p); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
 	}
-	if err = p.validateNodeCredentials(); err != nil {
-		return err
+	for _, check := range []func() error{
+		p.normalizeAgentNodes,
+		p.validateAgentIdentities,
+		p.validateNodeCredentials,
+		p.Forward.Validate,
+		p.AnxLine.Validate,
+		p.AnxKeyRotation.Validate,
+		p.ValidateForProduction,
+	} {
+		if err := check(); err != nil {
+			return err
+		}
 	}
-	if err = p.Forward.Validate(); err != nil {
-		return err
-	}
-	if err = p.AnxLine.Validate(); err != nil {
-		return err
-	}
-	if err = p.AnxKeyRotation.Validate(); err != nil {
-		return err
-	}
-	if err = p.ValidateForProduction(); err != nil {
-		return err
-	}
-
 	return nil
 }

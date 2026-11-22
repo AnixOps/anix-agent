@@ -1,60 +1,60 @@
 package conf
 
 import (
-	"fmt"
-	"log"
-	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	log "github.com/sirupsen/logrus"
 )
 
-func (p *Conf) Watch(filePath string, reload func()) error {
+// reloadDelay lets an editor or installer finish writing before the file
+// is read; changes within it are taken together.
+const reloadDelay = 5 * time.Second
+
+// Watch reloads path into p and calls reload whenever the file changes. A
+// file that does not parse is logged and p is left as it is.
+func (p *Conf) Watch(path string, reload func()) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return fmt.Errorf("new watcher error: %s", err)
+		return err
 	}
-
-	err = watcher.Add(filePath)
-	if err != nil {
+	if err := watcher.Add(path); err != nil {
 		watcher.Close()
-		return fmt.Errorf("watch file error: %s", err)
+		return err
 	}
-
-	var reloadMu sync.Mutex
+	changed := make(chan struct{}, 1)
 	go func() {
-		var pre time.Time
 		defer watcher.Close()
 		for {
 			select {
 			case e := <-watcher.Events:
-				if e.Has(fsnotify.Chmod) {
-					continue
-				}
-				if pre.Add(10 * time.Second).After(time.Now()) {
-					continue
-				}
-				pre = time.Now()
-				go func() {
-					time.Sleep(5 * time.Second)
-					reloadMu.Lock()
-					defer reloadMu.Unlock()
-					log.Println("config file changed, reloading...")
-					next := New()
-					err := next.LoadFromPath(filePath)
-					if err != nil {
-						log.Printf("reload config error: %s", err)
-						return
+				if !e.Has(fsnotify.Chmod) {
+					select {
+					case changed <- struct{}{}:
+					default:
 					}
-					*p = *next
-					reload()
-					log.Println("reload config success")
-				}()
-			case err := <-watcher.Errors:
-				if err != nil {
-					log.Printf("File watcher error: %s", err)
 				}
+			case err := <-watcher.Errors:
+				log.WithError(err).Warn("Config file watcher error")
 			}
+		}
+	}()
+	go func() {
+		for range changed {
+			time.Sleep(reloadDelay)
+			// Drop changes made while waiting: this load reads them.
+			select {
+			case <-changed:
+			default:
+			}
+			next := New()
+			if err := next.LoadFromPath(path); err != nil {
+				log.WithError(err).Error("Config file changed but does not load; keeping the running config")
+				continue
+			}
+			*p = *next
+			log.Info("Config file changed, reloading")
+			reload()
 		}
 	}()
 	return nil

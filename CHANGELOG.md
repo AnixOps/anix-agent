@@ -26,6 +26,12 @@
   block-rule copy, online-IP table and alive-list copy are gone: anixcore
   applies the rules, the cores report online devices and the controller
   keeps the alive list.
+- The configuration loader is rewritten. Comments and trailing commas are
+  still accepted. A node entry is one flat object (as the installers write
+  it); the nested `ApiConfig` / `Options` form and `Include` are no longer
+  read. Unused keys are no longer modelled: `SendIP`, `RuleListPath`,
+  `CertConfig.RejectUnknownSni` and the `LimitConfig` IP-recorder,
+  connection, device and Redis settings (they had no effect).
 
 ### Removed
 

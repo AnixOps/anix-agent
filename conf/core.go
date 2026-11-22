@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+// CoreConfig is one entry of "Cores": its Type picks the settings it
+// carries (anixcore or wireguard).
 type CoreConfig struct {
 	Type            string           `json:"Type"`
 	Name            string           `json:"Name"`
@@ -12,31 +14,28 @@ type CoreConfig struct {
 	AnixcoreConfig  *AnixcoreConfig  `json:"-"`
 }
 
-type _CoreConfig CoreConfig
-
-func (c *CoreConfig) UnmarshalJSON(b []byte) error {
-	err := json.Unmarshal(b, (*_CoreConfig)(c))
-	if err != nil {
+func (c *CoreConfig) UnmarshalJSON(data []byte) error {
+	type plain CoreConfig
+	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
 		return err
 	}
 	switch c.Type {
-	// The third-party cores are gone: a configuration that still lists
-	// one runs on anixcore: the anx-node Agent upgrades install when it is
-	// there, like a configuration without cores, else anixcore on PATH.
+	case "anixcore":
+		c.AnixcoreConfig = NewAnixcoreConfig()
+		return json.Unmarshal(data, c.AnixcoreConfig)
+	case "wireguard":
+		c.WireGuardConfig = NewWireGuardConfig()
+		return json.Unmarshal(data, c.WireGuardConfig)
 	case "xray", "sing", "hysteria2":
+		// The third-party cores are gone: a configuration that still lists
+		// one runs on anixcore: the anx-node Agent upgrades install when it
+		// is there, like a configuration without cores, else anixcore on PATH.
 		c.Type = "anixcore"
 		c.AnixcoreConfig = NewAnixcoreConfig()
 		if installedAnxNode() {
 			c.AnixcoreConfig.BinaryPath = InstalledAnxNodePath
 			c.AnixcoreConfig.AnxLine = true
 		}
-		return nil
-	case "wireguard":
-		c.WireGuardConfig = NewWireGuardConfig()
-		return json.Unmarshal(b, c.WireGuardConfig)
-	case "anixcore":
-		c.AnixcoreConfig = NewAnixcoreConfig()
-		return json.Unmarshal(b, c.AnixcoreConfig)
 	}
 	return nil
 }
