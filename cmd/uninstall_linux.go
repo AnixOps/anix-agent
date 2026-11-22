@@ -81,6 +81,58 @@ var (
 	uninstallSystemctl = hostSystemctl
 )
 
+// purgeConfig is uninstall's --purge.
+var purgeConfig bool
+
+func init() {
+	uninstall := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove the " + productName + " from this host",
+		Long: `Removes what the installers wrote (AnixOps Control's install.sh and
+scripts/install.sh), each only when it is the installer's:
+  units    ` + strings.Join(uninstallUnits, " ") + `
+  files    ` + polkitRule + `, ` + upgrade.DefaultLibDir + `,
+           ` + rootInstallDir + ` (except its data/), the link ` + agentBinaryLink + `,
+           the manager script ` + managerScript + `
+Nothing else on the host is touched.
+
+Kept unless --purge: the configuration (` + filepath.Dir(defaultConfigPath) + `), the node's
+identity and state (` + conf.DefaultStateRoot + `), ` + rootInstallDir + `/data, ` + gostStateDir + `,
+` + relayStateDir + ` and ` + sysctlDropIn + `.
+
+Always kept: the service accounts, the forwarding rules and qdiscs in the
+kernel, and the directories of earlier releases; the report names them.`,
+		Args:         cobra.NoArgs,
+		RunE:         uninstallHandle,
+		SilenceUsage: true,
+	}
+	uninstall.Flags().BoolVar(&purgeConfig, "purge", false, "also remove the configuration, the node's identity and state, "+
+		rootInstallDir+"/data, the gost and relay state and the sysctl drop-in")
+	command.AddCommand(uninstall)
+}
+
+func uninstallHandle(cmd *cobra.Command, _ []string) error {
+	if err := ensureRoot(); err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprint(out, Warn("确定要卸载 "+productName+" 吗?(y/N)"), " ")
+	var answer string
+	_, _ = fmt.Fscanln(cmd.InOrStdin(), &answer)
+	if answer != "y" && answer != "Y" {
+		fmt.Fprintln(out, "已取消卸载")
+		return nil
+	}
+	u := &uninstaller{root: uninstallRoot, purge: purgeConfig, systemctl: uninstallSystemctl}
+	err := u.uninstall()
+	u.report(out)
+	if err != nil {
+		return fmt.Errorf("卸载未完成: %w", err)
+	}
+	fmt.Fprintln(out, Ok("卸载成功"))
+	return nil
+}
+
 func hostSystemctl(args ...string) error {
 	path, err := osexec.LookPath("systemctl")
 	if err != nil {
@@ -391,48 +443,5 @@ func ensureRoot() error {
 	if uninstallRoot == "" && os.Geteuid() != 0 {
 		return errors.New("uninstall changes systemd units and system directories: run it as root (sudo anix-agent uninstall)")
 	}
-	return nil
-}
-
-var purgeConfig bool
-
-func init() {
-	uninstall := &cobra.Command{
-		Use:   "uninstall",
-		Short: "Uninstall AnixOps Agent",
-		Long: `Removes what the installers wrote: the anix-agent, anixops-gost and updater
-(anixops-agent-updater.path and .service) units, the polkit rule, the binaries
-in /usr/lib/anixops-agent and /usr/local/anixops-agent, and the commands linked
-to them. The configuration and the node's identity and state stay, for a later
-install, unless --purge is given.`,
-		Args:         cobra.NoArgs,
-		RunE:         uninstallHandle,
-		SilenceUsage: true,
-	}
-	uninstall.Flags().BoolVar(&purgeConfig, "purge", false, "also remove the configuration (/etc/anixops/agent), the identity and state (/var/lib/anixops-agent, /var/lib/anixops-gost) and the sysctl drop-in")
-	command.AddCommand(uninstall)
-}
-
-// uninstallHandle asks for confirmation, then removes the installers' units,
-// binaries and links; --purge also removes the configuration and the state.
-func uninstallHandle(cmd *cobra.Command, _ []string) error {
-	if err := ensureRoot(); err != nil {
-		return err
-	}
-	out := cmd.OutOrStdout()
-	var yes string
-	fmt.Fprintln(out, Warn("确定要卸载 AnixOps Agent 吗?(y/N)"))
-	_, _ = fmt.Fscan(cmd.InOrStdin(), &yes)
-	if strings.ToLower(yes) != "y" {
-		fmt.Fprintln(out, "已取消卸载")
-		return nil
-	}
-	u := &uninstaller{root: uninstallRoot, purge: purgeConfig, systemctl: uninstallSystemctl}
-	err := u.uninstall()
-	u.report(out)
-	if err != nil {
-		return fmt.Errorf("卸载未完成: %w", err)
-	}
-	fmt.Fprintln(out, Ok("卸载成功"))
 	return nil
 }

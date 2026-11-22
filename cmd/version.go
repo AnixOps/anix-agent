@@ -6,7 +6,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is the release tag; release builds set it through -ldflags.
+// version is the release; release builds set it with
+// -ldflags "-X github.com/AnixOps/anix-agent/v5/cmd.version=<tag>".
 var version = "v5.0.8"
 
 func init() {
@@ -14,12 +15,8 @@ func init() {
 		Use:   "version",
 		Short: "Print the version",
 		Args:  cobra.NoArgs,
-		Run: func(c *cobra.Command, _ []string) {
-			fmt.Fprintln(c.OutOrStdout(), versionLine())
+		Run: func(cmd *cobra.Command, _ []string) {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", productName, version)
 		},
 	})
-}
-
-func versionLine() string {
-	return productName + " " + version
 }
