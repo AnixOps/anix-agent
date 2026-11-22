@@ -38,6 +38,11 @@
   `MaxTimeDiff` that nothing filled, and the unused Hysteria2 bandwidth,
   TUIC 0-RTT and vless encryption fields are gone; Control sends none of
   them. A missing `base_config` interval no longer risks a panic.
+- The core registry, the `Core` interface and the multi-core `Selector`
+  are rewritten: `AddUsers` and `DelUsers` take `(tag, info, users)`,
+  `GetUserTrafficSlice` / `RollbackUserTrafficSlice` are `UserTraffic` /
+  `RollbackUserTraffic`, `RegisterCore` is `Register`, and the Selector
+  keeps its node map under a lock.
 
 ### Removed
 

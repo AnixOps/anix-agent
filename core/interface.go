@@ -3,30 +3,33 @@ package core
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/destinations"
 	"github.com/AnixOps/anix-agent/v5/conf"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 )
 
-type AddUsersParams struct {
-	Tag   string
-	Users []panel.UserInfo
-	*panel.NodeInfo
-}
-
+// Core runs nodes (each under a tag the controller picks) and their users.
 type Core interface {
 	Start() error
 	Close() error
-	AddNode(tag string, info *panel.NodeInfo, config *conf.Options) error
-	DelNode(tag string) error
-	AddUsers(p *AddUsersParams) (added int, err error)
-	GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error)
-	DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo) error
-	Protocols() []string
+	// Type names the core; Protocols are the node types it serves.
 	Type() string
+	Protocols() []string
+
+	AddNode(tag string, info *panel.NodeInfo, options *conf.Options) error
+	DelNode(tag string) error
+	// AddUsers adds or updates users and answers how many it added.
+	AddUsers(tag string, info *panel.NodeInfo, users []panel.UserInfo) (int, error)
+	DelUsers(tag string, info *panel.NodeInfo, users []panel.UserInfo) error
+	// UserTraffic is each user's traffic since the last call that reset.
+	UserTraffic(tag string, reset bool) ([]panel.UserTraffic, error)
 }
 
+// The optional interfaces below are implemented by the cores that can.
+
+// OnlineDeviceProvider reports the IPs users are connected from.
 type OnlineDeviceProvider interface {
 	GetOnlineDevice(tag string) ([]panel.OnlineUser, error)
 }
@@ -37,19 +40,16 @@ type RuntimeHealthProvider interface {
 	RuntimeHealth(tag string) (healthy bool, message string)
 }
 
-// RateLimitUpdater is implemented by cores whose runtime can enforce a
-// per-user rate outside the protocol parser. WireGuard uses Linux tc rules
-// keyed by each peer address; the existing proxy cores keep their own limiter
-// hooks and do not need to implement this optional interface.
+// RateLimitUpdater sets a user's rate (bytes per second, 0 for none)
+// outside the protocol: WireGuard shapes each peer address with tc.
 type RateLimitUpdater interface {
 	UpdateUserRateLimit(tag, uuid string, speedLimit int) error
 }
 
-// TrafficRollbacker lets a core restore a traffic cursor when the panel
-// rejected an otherwise successfully sampled report. It is optional because
-// existing proxy cores do not expose reversible counters.
+// TrafficRollbacker gives a traffic window that Control did not take back
+// to the core's counters, for the next report.
 type TrafficRollbacker interface {
-	RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error
+	RollbackUserTraffic(tag string, traffic []panel.UserTraffic) error
 }
 
 // DestinationProvider is implemented by cores that count each user's
@@ -61,7 +61,7 @@ type DestinationProvider interface {
 }
 
 // EgressApplier is implemented by cores that run a node's egress routes
-// (panel.EgressConfig): the Xray and anixcore cores. ApplyEgress replaces what the core
+// (panel.EgressConfig): the anixcore core. ApplyEgress replaces what the core
 // ran from the previous call; an empty configuration removes it all.
 type EgressApplier interface {
 	ApplyEgress(config *panel.EgressConfig) error

@@ -208,11 +208,7 @@ func (c *Controller) startWith(node *panel.NodeInfo, users []panel.UserInfo, ali
 		return fmt.Errorf("add new node error: %s", err)
 	}
 	c.nodeAdded = true
-	added, err := c.server.AddUsers(&vCore.AddUsersParams{
-		Tag:      c.tag,
-		Users:    c.userList,
-		NodeInfo: node,
-	})
+	added, err := c.server.AddUsers(c.tag, node, c.userList)
 	if err != nil {
 		return fmt.Errorf("add users error: %s", err)
 	}

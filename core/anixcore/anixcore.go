@@ -66,7 +66,7 @@ var (
 )
 
 func init() {
-	vCore.RegisterCore(coreType, New)
+	vCore.Register(coreType, New)
 }
 
 // node is what the core keeps per tag so a restarted anixcore can be given

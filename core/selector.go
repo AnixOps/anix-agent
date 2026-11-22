@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"slices"
 	"sync"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -19,52 +19,50 @@ import (
 // removing a node may take it as already removed.
 var ErrNodeNotFound = errors.New("the node is not have")
 
+// Selector runs several cores as one: each node runs on one of them, and
+// the per-node calls go to the core that runs the tag.
 type Selector struct {
-	cores map[string]Core
-	// order is the configuration order of cores: a node that names no
-	// core runs on the first one that serves its protocol.
-	order []string
-	nodes sync.Map
+	// cores in configuration order; a node that names no core runs on the
+	// first one that serves its protocol.
+	cores []namedCore
+	mu    sync.RWMutex
+	nodes map[string]Core // by tag
 }
 
-func NewSelector(c []conf.CoreConfig) (Core, error) {
-	cs := make(map[string]Core, len(c))
-	order := make([]string, 0, len(c))
-	for _, t := range c {
+type namedCore struct {
+	name string // the configuration's Name, else its Type
+	Core
+}
+
+func newSelector(configs []conf.CoreConfig) (*Selector, error) {
+	s := &Selector{nodes: map[string]Core{}}
+	for i := range configs {
+		c := &configs[i]
+		name := c.Name
+		if name == "" {
+			name = c.Type
+		}
 		// A configuration that listed several of the retired cores
 		// (xray, sing, hysteria2) now names anixcore more than once.
-		if _, seen := cs[coreKey(t)]; seen {
+		if slices.ContainsFunc(s.cores, func(n namedCore) bool { return n.name == name }) {
 			continue
 		}
-		f, ok := cores[strings.ToLower(t.Type)]
+		f, ok := factories[c.Type]
 		if !ok {
-			return nil, errors.New("unknown core type: " + t.Type)
+			return nil, fmt.Errorf("unknown core type %q", c.Type)
 		}
-		core1, err := f(&t)
+		core, err := f(c)
 		if err != nil {
 			return nil, err
 		}
-		key := coreKey(t)
-		order = append(order, key)
-		cs[key] = core1
+		s.cores = append(s.cores, namedCore{name, core})
 	}
-	return &Selector{
-		cores: cs,
-		order: order,
-	}, nil
-}
-
-func coreKey(t conf.CoreConfig) string {
-	if t.Name != "" {
-		return t.Name
-	}
-	return t.Type
+	return s, nil
 }
 
 func (s *Selector) Start() error {
-	for i := range s.cores {
-		err := s.cores[i].Start()
-		if err != nil {
+	for _, c := range s.cores {
+		if err := c.Start(); err != nil {
 			return err
 		}
 	}
@@ -73,211 +71,203 @@ func (s *Selector) Start() error {
 
 func (s *Selector) Close() error {
 	var errs []error
-	for i := range s.cores {
-		if err := s.cores[i].Close(); err != nil {
-			errs = append(errs, err)
-		}
+	for _, c := range s.cores {
+		errs = append(errs, c.Close())
 	}
 	return errors.Join(errs...)
 }
 
-func isSupported(protocol string, protocols []string) bool {
-	for i := range protocols {
-		if protocol == protocols[i] {
-			return true
-		}
+func (s *Selector) Type() string {
+	names := make([]string, len(s.cores))
+	for i, c := range s.cores {
+		names[i] = c.name
 	}
-	return false
+	return fmt.Sprintf("Selector%v", names)
 }
 
-func (s *Selector) AddNode(tag string, info *panel.NodeInfo, option *conf.Options) error {
-	if len(option.CoreName) == 0 && len(option.Core) == 0 {
-		return s.addByProtocol(tag, info, option)
+func (s *Selector) Protocols() []string {
+	var protocols []string
+	for _, c := range s.cores {
+		protocols = append(protocols, c.Protocols()...)
 	}
-	var core Core
-	if len(option.CoreName) > 0 {
-		// use name to select core
-		if c, ok := s.cores[option.CoreName]; ok {
-			core = c
+	return protocols
+}
+
+// AddNode runs the node on the core its options name (CoreName, else
+// Core), or else by its protocol.
+func (s *Selector) AddNode(tag string, info *panel.NodeInfo, options *conf.Options) error {
+	if options.CoreName == "" && options.Core == "" {
+		return s.addByProtocol(tag, info, options)
+	}
+	i := slices.IndexFunc(s.cores, func(c namedCore) bool {
+		if options.CoreName != "" {
+			return c.name == options.CoreName
 		}
-	} else {
-		for _, key := range s.order {
-			if c := s.cores[key]; option.Core == c.Type() {
-				core = c
-				break
-			}
-		}
+		return c.Type() == options.Core
+	})
+	if i < 0 {
+		// A node that names a core which is not configured (the retired
+		// xray, sing or hysteria2, whose names Control may still send)
+		// runs on the first core that serves its protocol.
+		log.WithFields(log.Fields{"tag": tag, "core": options.Core, "core_name": options.CoreName}).Warn("the node names a core that is not configured; running it on the first core that serves its protocol")
+		options.Core, options.CoreName = "", ""
+		return s.addByProtocol(tag, info, options)
 	}
-	if core == nil {
-		// A node that names a core by CoreName or Core which is not
-		// configured (the retired xray, sing or hysteria2, whose names
-		// Control may still send) runs on the first core that serves its
-		// protocol.
-		log.WithFields(log.Fields{"tag": tag, "core": option.Core, "core_name": option.CoreName}).Warn("the node names a core that is not configured; running it on the first core that serves its protocol")
-		option.Core, option.CoreName = "", ""
-		return s.addByProtocol(tag, info, option)
-	}
-	err := core.AddNode(tag, info, option)
-	if err != nil {
+	if err := s.cores[i].AddNode(tag, info, options); err != nil {
 		return err
 	}
-	s.nodes.Store(tag, core)
+	s.setNode(tag, s.cores[i].Core)
 	return nil
 }
 
 // addByProtocol runs the node on the first core in configuration order that
 // serves its protocol. A core that refuses the node (anixcore, for a setting
-// it does not have yet) hands it to the next one.
-func (s *Selector) addByProtocol(tag string, info *panel.NodeInfo, option *conf.Options) error {
-	raw := option.RawOptions
+// it does not have yet) hands it to the next one. The options are read
+// again for each core, as that core's options.
+func (s *Selector) addByProtocol(tag string, info *panel.NodeInfo, options *conf.Options) error {
+	raw := options.RawOptions
 	var refused error
-	for _, key := range s.order {
-		core := s.cores[key]
-		if !isSupported(info.Type, core.Protocols()) {
+	for _, c := range s.cores {
+		if !slices.Contains(c.Protocols(), info.Type) {
 			continue
 		}
-		option.Core = core.Type()
-		if err := option.UnmarshalJSON(raw); err != nil {
-			return fmt.Errorf("unmarshal option error: %s", err)
+		if err := options.UnmarshalJSON(raw); err != nil {
+			return fmt.Errorf("node options: %w", err)
 		}
-		option.RawOptions = nil
-		err := core.AddNode(tag, info, option)
+		options.Core, options.RawOptions = c.Type(), nil
+		err := c.AddNode(tag, info, options)
 		if err == nil {
-			s.nodes.Store(tag, core)
+			s.setNode(tag, c.Core)
 			return nil
 		}
-		refused = errors.Join(refused, fmt.Errorf("%s: %w", core.Type(), err))
-		log.WithFields(log.Fields{"tag": tag, "core": core.Type()}).WithError(err).Warn("core refused the node; trying the next core that serves its protocol")
+		refused = errors.Join(refused, fmt.Errorf("%s: %w", c.Type(), err))
+		log.WithFields(log.Fields{"tag": tag, "core": c.Type()}).WithError(err).Warn("core refused the node; trying the next core that serves its protocol")
 	}
 	if refused != nil {
 		return refused
 	}
-	return errors.New("the node type is not support")
+	return fmt.Errorf("no core serves %s nodes", info.Type)
+}
+
+func (s *Selector) setNode(tag string, c Core) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c == nil {
+		delete(s.nodes, tag)
+	} else {
+		s.nodes[tag] = c
+	}
+}
+
+// node is the core that runs tag.
+func (s *Selector) node(tag string) (Core, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if c, ok := s.nodes[tag]; ok {
+		return c, nil
+	}
+	return nil, ErrNodeNotFound
 }
 
 func (s *Selector) DelNode(tag string) error {
-	if t, e := s.nodes.Load(tag); e {
-		err := t.(Core).DelNode(tag)
-		if err != nil {
-			return err
-		}
-		s.nodes.Delete(tag)
-		return nil
+	c, err := s.node(tag)
+	if err != nil {
+		return err
 	}
-	return ErrNodeNotFound
+	if err := c.DelNode(tag); err != nil {
+		return err
+	}
+	s.setNode(tag, nil)
+	return nil
 }
 
-func (s *Selector) AddUsers(p *AddUsersParams) (added int, err error) {
-	t, e := s.nodes.Load(p.Tag)
-	if !e {
-		return 0, ErrNodeNotFound
+func (s *Selector) AddUsers(tag string, info *panel.NodeInfo, users []panel.UserInfo) (int, error) {
+	c, err := s.node(tag)
+	if err != nil {
+		return 0, err
 	}
-	return t.(Core).AddUsers(p)
+	return c.AddUsers(tag, info, users)
 }
 
-func (s *Selector) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraffic, error) {
-	t, e := s.nodes.Load(tag)
-	if !e {
-		return nil, ErrNodeNotFound
+func (s *Selector) DelUsers(tag string, info *panel.NodeInfo, users []panel.UserInfo) error {
+	c, err := s.node(tag)
+	if err != nil {
+		return err
 	}
-	return t.(Core).GetUserTrafficSlice(tag, reset)
+	return c.DelUsers(tag, info, users)
+}
+
+func (s *Selector) UserTraffic(tag string, reset bool) ([]panel.UserTraffic, error) {
+	c, err := s.node(tag)
+	if err != nil {
+		return nil, err
+	}
+	return c.UserTraffic(tag, reset)
+}
+
+// nodeAs is the core that runs tag as an optional interface T; ok is false
+// when that core does not implement it.
+func nodeAs[T any](s *Selector, tag string) (impl T, ok bool, err error) {
+	c, err := s.node(tag)
+	if err != nil {
+		return impl, false, err
+	}
+	impl, ok = c.(T)
+	return impl, ok, nil
 }
 
 func (s *Selector) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
-	t, e := s.nodes.Load(tag)
-	if !e {
-		return nil, ErrNodeNotFound
-	}
-	provider, ok := t.(OnlineDeviceProvider)
+	p, ok, err := nodeAs[OnlineDeviceProvider](s, tag)
 	if !ok {
-		return nil, nil
+		return nil, err
 	}
-	return provider.GetOnlineDevice(tag)
+	return p.GetOnlineDevice(tag)
 }
 
 func (s *Selector) GetDestinationTraffic(tag string) ([]destinations.Traffic, error) {
-	t, e := s.nodes.Load(tag)
-	if !e {
-		return nil, ErrNodeNotFound
-	}
-	provider, ok := t.(DestinationProvider)
+	p, ok, err := nodeAs[DestinationProvider](s, tag)
 	if !ok {
-		return nil, nil
+		return nil, err
 	}
-	return provider.GetDestinationTraffic(tag)
+	return p.GetDestinationTraffic(tag)
 }
 
 func (s *Selector) UpdateUserRateLimit(tag, uuid string, speedLimit int) error {
-	t, ok := s.nodes.Load(tag)
+	p, ok, err := nodeAs[RateLimitUpdater](s, tag)
 	if !ok {
-		return ErrNodeNotFound
+		return err
 	}
-	updater, ok := t.(RateLimitUpdater)
-	if !ok {
-		return nil
-	}
-	return updater.UpdateUserRateLimit(tag, uuid, speedLimit)
+	return p.UpdateUserRateLimit(tag, uuid, speedLimit)
 }
 
-func (s *Selector) RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error {
-	t, ok := s.nodes.Load(tag)
+func (s *Selector) RollbackUserTraffic(tag string, traffic []panel.UserTraffic) error {
+	p, ok, err := nodeAs[TrafficRollbacker](s, tag)
 	if !ok {
-		return ErrNodeNotFound
+		return err
 	}
-	rollbacker, ok := t.(TrafficRollbacker)
-	if !ok {
-		return nil
-	}
-	return rollbacker.RollbackUserTrafficSlice(tag, traffic)
+	return p.RollbackUserTraffic(tag, traffic)
 }
 
-func (s *Selector) DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo) error {
-	t, e := s.nodes.Load(tag)
-	if !e {
-		return ErrNodeNotFound
-	}
-	return t.(Core).DelUsers(users, tag, info)
-}
-
-func (s *Selector) Protocols() []string {
-	protocols := make([]string, 0)
-	for _, key := range s.order {
-		protocols = append(protocols, s.cores[key].Protocols()...)
-	}
-	return protocols
-}
-
-func (s *Selector) Type() string {
-	t := "Selector("
-	var flag bool
-	for _, n := range s.order {
-		c := s.cores[n]
-		if flag {
-			t += " "
-		} else {
-			flag = true
-		}
-		if len(n) == 0 {
-			t += c.Type()
-		} else {
-			t += n
+// firstAs is the first core in configuration order that implements T.
+func firstAs[T any](s *Selector) (T, bool) {
+	for _, c := range s.cores {
+		if impl, ok := c.Core.(T); ok {
+			return impl, true
 		}
 	}
-	t += ")"
-	return t
+	var none T
+	return none, false
 }
 
 // ErrEgressUnsupported is answered for egress routes when no core of the
 // configuration runs them.
-var ErrEgressUnsupported = errors.New("no core of this Agent runs egress routes (they need the xray or anixcore core)")
+var ErrEgressUnsupported = errors.New("no core of this Agent runs egress routes (they need the anixcore core)")
 
 // ApplyEgress implements EgressApplier: the first core in configuration
 // order that runs egress routes runs them all.
 func (s *Selector) ApplyEgress(config *panel.EgressConfig) error {
-	for _, key := range s.order {
-		if applier, ok := s.cores[key].(EgressApplier); ok {
-			return applier.ApplyEgress(config)
-		}
+	if a, ok := firstAs[EgressApplier](s); ok {
+		return a.ApplyEgress(config)
 	}
 	if config.Empty() {
 		return nil
@@ -287,12 +277,10 @@ func (s *Selector) ApplyEgress(config *panel.EgressConfig) error {
 
 // ApplyQoS implements QoSApplier: the first core in configuration order
 // that runs traffic priorities runs them; without one, they are left out
-// (a warning, not an error: traffic still flows).
+// (traffic still flows).
 func (s *Selector) ApplyQoS(config json.RawMessage) error {
-	for _, key := range s.order {
-		if applier, ok := s.cores[key].(QoSApplier); ok {
-			return applier.ApplyQoS(config)
-		}
+	if a, ok := firstAs[QoSApplier](s); ok {
+		return a.ApplyQoS(config)
 	}
 	return nil
 }
@@ -301,10 +289,8 @@ func (s *Selector) ApplyQoS(config json.RawMessage) error {
 // configuration order that runs an exit policy runs it; without one, it is
 // left out.
 func (s *Selector) ApplyExitPolicy(policy panel.ExitPolicy) error {
-	for _, key := range s.order {
-		if applier, ok := s.cores[key].(ExitPolicyApplier); ok {
-			return applier.ApplyExitPolicy(policy)
-		}
+	if a, ok := firstAs[ExitPolicyApplier](s); ok {
+		return a.ApplyExitPolicy(policy)
 	}
 	return nil
 }
@@ -312,10 +298,8 @@ func (s *Selector) ApplyExitPolicy(policy panel.ExitPolicy) error {
 // MainlandBlocked implements MainlandCounter with the core that runs the
 // exit policy.
 func (s *Selector) MainlandBlocked(ctx context.Context) (uint64, error) {
-	for _, key := range s.order {
-		if counter, ok := s.cores[key].(MainlandCounter); ok {
-			return counter.MainlandBlocked(ctx)
-		}
+	if c, ok := firstAs[MainlandCounter](s); ok {
+		return c.MainlandBlocked(ctx)
 	}
 	return 0, nil
 }
@@ -323,9 +307,9 @@ func (s *Selector) MainlandBlocked(ctx context.Context) (uint64, error) {
 // networkApplier is the first core in configuration order that runs the
 // device network model, nil for none.
 func (s *Selector) networkApplier() NetworkApplier {
-	for _, key := range s.order {
-		if applier, ok := s.cores[key].(NetworkApplier); ok && len(applier.NetworkKinds()) > 0 {
-			return applier
+	for _, c := range s.cores {
+		if a, ok := c.Core.(NetworkApplier); ok && len(a.NetworkKinds()) > 0 {
+			return a
 		}
 	}
 	return nil
@@ -334,8 +318,8 @@ func (s *Selector) networkApplier() NetworkApplier {
 // NetworkKinds implements NetworkApplier: the kinds of the first core that
 // runs the network model, which runs it all.
 func (s *Selector) NetworkKinds() []*networkv1.KindSupport {
-	if applier := s.networkApplier(); applier != nil {
-		return applier.NetworkKinds()
+	if a := s.networkApplier(); a != nil {
+		return a.NetworkKinds()
 	}
 	return nil
 }
@@ -346,16 +330,16 @@ var ErrNetworkUnsupported = errors.New("no core of this Agent runs the network m
 
 // ApplyNetwork implements NetworkApplier.
 func (s *Selector) ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStatus, error) {
-	if applier := s.networkApplier(); applier != nil {
-		return applier.ApplyNetwork(plan)
+	if a := s.networkApplier(); a != nil {
+		return a.ApplyNetwork(plan)
 	}
 	return nil, ErrNetworkUnsupported
 }
 
 // NetworkStatus implements NetworkApplier.
 func (s *Selector) NetworkStatus() (*networkv1.NetworkStatus, error) {
-	if applier := s.networkApplier(); applier != nil {
-		return applier.NetworkStatus()
+	if a := s.networkApplier(); a != nil {
+		return a.NetworkStatus()
 	}
 	return nil, ErrNetworkUnsupported
 }

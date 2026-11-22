@@ -25,11 +25,13 @@ func (f *errorTestCore) DelNode(string) error {
 	f.delNodeCalls++
 	return f.delNodeErr
 }
-func (f *errorTestCore) AddUsers(*vCore.AddUsersParams) (int, error) { return 0, nil }
-func (f *errorTestCore) GetUserTrafficSlice(string, bool) ([]panel.UserTraffic, error) {
+func (f *errorTestCore) AddUsers(string, *panel.NodeInfo, []panel.UserInfo) (int, error) {
+	return 0, nil
+}
+func (f *errorTestCore) UserTraffic(string, bool) ([]panel.UserTraffic, error) {
 	return nil, nil
 }
-func (f *errorTestCore) DelUsers([]panel.UserInfo, string, *panel.NodeInfo) error {
+func (f *errorTestCore) DelUsers(string, *panel.NodeInfo, []panel.UserInfo) error {
 	return f.delUsersErr
 }
 func (f *errorTestCore) Protocols() []string { return nil }

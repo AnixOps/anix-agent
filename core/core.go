@@ -1,3 +1,4 @@
+// Package core runs nodes on the compiled-in cores (anixcore, wireguard).
 package core
 
 import (
@@ -7,41 +8,50 @@ import (
 	"os"
 	"os/exec"
 	"slices"
-	"sort"
+	"strings"
 
 	"github.com/AnixOps/anix-agent/v5/conf"
 )
 
-var (
-	cores = map[string]func(c *conf.CoreConfig) (Core, error){}
-)
+// Factory builds a core from its configuration.
+type Factory func(*conf.CoreConfig) (Core, error)
 
-func NewCore(c []conf.CoreConfig) (Core, error) {
-	if len(c) == 0 {
-		return nil, errors.New("no have vail core")
-	}
-	// multi core
-	if len(c) > 1 {
-		return NewSelector(c)
-	}
-	// one core
-	if f, ok := cores[c[0].Type]; ok {
-		return f(&c[0])
-	} else {
-		return nil, errors.New("unknown core type")
-	}
+// factories are the compiled-in cores by type; each registers in init.
+var factories = map[string]Factory{}
+
+// Register makes the core type t available to configurations.
+func Register(t string, f Factory) {
+	factories[t] = f
 }
 
-func RegisterCore(t string, f func(c *conf.CoreConfig) (Core, error)) {
-	cores[t] = f
-}
+var errNoCore = errors.New("no core to run")
 
-func RegisteredCore() []string {
-	cs := make([]string, 0, len(cores))
-	for k := range cores {
-		cs = append(cs, k)
+// NewForConfig builds the configuration's cores: one core as itself,
+// several behind a Selector. Without any configured core but with nodes,
+// every compiled-in core runs behind a Selector (DefaultCoreConfigs), which
+// picks the core by each node's protocol.
+func NewForConfig(configs []conf.CoreConfig, nodes int) (Core, error) {
+	if len(configs) == 0 && nodes > 0 {
+		defaults, err := DefaultCoreConfigs()
+		if err != nil {
+			return nil, err
+		}
+		if len(defaults) == 0 {
+			return nil, errNoCore
+		}
+		return newSelector(defaults)
 	}
-	return cs
+	switch len(configs) {
+	case 0:
+		return nil, errNoCore
+	case 1:
+		f, ok := factories[configs[0].Type]
+		if !ok {
+			return nil, fmt.Errorf("unknown core type %q", configs[0].Type)
+		}
+		return f(&configs[0])
+	}
+	return newSelector(configs)
 }
 
 // defaultCorePreference orders the compiled-in cores of a configuration
@@ -66,64 +76,44 @@ var anixcoreBinary = func() (path string, anxLine bool, ok bool) {
 
 // DefaultCoreConfigs are the cores of a node whose configuration comes from
 // Control's stream (the O1 installer writes "Cores": []): every compiled-in
-// core with its defaults, in defaultCorePreference order, so each node of
-// the stream's configuration runs on the core that serves its protocol.
+// core with its defaults, in defaultCorePreference order then by name, so
+// each node of the stream's configuration runs on the core that serves its
+// protocol.
 func DefaultCoreConfigs() ([]conf.CoreConfig, error) {
-	names := RegisteredCore()
-	preference := defaultCorePreference
 	anixcorePath, anxLine, installed := anixcoreBinary()
-	if !installed {
+	names := make([]string, 0, len(factories))
+	for name := range factories {
 		// A compiled-in anixcore without its binary would fail to start.
-		preference = preference[1:]
-		names = slices.DeleteFunc(names, func(name string) bool { return name == "anixcore" })
+		if name != "anixcore" || installed {
+			names = append(names, name)
+		}
 	}
 	rank := func(name string) int {
-		for i, preferred := range preference {
-			if preferred == name {
-				return i
-			}
+		if i := slices.Index(defaultCorePreference, name); i >= 0 {
+			return i
 		}
-		return len(preference)
+		return len(defaultCorePreference)
 	}
-	sort.Slice(names, func(i, j int) bool {
-		if rank(names[i]) != rank(names[j]) {
-			return rank(names[i]) < rank(names[j])
+	slices.SortFunc(names, func(a, b string) int {
+		if d := rank(a) - rank(b); d != 0 {
+			return d
 		}
-		return names[i] < names[j]
+		return strings.Compare(a, b)
 	})
-	configs := make([]conf.CoreConfig, 0, len(names))
-	for _, name := range names {
-		var config conf.CoreConfig
+	configs := make([]conf.CoreConfig, len(names))
+	for i, name := range names {
 		fields := map[string]any{"Type": name}
 		if name == "anixcore" {
-			fields["BinaryPath"] = anixcorePath
-			fields["AnxLine"] = anxLine
+			fields["BinaryPath"], fields["AnxLine"] = anixcorePath, anxLine
 		}
+		// Through JSON, so that each core's settings get their defaults.
 		document, err := json.Marshal(fields)
 		if err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(document, &config); err != nil {
+		if err := json.Unmarshal(document, &configs[i]); err != nil {
 			return nil, fmt.Errorf("default %s core: %w", name, err)
 		}
-		configs = append(configs, config)
 	}
 	return configs, nil
-}
-
-// NewForConfig builds the configuration's core. Without any configured
-// core but with nodes, every compiled-in core runs behind a Selector
-// (DefaultCoreConfigs), which picks the core by each node's protocol.
-func NewForConfig(cores []conf.CoreConfig, nodes int) (Core, error) {
-	if len(cores) > 0 || nodes == 0 {
-		return NewCore(cores)
-	}
-	defaults, err := DefaultCoreConfigs()
-	if err != nil {
-		return nil, err
-	}
-	if len(defaults) == 0 {
-		return nil, errors.New("no have vail core")
-	}
-	return NewSelector(defaults)
 }

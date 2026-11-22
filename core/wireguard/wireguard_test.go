@@ -11,7 +11,6 @@ import (
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/conf"
-	vCore "github.com/AnixOps/anix-agent/v5/core"
 )
 
 type fakeExecutor struct {
@@ -57,17 +56,13 @@ func TestWireGuard_AddNodeAndUsersApplyConfig(t *testing.T) {
 	if err := core.AddNode("test-node", node, &conf.Options{}); err != nil {
 		t.Fatalf("AddNode() error = %v", err)
 	}
-	added, err := core.AddUsers(&vCore.AddUsersParams{
-		Tag:      "test-node",
-		NodeInfo: node,
-		Users: []panel.UserInfo{{
-			Id:                    1,
-			Uuid:                  "user-1",
-			WireGuardPeerIP:       "10.66.0.2",
-			WireGuardPublicKey:    testWireGuardKey,
-			WireGuardPresharedKey: testWireGuardKey,
-		}},
-	})
+	added, err := core.AddUsers("test-node", node, []panel.UserInfo{{
+		Id:                    1,
+		Uuid:                  "user-1",
+		WireGuardPeerIP:       "10.66.0.2",
+		WireGuardPublicKey:    testWireGuardKey,
+		WireGuardPresharedKey: testWireGuardKey,
+	}})
 	if err != nil {
 		t.Fatalf("AddUsers() error = %v", err)
 	}
@@ -129,13 +124,10 @@ func TestWireGuard_AddUsersRejectsMissingPeer(t *testing.T) {
 		},
 	}
 
-	_, err := core.AddUsers(&vCore.AddUsersParams{
-		Tag: "test-node",
-		Users: []panel.UserInfo{{
-			Uuid:               "user-1",
-			WireGuardPublicKey: "peer-public",
-		}},
-	})
+	_, err := core.AddUsers("test-node", nil, []panel.UserInfo{{
+		Uuid:               "user-1",
+		WireGuardPublicKey: "peer-public",
+	}})
 	if err == nil || !strings.Contains(err.Error(), "peer_ip") {
 		t.Fatalf("AddUsers() error = %v, want peer_ip error", err)
 	}
@@ -176,17 +168,14 @@ func TestWireGuard_AddUsersAppliesPerPeerTcRateLimit(t *testing.T) {
 	if err := core.AddNode("rate-node", testNodeInfo(), &conf.Options{LimitConfig: conf.LimitConfig{SpeedLimit: 20}}); err != nil {
 		t.Fatalf("AddNode() error = %v", err)
 	}
-	_, err := core.AddUsers(&vCore.AddUsersParams{
-		Tag: "rate-node",
-		Users: []panel.UserInfo{{
-			Id:                    1,
-			Uuid:                  "rate-user",
-			WireGuardPeerIP:       "10.66.0.2",
-			WireGuardPublicKey:    testWireGuardKey,
-			WireGuardPresharedKey: testWireGuardKey,
-			SpeedLimit:            625000,
-		}},
-	})
+	_, err := core.AddUsers("rate-node", nil, []panel.UserInfo{{
+		Id:                    1,
+		Uuid:                  "rate-user",
+		WireGuardPeerIP:       "10.66.0.2",
+		WireGuardPublicKey:    testWireGuardKey,
+		WireGuardPresharedKey: testWireGuardKey,
+		SpeedLimit:            625000,
+	}})
 	if err != nil {
 		t.Fatalf("AddUsers() error = %v", err)
 	}
@@ -223,12 +212,12 @@ func TestWireGuard_AddUsersRefreshesChangedPeerCredentials(t *testing.T) {
 		t.Fatalf("AddNode() error = %v", err)
 	}
 	first := panel.UserInfo{Id: 1, Uuid: "changed-user", WireGuardPeerIP: "10.66.0.2", WireGuardPublicKey: testWireGuardKey}
-	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "changed-node", Users: []panel.UserInfo{first}}); err != nil {
+	if _, err := core.AddUsers("changed-node", nil, []panel.UserInfo{first}); err != nil {
 		t.Fatalf("first AddUsers() error = %v", err)
 	}
 	second := first
 	second.WireGuardPublicKey = testWireGuardKeyAlt
-	if _, err := core.AddUsers(&vCore.AddUsersParams{Tag: "changed-node", Users: []panel.UserInfo{second}}); err != nil {
+	if _, err := core.AddUsers("changed-node", nil, []panel.UserInfo{second}); err != nil {
 		t.Fatalf("second AddUsers() error = %v", err)
 	}
 	if !strings.Contains(renderConfig(core.nodes["changed-node"]), "PublicKey = "+testWireGuardKeyAlt) {
@@ -236,7 +225,7 @@ func TestWireGuard_AddUsersRefreshesChangedPeerCredentials(t *testing.T) {
 	}
 }
 
-func TestWireGuard_GetUserTrafficSliceParsesTransferDeltas(t *testing.T) {
+func TestWireGuard_UserTrafficParsesTransferDeltas(t *testing.T) {
 	exec := &fakeExecutor{
 		outputs: map[string][]byte{
 			"wg show wgtest transfer": []byte("peer-public 1000 2000\n"),
@@ -262,25 +251,25 @@ func TestWireGuard_GetUserTrafficSliceParsesTransferDeltas(t *testing.T) {
 		WireGuardPublicKey: "peer-public",
 	}
 
-	first, err := core.GetUserTrafficSlice("test-node", true)
+	first, err := core.UserTraffic("test-node", true)
 	if err != nil {
-		t.Fatalf("GetUserTrafficSlice() error = %v", err)
+		t.Fatalf("UserTraffic() error = %v", err)
 	}
 	if len(first) != 1 || first[0].UID != 7 || first[0].Upload != 1000 || first[0].Download != 2000 {
 		t.Fatalf("first traffic = %#v", first)
 	}
 
 	exec.outputs["wg show wgtest transfer"] = []byte("peer-public 1700 2600\n")
-	second, err := core.GetUserTrafficSlice("test-node", true)
+	second, err := core.UserTraffic("test-node", true)
 	if err != nil {
-		t.Fatalf("GetUserTrafficSlice() second error = %v", err)
+		t.Fatalf("UserTraffic() second error = %v", err)
 	}
 	if len(second) != 1 || second[0].Upload != 700 || second[0].Download != 600 {
 		t.Fatalf("second traffic = %#v", second)
 	}
 }
 
-func TestWireGuard_RollbackUserTrafficSliceRestoresCursor(t *testing.T) {
+func TestWireGuard_RollbackUserTrafficRestoresCursor(t *testing.T) {
 	exec := &fakeExecutor{
 		outputs: map[string][]byte{
 			"wg show wgtest transfer": []byte("peer-public 1700 2600\n"),
@@ -300,14 +289,14 @@ func TestWireGuard_RollbackUserTrafficSliceRestoresCursor(t *testing.T) {
 		traffic: make(map[string]map[string]trafficPair),
 	}
 
-	first, err := core.GetUserTrafficSlice("test-node", true)
+	first, err := core.UserTraffic("test-node", true)
 	if err != nil || len(first) != 1 {
 		t.Fatalf("initial traffic = %#v, err = %v", first, err)
 	}
-	if err := core.RollbackUserTrafficSlice("test-node", first); err != nil {
-		t.Fatalf("RollbackUserTrafficSlice() error = %v", err)
+	if err := core.RollbackUserTraffic("test-node", first); err != nil {
+		t.Fatalf("RollbackUserTraffic() error = %v", err)
 	}
-	second, err := core.GetUserTrafficSlice("test-node", true)
+	second, err := core.UserTraffic("test-node", true)
 	if err != nil || len(second) != 1 || second[0].Upload != 1700 || second[0].Download != 2600 {
 		t.Fatalf("rolled back traffic = %#v, err = %v", second, err)
 	}

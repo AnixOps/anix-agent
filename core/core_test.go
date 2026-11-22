@@ -27,25 +27,25 @@ func (f *fakeCore) AddNode(tag string, _ *panel.NodeInfo, _ *conf.Options) error
 	f.nodes = append(f.nodes, tag)
 	return nil
 }
-func (f *fakeCore) DelNode(string) error                  { return nil }
-func (f *fakeCore) AddUsers(*AddUsersParams) (int, error) { return 0, nil }
-func (f *fakeCore) GetUserTrafficSlice(string, bool) ([]panel.UserTraffic, error) {
+func (f *fakeCore) DelNode(string) error                                            { return nil }
+func (f *fakeCore) AddUsers(string, *panel.NodeInfo, []panel.UserInfo) (int, error) { return 0, nil }
+func (f *fakeCore) UserTraffic(string, bool) ([]panel.UserTraffic, error) {
 	return nil, nil
 }
-func (f *fakeCore) DelUsers([]panel.UserInfo, string, *panel.NodeInfo) error { return nil }
+func (f *fakeCore) DelUsers(string, *panel.NodeInfo, []panel.UserInfo) error { return nil }
 func (f *fakeCore) Protocols() []string                                      { return f.protocols }
 func (f *fakeCore) Type() string                                             { return f.kind }
 
 // withCores replaces the registered cores for a test.
 func withCores(t *testing.T, made map[string]*fakeCore) {
 	t.Helper()
-	previous := cores
-	cores = map[string]func(*conf.CoreConfig) (Core, error){}
+	previous := factories
+	factories = map[string]Factory{}
 	for name, core := range made {
 		core := core
-		cores[name] = func(*conf.CoreConfig) (Core, error) { return core, nil }
+		factories[name] = func(*conf.CoreConfig) (Core, error) { return core, nil }
 	}
-	t.Cleanup(func() { cores = previous })
+	t.Cleanup(func() { factories = previous })
 }
 
 func TestSelectorPicksTheFirstConfiguredCoreForAProtocol(t *testing.T) {
@@ -54,7 +54,7 @@ func TestSelectorPicksTheFirstConfiguredCoreForAProtocol(t *testing.T) {
 	withCores(t, map[string]*fakeCore{"xray": xray, "sing": sing})
 	for range 20 {
 		xray.nodes, sing.nodes = nil, nil
-		selector, err := NewSelector([]conf.CoreConfig{{Type: "sing"}, {Type: "xray"}})
+		selector, err := newSelector([]conf.CoreConfig{{Type: "sing"}, {Type: "xray"}})
 		require.NoError(t, err)
 		require.NoError(t, selector.AddNode("a", &panel.NodeInfo{Type: "vless"}, &conf.Options{RawOptions: []byte(`{}`)}))
 		require.NoError(t, selector.AddNode("b", &panel.NodeInfo{Type: "vmess"}, &conf.Options{RawOptions: []byte(`{}`)}))
@@ -119,12 +119,12 @@ func TestRetiredCoreTypesRunOnAnixcore(t *testing.T) {
 	}
 	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"vless"}}
 	created := 0
-	previous := cores
-	t.Cleanup(func() { cores = previous })
-	cores = map[string]func(*conf.CoreConfig) (Core, error){
+	previous := factories
+	t.Cleanup(func() { factories = previous })
+	factories = map[string]Factory{
 		"anixcore": func(*conf.CoreConfig) (Core, error) { created++; return anixcore, nil },
 	}
-	_, err := NewSelector(configured)
+	_, err := newSelector(configured)
 	require.NoError(t, err)
 	require.Equal(t, 1, created, "the three retired cores are one anixcore")
 
@@ -147,24 +147,24 @@ func (e *egressCore) ApplyEgress(config *panel.EgressConfig) error {
 func TestSelectorAppliesEgressOnTheFirstCoreThatRunsIt(t *testing.T) {
 	sing := &fakeCore{kind: "sing", protocols: []string{"vless"}}
 	xray := &egressCore{fakeCore: fakeCore{kind: "xray", protocols: []string{"vless"}}}
-	previous := cores
-	cores = map[string]func(*conf.CoreConfig) (Core, error){
+	previous := factories
+	factories = map[string]Factory{
 		"sing": func(*conf.CoreConfig) (Core, error) { return sing, nil },
 		"xray": func(*conf.CoreConfig) (Core, error) { return xray, nil },
 	}
-	t.Cleanup(func() { cores = previous })
+	t.Cleanup(func() { factories = previous })
 
-	selector, err := NewSelector([]conf.CoreConfig{{Type: "sing"}, {Type: "xray"}})
+	selector, err := newSelector([]conf.CoreConfig{{Type: "sing"}, {Type: "xray"}})
 	require.NoError(t, err)
 	config := &panel.EgressConfig{Relays: []panel.EgressRelay{{ID: 1, Port: 1, Method: "m", Password: "k"}}}
-	require.NoError(t, selector.(EgressApplier).ApplyEgress(config))
+	require.NoError(t, selector.ApplyEgress(config))
 	require.Equal(t, []*panel.EgressConfig{config}, xray.applied)
 
 	withCores(t, map[string]*fakeCore{"sing": sing})
-	onlySing, err := NewSelector([]conf.CoreConfig{{Type: "sing"}})
+	onlySing, err := newSelector([]conf.CoreConfig{{Type: "sing"}})
 	require.NoError(t, err)
-	require.NoError(t, onlySing.(EgressApplier).ApplyEgress(nil), "nothing to run")
-	require.ErrorIs(t, onlySing.(EgressApplier).ApplyEgress(config), ErrEgressUnsupported)
+	require.NoError(t, onlySing.ApplyEgress(nil), "nothing to run")
+	require.ErrorIs(t, onlySing.ApplyEgress(config), ErrEgressUnsupported)
 }
 
 func TestDefaultCoresPutAnInstalledAnixcoreFirst(t *testing.T) {
@@ -204,7 +204,7 @@ func TestSelectorHandsARefusedNodeToTheNextCore(t *testing.T) {
 	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"hysteria2"}, refuse: errors.New("port hopping is not supported")}
 	sing := &fakeCore{kind: "sing", protocols: []string{"hysteria2"}}
 	withCores(t, map[string]*fakeCore{"anixcore": anixcore, "sing": sing})
-	selector, err := NewSelector([]conf.CoreConfig{{Type: "anixcore"}, {Type: "sing"}})
+	selector, err := newSelector([]conf.CoreConfig{{Type: "anixcore"}, {Type: "sing"}})
 	require.NoError(t, err)
 	require.NoError(t, selector.AddNode("h", &panel.NodeInfo{Type: "hysteria2"}, &conf.Options{RawOptions: []byte(`{}`)}))
 	require.Equal(t, []string{"h"}, sing.nodes)
@@ -218,7 +218,7 @@ func TestSelectorHandsARefusedNodeToTheNextCore(t *testing.T) {
 func TestSelectorRunsANodeNamingARetiredCoreOnAnixcore(t *testing.T) {
 	anixcore := &fakeCore{kind: "anixcore", protocols: []string{"vless", "shadowsocks"}}
 	withCores(t, map[string]*fakeCore{"anixcore": anixcore})
-	selector, err := NewSelector([]conf.CoreConfig{{Type: "anixcore"}})
+	selector, err := newSelector([]conf.CoreConfig{{Type: "anixcore"}})
 	require.NoError(t, err)
 	for tag, option := range map[string]*conf.Options{
 		"by-name": {CoreName: "sing", RawOptions: []byte(`{}`)},

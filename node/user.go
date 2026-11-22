@@ -9,7 +9,7 @@ import (
 )
 
 func (c *Controller) reportUserTrafficTask() (err error) {
-	userTraffic, err := c.server.GetUserTrafficSlice(c.tag, true)
+	userTraffic, err := c.server.UserTraffic(c.tag, true)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
@@ -81,7 +81,7 @@ func (c *Controller) onlineToReport(userTraffic []panel.UserTraffic) (map[int][]
 // core's counters and the dynamic speed limit.
 func (c *Controller) rollbackTraffic(userTraffic []panel.UserTraffic) {
 	if rollbacker, ok := c.server.(vCore.TrafficRollbacker); ok {
-		if rollbackErr := rollbacker.RollbackUserTrafficSlice(c.tag, userTraffic); rollbackErr != nil {
+		if rollbackErr := rollbacker.RollbackUserTraffic(c.tag, userTraffic); rollbackErr != nil {
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": rollbackErr,
