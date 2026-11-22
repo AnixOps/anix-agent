@@ -13,8 +13,19 @@
   nodes in different regions to tell a node that is down from one that is
   unreachable from some regions only.
 
+### Changed
+
+- The command line is rewritten without code from the forked upstream. A
+  config reload now replaces the core and the nodes under one lock, the
+  current core is closed at exit, and a log file that cannot be opened
+  leaves logging on stdout.
+
 ### Removed
 
+- `anix-agent synctime` (and its NTP client): hosts keep time with their own
+  NTP service.
+- The node-derived key mode of `anix-agent x25519`: it now prints a random
+  key pair without prompting.
 - The V2bX install migration: `scripts/install.sh` no longer reads
   `/etc/V2bX` or `/usr/local/V2bX`, takes over or restores `V2bX.service`,
   falls back to `V2bX-*` release assets, or links the `V2bX` /
