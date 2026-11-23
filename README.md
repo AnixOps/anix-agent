@@ -1,5 +1,7 @@
 # AnixOps Agent
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/AnixOps/anix-agent/v5.svg)](https://pkg.go.dev/github.com/AnixOps/anix-agent/v5)
+
 维护入口：[Agent 运维手册](docs/MAINTENANCE_P0.md)
 
 维护事件契约：[docs/contracts/maintenance-event.schema.json](docs/contracts/maintenance-event.schema.json)
