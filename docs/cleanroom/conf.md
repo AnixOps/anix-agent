@@ -36,7 +36,6 @@ rest of the code uses):
 | `Cores` | `CoresConfig` | `[]CoreConfig` |
 | `Nodes` | `NodeConfig` | `[]NodeConfig` |
 | `Forward` | `Forward` | `*ForwardConfig` |
-| `AnxLine` | `AnxLine` | `*anxline.Config` |
 | `AnxKeyRotation` | `AnxKeyRotation` | `*anxserver.RotationConfig` |
 
 Top-level decoding uses `encoding/json/v2` (member names are matched
@@ -49,7 +48,7 @@ unknown members ignored); configs in the field depend on that.
 `(*Conf).LoadFromPath(path string) error`: read the file, strip
 comments, decode into the receiver, then run, in this order, stopping at
 the first error: `normalizeAgentNodes`, `validateAgentIdentities`,
-`validateNodeCredentials`, `Forward.Validate`, `AnxLine.Validate`,
+`validateNodeCredentials`, `Forward.Validate`,
 `AnxKeyRotation.Validate`, `ValidateForProduction` (the `Validate` methods
 accept a nil receiver). Errors name the file.
 

@@ -30,7 +30,7 @@ var _ vCore.NetworkApplier = (*Core)(nil)
 // ingresses of either kind and egresses leaving from the device's own
 // address. The Agent adds dedicated_ip where it can route, and the
 // accepting anx_line ends where anx-server is installed (node network.go);
-// anx-node (AnxLine) dials anx_line transports (anxline.go).
+// anx-node (AnxLine) dials anx_line transports (anxline.go in this package).
 var networkKinds = []*networkv1.KindSupport{
 	{Component: networkv1.Component_COMPONENT_INGRESS, Kind: network.IngressDirect, Versions: []uint32{1}, Executor: coreType},
 	{Component: networkv1.Component_COMPONENT_INGRESS, Kind: network.IngressNAT, Versions: []uint32{1}, Executor: coreType},

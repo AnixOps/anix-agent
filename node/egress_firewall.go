@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 )
 
@@ -25,8 +25,12 @@ var lookupHost = func(ctx context.Context, host string) ([]netip.Addr, error) {
 
 // runNFT runs an nft script; a variable for tests.
 var runNFT = func(ctx context.Context, script string) error {
-	_, err := anxline.ExecRunner{}.Run(ctx, script, anxline.DefaultNFT, "-f", "-")
-	return err
+	cmd := exec.CommandContext(ctx, "nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nft: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // applyRelayFirewall replaces the table with the rules of the relays that

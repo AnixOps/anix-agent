@@ -101,8 +101,7 @@ client) and deriving an X25519 key from node id, type and token.
    When `c.Forward.ForwardNodeOnly()`: `node.StartForward(c.Forward,
    component)` (closed at exit); if there are no cores and no nodes,
    wait for SIGINT/SIGTERM and return nil.
-5. When `c.AnxLine.Enabled()`: `anxline.Start(*c.AnxLine,
-   anxline.Options{})` (closed at exit).
+5. (Removed 2026-11-23: the top-level `AnxLine` section.)
 6. When `c.AnxKeyRotation.Enabled()`: `node.KeyRotator(...)`; non-nil →
    `Start`, closed at exit; nil → warn that there is no anx-server.
 7. The data plane: `node.New()`; when forwarding is on and the Agent is

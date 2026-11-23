@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v5/anxline"
 	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
 	"github.com/AnixOps/anix-control/sdk/network"
@@ -320,9 +319,8 @@ func (h *fakeHost) last() *fakeProcess {
 	return h.processes[len(h.processes)-1]
 }
 
-func newManager(t *testing.T, host *fakeHost) (*Manager, *[]string) {
+func newManager(t *testing.T, host *fakeHost) *Manager {
 	keygens := 0
-	var rst []string
 	m := &Manager{
 		Binary: "/usr/bin/anx-server", Dir: filepath.Join(t.TempDir(), "anx-server"),
 		Launch: host.launch, Connect: host.connect,
@@ -332,22 +330,13 @@ func newManager(t *testing.T, host *fakeHost) (*Manager, *[]string) {
 			require.NoError(t, os.WriteFile(args[1], []byte("secret"), 0o600))
 			return []byte("private key written\npublic: PUBLIC-" + string(rune('0'+keygens)) + "\n"), nil
 		},
-		RST: func(links []anxline.Link) error {
-			for _, link := range links {
-				rst = append(rst, link.ID+" "+link.FakeTCP.Local)
-			}
-			if len(links) == 0 {
-				rst = append(rst, "none")
-			}
-			return nil
-		},
 	}
 	t.Cleanup(m.Close)
-	return m, &rst
+	return m
 }
 
 func TestManagerPublicKeyIsKept(t *testing.T) {
-	m, _ := newManager(t, &fakeHost{})
+	m := newManager(t, &fakeHost{})
 	public, err := m.PublicKey()
 	require.NoError(t, err)
 	assert.Equal(t, "PUBLIC-1", public)
@@ -378,7 +367,7 @@ func applied(t *testing.T, m *Manager, ids ...string) {
 // with its links, and an empty plan stops it.
 func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 	host := &fakeHost{unready: 2}
-	m, rst := newManager(t, host)
+	m := newManager(t, host)
 	raised := 0
 	m.Buffers = func() error { raised++; return nil }
 	accepts, err := Accepts(acceptPlan())
@@ -394,7 +383,6 @@ func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 	assert.Contains(t, args, " --listen 127.0.0.1:", "the unused --listen listener stays on loopback")
 	assert.Contains(t, args, "--bare-listen 203.0.113.20:443 --quic-listen 203.0.113.20:8443 --quic-sockbuf 8388608 --quic-dgram-buf 1048576 --faketcp-listen 203.0.113.20:8444 --egress-source 203.0.113.20")
 	assert.ElementsMatch(t, []string{"tr-a", "tr-b"}, host.links())
-	assert.Equal(t, []string{"tr-a 203.0.113.20", "tr-b 203.0.113.20"}, *rst)
 	assert.Equal(t, 1, raised, "a QUIC listener gets the larger socket buffers")
 
 	// tr-b leaves: removed on the running process.
@@ -408,10 +396,8 @@ func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 	require.Eventually(t, func() bool { return host.started() == 2 && len(host.links()) == 1 }, 2*time.Second, 5*time.Millisecond)
 	applied(t, m, "tr-a")
 
-	*rst = nil
 	require.NoError(t, m.Apply(nil))
 	assert.Empty(t, m.Status())
-	assert.Equal(t, []string{"none"}, *rst, "the RST rules are removed")
 	select {
 	case <-host.last().Done():
 	default:
@@ -427,7 +413,7 @@ func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 // the bundle goes when the process does.
 func TestManagerSecuresTheManagementAPI(t *testing.T) {
 	host := &fakeHost{}
-	m, _ := newManager(t, host)
+	m := newManager(t, host)
 	m.MTLS = true
 	accepts, err := Accepts(acceptPlan())
 	require.NoError(t, err)
@@ -464,7 +450,7 @@ func TestManagerSecuresTheManagementAPI(t *testing.T) {
 // Without MTLS the API stays plaintext on loopback.
 func TestManagerPlaintextWithoutMTLS(t *testing.T) {
 	host := &fakeHost{}
-	m, _ := newManager(t, host)
+	m := newManager(t, host)
 	accepts, err := Accepts(acceptPlan())
 	require.NoError(t, err)
 	require.NoError(t, m.Apply(accepts[:1]))
@@ -478,7 +464,7 @@ func TestManagerPlaintextWithoutMTLS(t *testing.T) {
 
 func TestManagerRelays(t *testing.T) {
 	host := &fakeHost{}
-	m, _ := newManager(t, host)
+	m := newManager(t, host)
 	accepts, err := Accepts(relayPlan())
 	require.NoError(t, err)
 	accepts = accepts[:1]
@@ -515,7 +501,7 @@ func TestManagerRelays(t *testing.T) {
 
 func TestManagerReportsADownServer(t *testing.T) {
 	host := &fakeHost{unready: 1 << 30}
-	m, _ := newManager(t, host)
+	m := newManager(t, host)
 	previous := readyTimeout
 	readyTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { readyTimeout = previous })
@@ -616,7 +602,7 @@ func TestAcceptsReverseL2(t *testing.T) {
 	assert.ErrorContains(t, err, "server key")
 
 	host := &fakeHost{}
-	m, _ := newManager(t, host)
+	m := newManager(t, host)
 	require.NoError(t, m.Apply(accepts[1:]))
 	applied(t, m, "tr-b")
 	assert.Equal(t, []string{"tr-b=198.51.100.30:24444+a2(www.example.org,anx1-hub)"}, host.reverseDials())
@@ -640,7 +626,7 @@ func TestAcceptsReverseL2(t *testing.T) {
 // restart, and drops them with the transport.
 func TestManagerDialsBack(t *testing.T) {
 	host := &fakeHost{}
-	m, _ := newManager(t, host)
+	m := newManager(t, host)
 	accepts, err := Accepts(reversePlan())
 	require.NoError(t, err)
 	reverse := accepts[1:]
@@ -683,7 +669,7 @@ func TestWithStatFallsBackToTheProbeHandshake(t *testing.T) {
 }
 
 func TestReverseA2KeyIsACopyThatStays(t *testing.T) {
-	m, _ := newManager(t, &fakeHost{})
+	m := newManager(t, &fakeHost{})
 	public, err := m.ReverseA2PublicKey()
 	require.NoError(t, err)
 	assert.Equal(t, "PUBLIC-1", public, "starts as the server key")

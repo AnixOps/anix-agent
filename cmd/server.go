@@ -12,7 +12,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
 	"github.com/AnixOps/anix-agent/v5/common/hosttune"
 	"github.com/AnixOps/anix-agent/v5/conf"
@@ -68,14 +67,6 @@ func runServer(path string, watchConfig bool) error {
 				return nil
 			}
 		}
-	}
-
-	if c.AnxLine.Enabled() {
-		manager, err := anxline.Start(*c.AnxLine, anxline.Options{})
-		if err != nil {
-			return fmt.Errorf("start ANX-Line: %w", err)
-		}
-		defer manager.Close()
 	}
 
 	if c.AnxKeyRotation.Enabled() {
