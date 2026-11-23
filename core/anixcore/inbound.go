@@ -236,15 +236,15 @@ func inboundConfig(tag string, info *panel.NodeInfo, options *conf.Options) (map
 		if node.MaxStreams > 0 {
 			inbound["max_streams"] = node.MaxStreams
 		}
-		// The wg jacket listens on its own UDP port, beside the A2 TCP port.
+		// wg_listen_port is a UDP port of its own.
 		if node.WGListenPort > 0 {
 			inbound["wg_listen_port"] = node.WGListenPort
 		}
-		// The bare jacket listens on its own TCP port, beside the A2 one.
+		// bare_listen_port is a TCP port of its own.
 		if node.BareListenPort > 0 {
 			inbound["bare_listen_port"] = node.BareListenPort
 		}
-		// ANX licensing (anx spec §2.4.1): only while Control turns it on;
+		// ANX licensing: only while Control turns it on;
 		// an anx-node from before licensing refuses these keys.
 		if len(node.LicenseCA) > 0 {
 			inbound["license_ca"] = node.LicenseCA
@@ -286,10 +286,8 @@ func anxDestBehaviors(node *panel.AnxNode) map[string]map[string]any {
 
 // anxDestBehaviorMissing lists, as "dest:key", the site keys a dest lacks in
 // its merged behavior (dest_behavior, then dest_behaviors[dest]):
-// session_tickets and flight_records are the dest's own data (anx spec §4
-// items 8 and 9), not a preset's, so only a dest-probe run against that dest
-// gives them ("none" counts as given). Without them the server looks unlike
-// the dest when mirroring it is not possible.
+// session_tickets and flight_records are per dest, not a preset's ("none"
+// counts as given).
 func anxDestBehaviorMissing(node *panel.AnxNode) []string {
 	if node == nil {
 		return nil
@@ -501,7 +499,7 @@ var anxKeyFile = func() (string, error) {
 	return path, nil
 }
 
-// anxReverseA2KeyFile is the key of the reverse A2 rendezvous
+// anxReverseA2KeyFile is the key of the reverse rendezvous
 // (anxserver.ReverseA2KeyFile), made beside the server key when the Agent
 // reports its keys, before any plan asks for the rendezvous.
 var anxReverseA2KeyFile = func() (string, error) {

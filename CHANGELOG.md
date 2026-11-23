@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Comments and docs describe ANX only through the names in
+  `contracts/anx/BOUNDARY.md`; CI checks public wording
+  (`scripts/check_public_wording.sh`). No behaviour change.
+
 ## 5.0.9 - 2026-11-22
 
 Shipped with AnixOps Control 5.0.11 and anx-node 0.1.0-alpha.24. First
@@ -117,7 +123,7 @@ Shipped with AnixOps Control 5.0.6 and anx-node 0.1.0-alpha.22.
 
 ### Added
 
-- ANX licensing (anx spec §2.4.1): an ANX node's `license_ca` and
+- ANX licensing: an ANX node's `license_ca` and
   `require_license` from Control go to the anx-node inbound. Control sends
   them only while ANX licensing is on (off by default); they need an
   anx-node with licensing (anx PR #256).
@@ -174,9 +180,8 @@ revision 3 (Snell); Snell nodes need a later anx-node release.
 
 ## 5.0.3 - 2026-11-10
 
-Shipped with AnixOps Control 5.0.3 and anx-node 0.1.0-alpha.19
-(bare jacket, cover-site data, anx-server key rotation). Every new option is
-off until Control sets it.
+Shipped with AnixOps Control 5.0.3 and anx-node 0.1.0-alpha.19. Every new
+option is off until Control sets it.
 
 ### Added
 
@@ -186,14 +191,13 @@ off until Control sets it.
   waits until every anx-server and anx-node has reloaded the key file (they
   do every 30 s), then reports the new public key to Control, which hands it
   to subscriptions and plans; the previous key stays accepted for the grace
-  period. Turning it on only starts the clock. The reverse A2 key does not
-  rotate. Needs an anx-server with `rotate-key` (anx #211); older ones fail
+  period. Turning it on only starts the clock. The reverse rendezvous key
+  does not rotate. Needs an anx-server with `rotate-key` (anx #211); older ones fail
   the rotation and keep the key.
-- The reverse A2 rendezvous (`anx_line.reverse_a2_key`) gets a key file of
+- The reverse rendezvous (`anx_line.reverse_a2_key`) gets a key file of
   its own, `reverse-a2.key`, made once as a copy of the anx-server key and
-  reported to Control as `anx_reverse_a2`. The anx-server key can then rotate
-  (anx §2.6) without breaking l2 reverse links, whose egress pins the
-  rendezvous key and has no grace period. Nodes running a rendezvous restart
+  reported to Control as `anx_reverse_a2`, so the anx-server key can rotate
+  without affecting l2 reverse links. Nodes running a rendezvous restart
   anx-node once with the new path (same key). Needs the matching Control,
   which hands l2 egresses this key.
 - ANX nodes pass `dest_behaviors` (per-dest overrides keyed by an entry of
@@ -201,16 +205,12 @@ off until Control sets it.
   sets it, limited to the entries of the current list; the missing site data
   warning now checks each dest on its merged behavior. Needs an anx-node with
   per-dest behavior (anx #208).
-- ANX nodes pass `bare_listen_port` (the bare jacket, a random-looking TCP
-  port for users dialing a domestic entry) to the anx-node inbound when
-  Control sets it. Needs an anx-node whose ANX inbound serves the bare jacket;
-  older ones refuse the key, so Control sends it only when set.
-- ANX nodes pass `dest_stack` and `dest_behavior` (the cover site's TLS stack
-  preset and per-key overrides, anx spec §4 item 6) to the anx-node inbound
+- ANX nodes pass `bare_listen_port` to the anx-node inbound when Control
+  sets it. Older anx-node releases refuse the key, so Control sends it only
+  when set.
+- ANX nodes pass `dest_stack` and `dest_behavior` to the anx-node inbound
   when Control sets them. A node with a `dest` whose `dest_behavior` lacks
-  `session_tickets` or `flight_records` logs a warning: those are the cover
-  site's own data, measured with `anx-lab dest-probe`, and without them the
-  node looks unlike the site when it cannot mirror it.
+  `session_tickets` or `flight_records` logs a warning.
 
 ### Fixed
 
@@ -448,7 +448,7 @@ earlier commit and has no release.)
   user) goes to anixcore as `PUT /v1/qos` and again after anixcore
   restarts; a configuration without it turns them off. An anixcore without
   the `qos` feature is told nothing and a warning is logged.
-- mTLS on the anx-server / anx-node management APIs (anx spec §7, F-24).
+- mTLS on the anx-server / anx-node management APIs.
   When the installed release supports it, every anx-server the Agent
   starts and every anx-node with AnxLine gets a one-off CA, a server
   certificate for 127.0.0.1 and a client certificate; the server's half is
@@ -457,16 +457,12 @@ earlier commit and has no release.)
   management API. Older releases keep the loopback plaintext API. An
   anx-node that runs on its own takes `AnxLineApiTLS` (CertFile, KeyFile,
   CAFile, ServerName) for its `anx_line.mgmt_tls`.
-- L2 cross-border reverse dial-back (anx ANX-LINE-REVERSE §6.4): a reverse
-  anx_line transport with egress `l2` has the overseas egress dial back as
-  the A2 jacket's client, keeping `ReverseDial.a2_server_name` (the first
-  server name) and `hub_public` (the plan's `server_public`, the
-  rendezvous's key) and opening no port. The rendezvous opens the A2
-  listener instead of the bare one: a relay hop runs anx-server
-  `--reverse-a2-listen / --reverse-a2-sni / --reverse-a2-dest` (the first
-  name's site on 443, as on the forward A2 listener), anx-node gets
-  `anx_line.reverse_a2_listen / reverse_a2_key` (the Agent's anx-server
-  key) `/ reverse_a2_sni / reverse_a2_dest`. c1 only. contracts/anx
+- l2 reverse dial-back: a reverse anx_line transport with egress `l2`
+  sets `ReverseDial.a2_server_name` (the first server name) and
+  `hub_public` (the plan's `server_public`) and opens no port. A relay hop
+  runs anx-server `--reverse-a2-listen / --reverse-a2-sni /
+  --reverse-a2-dest`, anx-node gets `anx_line.reverse_a2_listen /
+  reverse_a2_key / reverse_a2_sni / reverse_a2_dest`. tcp only. contracts/anx
   resynced from anx public/ (anx #126) and the management client
   regenerated. Needs an anx-node release with anx #124 / #126.
 
@@ -535,15 +531,13 @@ The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.22.
 
 ### Added
 
-- C2 (QUIC) and C3 (fake TCP) reverse dial-back for `anx_line` reverse
-  transports, picked by the transport's carrier order (`c2` / `c3`; an empty
-  order stays C1 only). The egress keeps `ReverseDial.quic` / `faketcp`; the
+- quic and faketcp reverse dial-back for `anx_line` reverse transports,
+  picked by the transport's carrier order (an empty order stays tcp only). The egress keeps `ReverseDial.quic` / `faketcp`; the
   rendezvous (anx-node `anx_line.reverse_quic` / `reverse_faketcp`, or a relay
-  hop's `anx-server --reverse-quic` / `--reverse-faketcp`) accepts them on the
-  reverse listener's UDP port and the next TCP port. Needs an anx build with
+  hop's `anx-server --reverse-quic` / `--reverse-faketcp`) accepts them. Needs an anx build with
   these flags (anx #115); `contracts/anx` resynced.
 - ANX-A nodes for users. A node protocol of type `anx` runs as anx-node's
-  `anx` inbound (A2 jacket, TCP) with the Agent's anx-server key; a user's
+  `anx` inbound with the Agent's anx-server key; a user's
   key is derived from the UUID, the same way Control derives it for the
   `anx://` link. The node comes up once the Agent has made its anx-server
   key, which it does when it first reports to Control.
@@ -574,8 +568,8 @@ The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.21.
   anx-server; a record without that field counts as installed only with
   anx-server next to anx-node, so the next hand-off of the same kernel
   version installs it.
-- The network status carries the anx-server hybrid public key (about
-  2.5 KB of text), which the SDK used to refuse as text over 1 KB.
+- The network status carries the anx-server public key, which the SDK used
+  to refuse as text over 1 KB.
 
 ## 5.0.0-rc.20 - 2026-10-30
 
@@ -595,7 +589,7 @@ The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.19.
 
 ### Added
 
-- ANX-Line reverse dial-back (anx ANX-Line §4.6): an egress whose
+- ANX-Line reverse dial-back: an egress whose
   accepting anx_line transport is `reverse` opens no port and dials the
   rendezvous instead (anx-server `SetReverseDials`); the dialing anx-node
   opens the plan's rendezvous listener (`anx_line.reverse_listen`, an
@@ -663,10 +657,8 @@ The 5.0 candidate that ships with AnixOps Control 5.0.0-rc.16.
   taken out with the kernel), and the Agent runs it before one on `PATH`.
   Until now only anx-node was installed, so a Control-managed node accepted no
   `anx_line` transport.
-- A jacketed (l2, network-model kind `anx`) anx-server is started with
-  `--dest <first server name>:443`: what does not authenticate is forwarded to
-  the site the jacket wears, and the ServerHello copies it, instead of being
-  closed.
+- An l2 (network-model kind `anx`) anx-server is started with
+  `--dest <first server name>:443`.
 - The forwarding sysctl drop-in raises `net.core.rmem_max`/`wmem_max` to 8 MiB,
   what anx-server's `--quic-sockbuf` asks for (it was 7500000).
 
@@ -751,13 +743,9 @@ units. Upgrade the Agent before Control.
   gone one removed, and a restarted anixcore gets them again after the plan. The status
   carries each forward's cumulative bytes (`NetworkStatus.port_forwards`). anixcore's
   `PUT /v1/network` no longer receives the port forwards.
-- **ANX-Line host support (`AnxLine`, Linux).** For fake-TCP carriers the Agent installs the
-  nftables rules that drop the kernel's RST segments (`table ip anixops_anx_line`; the rules
-  are templates from the configuration, defaults per ANX-Line spec §4.2). For multipath links
-  it probes every MPTCP path every 200 ms (TCP or ICMP, from the path's own address) and takes
-  a dead path out with `ip mptcp endpoint delete` or `change … backup`, so the connection
-  moves to the other paths in about 1.5 s instead of the kernel's 5 s; recovered paths are
-  restored. See `docs/anx-line.md`.
+- **ANX-Line host support (`AnxLine`, Linux).** The Agent applies the host settings the
+  `AnxLine` section describes: nftables rules (`table ip anixops_anx_line`, templates from the
+  configuration) and path health checks for multipath links. See `docs/anx-line.md`.
 - **The device network model (`network.v1`, anixcore core).** An Agent whose core is anixcore
   lists `network.v1` in its Hello with the components it runs (ingresses `direct` and `nat`,
   egresses `nat_direct`). Control's plan for the device arrives in the configuration member
@@ -783,7 +771,7 @@ units. Upgrade the Agent before Control.
   exit are started again with their links. The server key is generated once
   (`/var/lib/anixops-agent/anx-server`) and its public half is reported in the network status
   (`public_keys`, also before the device has a plan), which is what the dialing ends' plans wait
-  for. Fake-TCP listeners get their RST rules in `table ip anixops_anx_line_net`. Forwarding
+  for. faketcp listeners get their rules in `table ip anixops_anx_line_net`. Forwarding
   from a transport into another transport is refused for now. The
   `--egress-source` flag needs anx-server from anx#93 or later.
 - **Dialing ends of `anx_line` transports (`AnixcoreConfig.AnxLine`, anx-node).** With
@@ -799,8 +787,7 @@ units. Upgrade the Agent before Control.
   from anx#95 or later.
 - **anx_line UDP under load.** An accepting anx-server with a QUIC listener runs with
   `--quic-sockbuf 8388608 --quic-dgram-buf 1048576`, and the Agent raises the host's
-  `net.core.rmem_max` / `wmem_max` to at least 8 MiB first (a higher value is kept), so relayed
-  UDP is not dropped in the listener's socket buffer (anx ANX-LINE-ONBOARDING §6; anx-server
+  `net.core.rmem_max` / `wmem_max` to at least 8 MiB first (a higher value is kept; anx-server
   prints the buffer the kernel gave on stderr). Dialing links ask for `udp_lanes = 1` (UDP on
   its own inter-hop connection). `contracts/anx` is synced with anx `public/` (`udp_lanes`,
   `LinkStat.udp_lane_*`, `Stats.udp`).

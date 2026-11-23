@@ -22,7 +22,7 @@ const (
 	nextPublicFile = "server.pub.next"
 )
 
-// Key rotation defaults and bounds (anx §2.6: anx-server rotate-key).
+// Key rotation defaults and bounds (anx-server rotate-key).
 const (
 	DefaultRotationIntervalDays = 30
 	DefaultRotationGraceDays    = 7
@@ -37,7 +37,7 @@ const (
 
 // RotationConfig turns on periodic rotation of the anx-server key (the key
 // of the anx_line accepting ends and of anx-node's ANX inbound). Off by
-// default. The reverse A2 key (ReverseA2KeyFile) never rotates.
+// default. The reverse rendezvous key (ReverseA2KeyFile) never rotates.
 type RotationConfig struct {
 	Enable bool `json:"Enable"`
 	// IntervalDays is the time between rotations (DefaultRotationIntervalDays
@@ -99,8 +99,8 @@ func (c *RotationConfig) Validate() error {
 
 // RotateKey rotates the server key with anx-server rotate-key, keeping the
 // previous key for grace, and leaves the new public key pending: Publish
-// makes it the reported one. The reverse A2 key is copied first if it was
-// not yet, so it keeps the key its egresses pinned. It answers the new
+// makes it the reported one. The reverse rendezvous key is copied first if
+// it was not yet, so it keeps the key its egresses were handed. It answers the new
 // public key.
 func (m *Manager) RotateKey(grace time.Duration) (string, error) {
 	m.mu.Lock()

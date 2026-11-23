@@ -13,6 +13,9 @@ anx-server 只作为独立进程，经 gRPC、HTTP 管理接口、配置文件�
 “No third-party engines or GPL modules” 步骤（`scripts/check_forbidden_deps.sh` 与 go-licenses）强制这一点。
 网络计划里的内核转发跳（`kernel_forwards`）由 `kernelfwd/` 直接用 nft 实现，保持轻量。
 
+- 本仓库与 pkg.go.dev 文档公开。ANX（anx-node / anx-server / ANX-Line）只能通过 `contracts/anx/BOUNDARY.md`
+  列出的字段、参数和名字来写；注释、文档、CHANGELOG 不解释其机制、规格章节、密钥规格或设计理由，
+  也不写敏感词（中性用词）。CI 的 “Public wording” 步骤（`scripts/check_public_wording.sh`）强制这一点。
 - 协议契约归 Control 所有：`github.com/AnixOps/anix-control/sdk`（`sdk/api/agent/v1`、
   `sdk/agentcontrol`、`sdk/plugincontrol`）。契约只增不删。
 - 客户端证书（mTLS）是唯一凭证。首次注册使用 Control 签发的一次性注册凭证
@@ -30,7 +33,7 @@ anx-server 只作为独立进程，经 gRPC、HTTP 管理接口、配置文件�
 | `conf/` | 配置文件结构与路径 |
 | `core/` | 内核接口与选择器；`core/anixcore`、`core/wireguard` |
 | `node/` | 节点控制器：配置快照、用户增量、流量上报、证书、网络模型 |
-| `anxserver/`、`anxline/`、`anxmtls/` | anx-node 进程管理、ANX-Line 链路（MPTCP / fake-TCP）、链路证书 |
+| `anxserver/`、`anxline/`、`anxmtls/` | anx-server 进程管理、ANX-Line 主机侧配置、管理面证书 |
 | `forward/` | 入口高可用的 vantage 探测、转发诊断与 forward.report（Control 在用） |
 | `kernelfwd/` | 网络计划的内核转发跳：一张 nft 表（DNAT + masquerade + 计数器）与目标 TCP 探测 |
 | `networkroute/`、`realityprobe/`、`diagnostic/` | 路由健康、Reality 目标探测、诊断任务 |

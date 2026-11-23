@@ -93,6 +93,13 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Public wording
+        # This repository and its pkg.go.dev page are public: ANX is named
+        # only through contracts/anx/BOUNDARY.md, and sensitive words are banned.
+        run: |
+          bash scripts/check_public_wording.sh --self-test
+          bash scripts/check_public_wording.sh
+
       - name: No third-party engines or GPL modules
         # The Agent drives anixcore (anx-node) as a separate process and must
         # never link sing-box / Xray / Hysteria / Mieru / gost again; the

@@ -566,7 +566,7 @@ func (x *GetOnlineResponse) GetOnline() []*UserOnline {
 
 type RealityJacket struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Camouflage target host:port.
+	// Fallback target host:port.
 	Dest          string   `protobuf:"bytes,1,opt,name=dest,proto3" json:"dest,omitempty"`
 	ServerNames   []string `protobuf:"bytes,2,rep,name=server_names,json=serverNames,proto3" json:"server_names,omitempty"`
 	unknownFields protoimpl.UnknownFields

@@ -8,10 +8,10 @@
 
 ## Removed: The Dual-Node Relay
 
-The entry/exit relay (WireGuard into a domestic entry, carried to an overseas
+The entry/exit relay (WireGuard into an entry node, carried to an
 exit over a gost `relay+quic` or `relay+wss` tunnel, with entry policy routing,
 exit NAT and a network-policy failover) ran on gost and was removed with it,
-together with its privileged namespace acceptance job. Cross-border paths run
+together with its privileged namespace acceptance job. Inter-node paths run
 on the network model (ANX-A); a WireGuard node with relay settings is refused.
 
 ## CI Check
