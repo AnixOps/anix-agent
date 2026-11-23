@@ -44,46 +44,39 @@ type SnellNode struct {
 	Mode string `json:"mode"`
 }
 
-// AnxNode is an ANX-A inbound (anx-node's `anx` inbound, A2 jacket): the
-// server names it answers to, the cover site everything else is forwarded
-// to, and the ALPN. The server key pair is the Agent's anx-server key.
+// AnxNode is an ANX-A inbound (anx-node's `anx` inbound): its server names,
+// dest and ALPN. The server key pair is the Agent's anx-server key.
 type AnxNode struct {
 	CommonNode
 	ServerNames []string `json:"server_names"`
 	Dest        string   `json:"dest"`
 	ALPN        []string `json:"alpn"`
-	// AllowNoSNI also accepts ClientHellos without SNI (the A2 no-SNI mode,
-	// clients dialing the IP).
+	// AllowNoSNI also accepts connections without SNI.
 	AllowNoSNI bool `json:"allow_no_sni"`
-	// ShapePlain hands out the plain shape profile instead of VisionLike.
+	// ShapePlain is anx-node's shape_plain option.
 	ShapePlain bool `json:"shape_plain"`
 	// MaxStreams caps the streams of one session; 0 = anx-node's default.
 	MaxStreams int `json:"max_streams"`
-	// WGListenPort is the UDP port of the wg jacket (WireGuard-shaped UDP,
-	// for users dialing a domestic entry); 0 = off.
+	// WGListenPort is anx-node's wg_listen_port (UDP); 0 = off.
 	WGListenPort int `json:"wg_listen_port"`
-	// BareListenPort is the TCP port of the bare jacket (random-looking TCP,
-	// for users dialing a domestic entry only); 0 = off.
+	// BareListenPort is anx-node's bare_listen_port (TCP); 0 = off.
 	BareListenPort int `json:"bare_listen_port"`
-	// DestStack picks the TLS stack preset (openssl, boringssl, go, rustls)
-	// for failed handshakes when dest is unreachable; empty = anx-node's
+	// DestStack is anx-node's dest_stack preset; empty = anx-node's
 	// default.
 	DestStack string `json:"dest_stack"`
-	// DestBehavior overrides the preset key by key (anx BOUNDARY.md
-	// dest_behavior); with a dest it should carry session_tickets and
-	// flight_records as measured by anx-lab dest-probe.
+	// DestBehavior is anx-node's dest_behavior, passed through as Control
+	// sends it.
 	DestBehavior map[string]any `json:"dest_behavior"`
 	// DestBehaviors holds per-dest overrides on top of DestBehavior, keyed
-	// by an entry of the dest list ("host:port"); usually the site keys
-	// session_tickets and flight_records of each backup dest.
+	// by an entry of the dest list ("host:port").
 	DestBehaviors map[string]map[string]any `json:"dest_behaviors"`
 	// LicenseCA lists the license CAs (64-hex Ed25519 public keys, at most
-	// two while rotating) whose device licenses the node accepts (anx spec
-	// §2.4.1); empty = licensing off. Control sends it only while ANX
+	// two while rotating) whose device licenses the node accepts; empty =
+	// licensing off. Control sends it only while ANX
 	// licensing is on.
 	LicenseCA []string `json:"license_ca"`
 	// RequireLicense makes the node refuse sessions without a license;
-	// needs LicenseCA and no wg jacket.
+	// needs LicenseCA and no WGListenPort.
 	RequireLicense bool `json:"require_license"`
 	// LicenseRevoked lists the devices (16-hex device_id) the panel
 	// revoked while their license may still be valid: the node refuses

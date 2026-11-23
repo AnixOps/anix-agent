@@ -391,7 +391,7 @@ func TestManagerRunsTheAcceptingEnds(t *testing.T) {
 	require.Equal(t, 1, host.started())
 	args := strings.Join(host.last().args, " ")
 	assert.Contains(t, args, "/usr/bin/anx-server run --key "+filepath.Join(m.Dir, "server.key")+" --mgmt 127.0.0.1:")
-	assert.Contains(t, args, " --listen 127.0.0.1:", "the unused jacket listener stays on loopback")
+	assert.Contains(t, args, " --listen 127.0.0.1:", "the unused --listen listener stays on loopback")
 	assert.Contains(t, args, "--bare-listen 203.0.113.20:443 --quic-listen 203.0.113.20:8443 --quic-sockbuf 8388608 --quic-dgram-buf 1048576 --faketcp-listen 203.0.113.20:8444 --egress-source 203.0.113.20")
 	assert.ElementsMatch(t, []string{"tr-a", "tr-b"}, host.links())
 	assert.Equal(t, []string{"tr-a 203.0.113.20", "tr-b 203.0.113.20"}, *rst)
@@ -543,7 +543,7 @@ func TestRaiseSocketBuffers(t *testing.T) {
 }
 
 // reversePlan has the egress tr-r dial back to the rendezvous instead of
-// listening (anx ANX-Line §4.6).
+// listening.
 func reversePlan() *networkv1.NetworkPlan {
 	plan := acceptPlan()
 	plan.Transports[0].GetAnxLine().TcpAddr = ""
@@ -578,15 +578,15 @@ func TestAcceptsReverse(t *testing.T) {
 	assert.Empty(t, accepts[0].Next.GetTcpAddr())
 	assert.Equal(t, "0.0.0.0:24444", accepts[0].ReverseListen)
 	assert.Contains(t, strings.Join(accepts[0].listener().args(), " "), "--reverse-listen 0.0.0.0:24444")
-	assert.NotContains(t, strings.Join(accepts[0].listener().args(), " "), "--reverse-quic", "an empty order is C1 only")
+	assert.NotContains(t, strings.Join(accepts[0].listener().args(), " "), "--reverse-quic", "an empty order is tcp only")
 
-	// C2 / C3 dial-backs follow the carrier order (anx ANX-LINE-REVERSE §6.3).
+	// quic / faketcp dial-backs follow the carrier order.
 	next.CarrierOrder = []string{"c2", "c3", "c1"}
 	accepts, err = Accepts(relay)
 	require.NoError(t, err)
 	args := strings.Join(accepts[0].listener().args(), " ")
 	assert.Contains(t, args, "--reverse-listen 0.0.0.0:24444 --reverse-quic --reverse-faketcp")
-	assert.Contains(t, args, "--quic-sockbuf", "the C2 dial-back gets the large UDP buffer")
+	assert.Contains(t, args, "--quic-sockbuf", "the quic dial-back gets the large UDP buffer")
 	egress := reversePlan()
 	egress.Transports[0].GetAnxLine().CarrierOrder = []string{"quic", "tcp"}
 	accepts, err = Accepts(egress)
@@ -597,9 +597,8 @@ func TestAcceptsReverse(t *testing.T) {
 		"--quic-dgram-buf", strconv.Itoa(QUICDatagramBuffer)}, accepts[1].listener().args(), "still listens on nothing")
 }
 
-// A reverse l2 transport (anx ANX-LINE-REVERSE §6.4): the egress dials
-// back as the A2 jacket's client, to the rendezvous's server key; a relay
-// hop into a reverse l2 link opens the A2 rendezvous.
+// A reverse l2 transport: the egress dials back with the rendezvous's
+// public key; a relay hop into a reverse l2 link opens the l2 rendezvous.
 func TestAcceptsReverseL2(t *testing.T) {
 	egress := reversePlan()
 	settings := egress.Transports[0].GetAnxLine()
@@ -663,7 +662,7 @@ func TestManagerDialsBack(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 	assert.Equal(t, 2, host.started(), "changed on the running process")
 
-	// Adding C2 needs the large UDP buffer, so a new process.
+	// Adding quic needs the large UDP buffer, so a new process.
 	reverse[0].ReverseQUIC = true
 	require.NoError(t, m.Apply(reverse))
 	require.Eventually(t, func() bool {
@@ -671,8 +670,8 @@ func TestManagerDialsBack(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 }
 
-// A carrier that measures no round trip (anything but QUIC) reports the
-// handshake of its last probe in its place.
+// A carrier without a measured round trip reports its last probe time in
+// its place.
 func TestWithStatFallsBackToTheProbeHandshake(t *testing.T) {
 	stat := &anxmgmtpb.LinkStat{Connected: true, Carrier: "c1", Probes: []*anxmgmtpb.CarrierProbe{
 		{Carrier: "c2", Ok: true, HandshakeMs: 9},
@@ -694,7 +693,7 @@ func TestReverseA2KeyIsACopyThatStays(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, server, reverse)
 
-	// The server key rotates; the reverse A2 key does not follow it.
+	// The server key rotates; the reverse rendezvous key does not follow it.
 	require.NoError(t, os.WriteFile(filepath.Join(m.Dir, keyFile), []byte("NEW SECRET"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(m.Dir, publicFile), []byte("PUBLIC-2\n"), 0o600))
 	again := &Manager{Binary: m.Binary, Dir: m.Dir}

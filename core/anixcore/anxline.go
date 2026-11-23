@@ -48,11 +48,10 @@ var connectLine = func(addr string, creds credentials.TransportCredentials) (anx
 	return anxmgmtpb.NewManagementClient(conn), conn.Close, nil
 }
 
-// reverseListener is anx-node's rendezvous listener (anx ANX-Line §4.6):
-// Listen ("" for none) and whether it also accepts the C2 / C3 dial-backs
-// (`anx_line.reverse_quic` / `reverse_faketcp`, anx ANX-LINE-REVERSE §6.3).
-// A2Listen is the A2 rendezvous of reverse l2 links (anx
-// ANX-LINE-REVERSE §6.4, `anx_line.reverse_a2_listen`), A2SNI its server
+// reverseListener is anx-node's rendezvous listener: Listen ("" for none)
+// and whether it also accepts quic / faketcp dial-backs
+// (`anx_line.reverse_quic` / `reverse_faketcp`). A2Listen is the rendezvous
+// of reverse l2 links (`anx_line.reverse_a2_listen`), A2SNI its server
 // names (comma-separated), "" for none.
 type reverseListener struct {
 	Listen          string
@@ -77,8 +76,7 @@ func dialLinks(plan *networkv1.NetworkPlan) (map[string]*anxmgmtpb.Link, reverse
 			return nil, reverseListener{}, err
 		}
 		if link.GetReverse() && link.GetEgress() == "l2" {
-			// One A2 rendezvous for all reverse l2 links, which dial back
-			// as the jacket's client on c1 (anx ANX-LINE-REVERSE §6.4).
+			// One rendezvous for all reverse l2 links, tcp only.
 			listen, names := transport.GetAnxLine().GetReverseListen(), link.GetServerName()
 			if listen == "" || names == "" || (reverse.A2Listen != "" && (listen != reverse.A2Listen || names != reverse.A2SNI)) {
 				return nil, reverseListener{}, fmt.Errorf("transport %s: reverse l2 links need one A2 reverse listener and server name, have %q %q and %q %q",
@@ -229,9 +227,8 @@ func linkStatus(line anxmgmtpb.ManagementClient, links []string) []*networkv1.Co
 				component.Carrier = truncate(stat.GetCarrier(), network.MaxTextBytes)
 				component.RttMs = stat.GetRttMs()
 				if component.RttMs == 0 {
-					// Only QUIC carriers measure a round trip: on the
-					// others the handshake of the carrier's last probe
-					// stands in for it.
+					// Without a measured round trip, the carrier's last
+					// probe time stands in for it.
 					for _, probe := range stat.GetProbes() {
 						if probe.GetCarrier() == stat.GetCarrier() && probe.GetOk() && probe.GetHandshakeMs() > 0 {
 							component.RttMs = probe.GetHandshakeMs()

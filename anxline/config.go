@@ -1,14 +1,6 @@
-// Package anxline is the host side of ANX-Line links (anx docs/ANX-LINE-SPEC
-// §4.2, §5, §9 TBD-L11 and TBD-L14): the Agent installs the nftables rules
-// that drop the kernel's RST segments for fake-TCP carriers (C3), and watches
-// each MPTCP path of a multipath link every 200 ms, taking a dead path out of
-// the kernel's MPTCP endpoints (`ip mptcp endpoint delete` or `change …
-// backup`) so the connection moves to the other paths in about a second
-// instead of the kernel's 5 s.
-//
-// Both are data: the rules are templates from the link configuration, the
-// probe targets, intervals and thresholds are the link's. anx-server itself
-// never touches the firewall or the MPTCP endpoints.
+// Package anxline applies the host settings of ANX-Line links that the
+// AnxLine configuration section describes: nftables rules and path health
+// checks. Rules, probe targets and thresholds all come from the configuration.
 package anxline
 
 import (
@@ -22,9 +14,7 @@ import (
 	"time"
 )
 
-// Defaults (spec §9 TBD-L14: one probe every 200 ms, a switch in 1–1.5 s;
-// the kernel resumes about 1 s after RM_ADDR, so a path is declared dead
-// after two missed probes).
+// Defaults.
 const (
 	DefaultTable        = "anixops_anx_line"
 	DefaultNFT          = "nft"
@@ -35,33 +25,28 @@ const (
 	DefaultRecoverAfter = 5
 )
 
-// Fake-TCP roles: the server owns the fake-TCP port, the client sends to it.
+// Link end roles.
 const (
 	RoleServer = "server"
 	RoleClient = "client"
 )
 
-// Actions on a dead MPTCP path.
+// Actions on an unhealthy path.
 const (
-	// ActionDelete removes the endpoint (`ip mptcp endpoint delete`): a
-	// signal endpoint sends RM_ADDR, the kernel closes the subflows on it.
-	// This is what the lab measured (about 1 s to resume).
+	// ActionDelete removes the path's endpoint until it recovers.
 	ActionDelete = "delete"
-	// ActionBackup marks the endpoint backup (`ip mptcp endpoint change …
-	// backup`, MP_PRIO): the subflow stays but carries data only when no
-	// other subflow is left.
+	// ActionBackup marks the path's endpoint backup until it recovers.
 	ActionBackup = "backup"
 )
 
-// Probe kinds. A TCP probe connects from the path's address to Target; a
-// refused connection (RST) proves the path works as well as an accepted one.
+// Probe kinds.
 const (
 	ProbeTCP  = "tcp"
 	ProbeICMP = "icmp"
 )
 
-// Default RST rule templates (spec §4.2). {port}, {local} and {peer} are
-// replaced by the link's values; the rules go into an output filter chain.
+// Default rule templates. {port}, {local} and {peer} are replaced by the
+// link's values; the rules go into an output filter chain.
 var (
 	DefaultServerRules      = []string{"ip saddr {local} tcp sport {port} tcp flags & rst == rst drop"}
 	DefaultServerRulesNoSrc = []string{"tcp sport {port} tcp flags & rst == rst drop"}
@@ -88,15 +73,13 @@ type Link struct {
 	Multipath *Multipath `json:"Multipath"`
 }
 
-// FakeTCP is a C3 carrier end (spec §4.2): the RST segments the kernel sends
-// for the fake-TCP port are dropped on the way out, so stateful middleboxes
-// keep the flow.
+// FakeTCP is the firewall setting of one link end.
 type FakeTCP struct {
 	Role string `json:"Role"`
-	// Port is the fake-TCP port: the server's --faketcp-listen port.
+	// Port is the link port: the server's --faketcp-listen port.
 	Port int `json:"Port"`
-	// Local is the server's own address the RSTs leave from (optional:
-	// without it the rule matches the port only).
+	// Local is the server's own address (optional: without it the rule
+	// matches the port only).
 	Local string `json:"Local"`
 	// Peer is the server's address, required on the client.
 	Peer string `json:"Peer"`
@@ -104,7 +87,7 @@ type FakeTCP struct {
 	Rules []string `json:"Rules"`
 }
 
-// Multipath watches the MPTCP paths (endpoints) of a multipath link.
+// Multipath is the path health check of a multipath link.
 type Multipath struct {
 	IntervalMs   int    `json:"IntervalMs"`
 	TimeoutMs    int    `json:"TimeoutMs"`
@@ -114,7 +97,7 @@ type Multipath struct {
 	Paths        []Path `json:"Paths"`
 }
 
-// Path is one MPTCP endpoint and how to probe it.
+// Path is one path endpoint and how to probe it.
 type Path struct {
 	// Endpoint is the `ip mptcp endpoint` id (1–255).
 	Endpoint int    `json:"Endpoint"`

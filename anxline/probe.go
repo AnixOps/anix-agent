@@ -43,8 +43,8 @@ func (p *NetProber) Probe(ctx context.Context, path Path, timeout time.Duration)
 	}
 }
 
-// probeTCP connects from source; an RST (connection refused) is an answer
-// from the far end, so it counts as success.
+// probeTCP connects from source; a refused connection also counts as
+// success.
 func probeTCP(ctx context.Context, source netip.Addr, dev, target string, timeout time.Duration) error {
 	local := &net.TCPAddr{IP: source.AsSlice()}
 	if source.Is6() {

@@ -213,8 +213,8 @@ func (c *Core) launch() error {
 			return err
 		}
 		line := map[string]any{"mgmt_listen": lineAddress}
-		// A release that knows mgmt_tls gets an mTLS management API
-		// (anx spec §7): a one-off bundle per start, the client half here.
+		// A release that knows mgmt_tls gets an mTLS management API: a
+		// one-off bundle per start, the client half here.
 		if lineSupportsMTLS(c.config.BinaryPath) {
 			files, creds, err := anxmtls.Generate(filepath.Join(c.config.RuntimeDir, "anx-line-mgmt"), "127.0.0.1")
 			if err != nil {
@@ -226,9 +226,8 @@ func (c *Core) launch() error {
 		c.mu.Lock()
 		if c.reverse.Listen != "" {
 			line["reverse_listen"] = c.reverse.Listen
-			// The C2 / C3 dial-backs of reverse links (anx
-			// ANX-LINE-REVERSE §6.3); C2 with the large UDP buffer of
-			// anx-server's QUIC listeners (anx TBD-L16).
+			// The quic / faketcp dial-backs of reverse links; quic with
+			// the UDP buffer of anx-server's QUIC listeners.
 			if c.reverse.QUIC {
 				line["reverse_quic"] = true
 				line["reverse_quic_sockbuf"] = anxserver.QUICSocketBuffer
@@ -240,12 +239,9 @@ func (c *Core) launch() error {
 		a2Listen, a2SNI := c.reverse.A2Listen, c.reverse.A2SNI
 		c.mu.Unlock()
 		if a2Listen != "" {
-			// The A2 rendezvous of reverse l2 links (anx ANX-LINE-REVERSE
-			// §6.4): its short auth is to the Agent's anx-server key, the
-			// server_public Control hands the egress; what does not
-			// authenticate goes to the first name's site, as on the forward
-			// A2 listener. The key is a copy of the server key that never
-			// rotates (anxserver.ReverseA2KeyFile).
+			// The rendezvous of reverse l2 links; its dest is the first
+			// server name on 443. The key is a copy of the server key that
+			// never rotates (anxserver.ReverseA2KeyFile).
 			key, err := anxReverseA2KeyFile()
 			if err != nil {
 				return err

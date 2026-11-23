@@ -10,7 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// PathStatus is the state of one watched MPTCP path.
+// PathStatus is the state of one watched path.
 type PathStatus struct {
 	Link     string `json:"link"`
 	Endpoint int    `json:"endpoint"`
@@ -162,8 +162,7 @@ func (m *monitor) check(ctx context.Context) {
 	for _, state := range m.paths {
 		switch {
 		case !state.healthy && !state.demoted:
-			// Keep the last path in: with every path dead, taking all out
-			// only stops the kernel from retrying.
+			// Keep the last path in.
 			if !m.otherUsable(state) {
 				continue
 			}

@@ -37,8 +37,8 @@ type AnixcoreConfig struct {
 	AnxLineApiTLS *ManagementTLSConfig `json:"AnxLineApiTLS"`
 }
 
-// ManagementTLSConfig is the Agent's side of an mTLS management API (anx
-// spec §7): its client certificate and key, the CA the server's
+// ManagementTLSConfig is the Agent's side of an mTLS management API: its
+// client certificate and key, the CA the server's
 // certificate chains to, and optionally the name to check it against (the
 // dialed host otherwise).
 type ManagementTLSConfig struct {

@@ -1,5 +1,5 @@
 // Package networkroute installs the policy routing of the device network
-// model's egresses (anix-control docs/design/network-model §6.5): an egress
+// model's egresses (anix-control docs/design/network-model): an egress
 // whose source is an address of a line other than the default one leaves
 // through that line only when its packets are routed there, so each such
 // egress gets

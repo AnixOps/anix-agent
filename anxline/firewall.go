@@ -32,9 +32,8 @@ func (ExecRunner) Run(ctx context.Context, stdin, name string, args ...string) (
 	return out.String(), nil
 }
 
-// rstScript is the nft script that replaces the Agent's table with the RST
-// rules of every fake-TCP link, in one transaction; with no rules it only
-// removes the table.
+// rstScript is the nft script that replaces the Agent's table with the rules
+// of every link, in one transaction; with no rules it only removes the table.
 func rstScript(table string, links []Link) (string, error) {
 	var rules []string
 	for _, link := range links {
@@ -62,8 +61,8 @@ func rstScript(table string, links []Link) (string, error) {
 }
 
 // applyRST installs the RST rules of links (or removes the table).
-// ApplyRST replaces the nftables table (family ip) with the RST rules of
-// links' fake-TCP carriers; with none it removes the table. nft is the nft
+// ApplyRST replaces the nftables table (family ip) with the rules of links;
+// with none it removes the table. nft is the nft
 // binary. The network model's anx_line ends use a table of their own, apart
 // from the AnxLine section's.
 func ApplyRST(ctx context.Context, runner Runner, nft, table string, links []Link) error {

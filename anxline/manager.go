@@ -19,8 +19,8 @@ type Options struct {
 	Now    func() time.Time
 }
 
-// Manager applies the AnxLine section: the RST rules once, the path
-// monitors until Close.
+// Manager applies the AnxLine section: the rules once, the path monitors
+// until Close.
 type Manager struct {
 	config   Config
 	runner   Runner
@@ -29,8 +29,8 @@ type Manager struct {
 	monitors []*monitor
 }
 
-// Start validates config, installs the fake-TCP RST rules (replacing the
-// Agent's table) and starts one monitor per multipath link. Linux only.
+// Start validates config, installs the rules (replacing the Agent's table)
+// and starts one monitor per multipath link. Linux only.
 func Start(config Config, options Options) (*Manager, error) {
 	if runtime.GOOS != "linux" {
 		return nil, errors.New("ANX-Line host support (fake-TCP RST rules, MPTCP paths) is Linux only")
@@ -73,7 +73,7 @@ func start(config Config, options Options) (*Manager, error) {
 	return m, nil
 }
 
-// Status reports every watched MPTCP path.
+// Status reports every watched path.
 func (m *Manager) Status() []PathStatus {
 	var out []PathStatus
 	for _, monitor := range m.monitors {
@@ -83,8 +83,7 @@ func (m *Manager) Status() []PathStatus {
 }
 
 // Close stops the monitors and restores the endpoints they took out. The
-// RST rules stay: anx-server keeps its fake-TCP carriers when the Agent
-// stops, and middleboxes must keep seeing no RST.
+// rules stay: anx-server keeps running when the Agent stops.
 func (m *Manager) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()

@@ -211,7 +211,7 @@ func TestReverseDialLinks(t *testing.T) {
 		t.Fatalf("listen = %+v, links = %v", listen, links)
 	}
 
-	// C2 / C3 dial-backs follow the carrier order (anx ANX-LINE-REVERSE §6.3).
+	// quic / faketcp dial-backs follow the carrier order.
 	c2 := proto.Clone(plan).(*networkv1.NetworkPlan)
 	c2.Transports[0].GetAnxLine().CarrierOrder = []string{"c2", "c3", "c1"}
 	if _, listen, err = dialLinks(c2); err != nil || listen != (reverseListener{Listen: "0.0.0.0:24444", QUIC: true, FakeTCP: true}) {
@@ -236,9 +236,8 @@ func TestReverseDialLinks(t *testing.T) {
 		t.Fatalf("links = %v, reverse listen = %q", line.links, core.reverse.Listen)
 	}
 
-	// A reverse l2 link (anx ANX-LINE-REVERSE §6.4) takes the A2
-	// rendezvous, with the link's server names; it cannot share the bare
-	// listener's address.
+	// A reverse l2 link takes the l2 rendezvous, with the link's server
+	// names; it cannot share the l1 listener's address.
 	l2 := proto.Clone(plan).(*networkv1.NetworkPlan)
 	l2.Transports[0].GetAnxLine().Egress, l2.Transports[0].GetAnxLine().ServerName = "l2", "www.example.org"
 	links, listen, err = dialLinks(l2)

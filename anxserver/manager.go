@@ -32,21 +32,20 @@ import (
 const (
 	keyFile    = "server.key"
 	publicFile = "server.pub"
-	// ReverseA2KeyFile is the key of anx-node's reverse A2 rendezvous
+	// ReverseA2KeyFile is the key of anx-node's reverse rendezvous
 	// (anx_line.reverse_a2_key), with its public half beside it. It starts
-	// as a copy of the server key and never rotates: the l2 egress pins its
-	// public half and authenticates to the current key only (anx §2.6), so
-	// it is kept apart from the server key, which rotates.
+	// as a copy of the server key and never rotates, so l2 egresses that
+	// were handed its public half keep working when the server key rotates.
 	ReverseA2KeyFile   = "reverse-a2.key"
 	reverseA2PublicKey = "reverse-a2.pub"
 )
 
-// ReverseA2PublicKind is the kind the reverse A2 key is reported under
+// ReverseA2PublicKind is the kind the reverse rendezvous key is reported under
 // (NetworkStatus public_keys); Control hands it to l2 egresses as
 // server_public.
 const ReverseA2PublicKind = "anx_reverse_a2"
 
-// RSTTable is the nftables table of the accepting ends' fake-TCP RST rules
+// RSTTable is the nftables table of the accepting ends' faketcp rules
 // (anxline; the AnxLine section has a table of its own).
 const RSTTable = "anixops_anx_line_net"
 
@@ -90,13 +89,13 @@ type Manager struct {
 	Launch  Launcher
 	Connect Connector
 	Run     Runner
-	// RST installs the fake-TCP RST rules; nil leaves the firewall alone.
+	// RST installs the faketcp rules; nil leaves the firewall alone.
 	RST func(links []anxline.Link) error
 	// Buffers lets the host's sockets have QUICSocketBuffer bytes before a
 	// QUIC listener starts; nil leaves the host alone.
 	Buffers func() error
 	// MTLS secures each process's loopback management API with mutual
-	// TLS (anx spec §7): a one-off CA per process start, the Agent holds
+	// TLS: a one-off CA per process start, the Agent holds
 	// the client certificate. Set it when Binary supports it
 	// (anxmtls.Supports with anxmtls.ServerMarker).
 	MTLS bool
@@ -430,8 +429,8 @@ func withStat(component *networkv1.ComponentStatus, stat *anxmgmtpb.LinkStat) *n
 	component.Carrier = stat.GetCarrier()
 	component.RttMs = stat.GetRttMs()
 	if component.RttMs == 0 {
-		// Only QUIC carriers measure a round trip: on the others the
-		// handshake the carrier's last probe took stands in for it.
+		// Without a measured round trip, the carrier's last probe time
+		// stands in for it.
 		for _, probe := range stat.GetProbes() {
 			if probe.GetCarrier() == stat.GetCarrier() && probe.GetOk() && probe.GetHandshakeMs() > 0 {
 				component.RttMs = probe.GetHandshakeMs()
@@ -519,7 +518,7 @@ func (s *server) serve() error {
 		args = append(args, "--mgmt-tls-cert", files.Cert, "--mgmt-tls-key", files.Key, "--mgmt-client-ca", files.ClientCA)
 	}
 	if !s.listener.L2 {
-		// anx-server always runs its jacketed listener: a bare server keeps
+		// anx-server always runs its --listen listener: an l1 server keeps
 		// it on loopback, out of the hop ingress's way.
 		jacket, err := freePort()
 		if err != nil {
@@ -663,8 +662,8 @@ type relaying struct {
 }
 
 // relay makes the process hold exactly the links the wanted accepts relay
-// into and route each such accept's link there (SetLinkRoutes, ANX-Line
-// §4.5). The admitted links are current.
+// into and route each such accept's link there (SetLinkRoutes). The
+// admitted links are current.
 func (s *server) relay(client anxmgmtpb.ManagementClient, current map[string]admitted, state *relaying) error {
 	s.mu.Lock()
 	wanted := s.wanted
@@ -750,7 +749,7 @@ func (s *server) relay(client anxmgmtpb.ManagementClient, current map[string]adm
 }
 
 // dial makes the process keep exactly the reverse dials of the wanted
-// accepts (SetReverseDials, ANX-Line §4.6), given those it keeps; it
+// accepts (SetReverseDials), given those it keeps; it
 // answers the dials it keeps now.
 func (s *server) dial(client anxmgmtpb.ManagementClient, current []*anxmgmtpb.ReverseDial) ([]*anxmgmtpb.ReverseDial, error) {
 	s.mu.Lock()
@@ -762,12 +761,11 @@ func (s *server) dial(client anxmgmtpb.ManagementClient, current []*anxmgmtpb.Re
 			continue
 		}
 		// Idle 0 is anx-server's default number of idle connections (1
-		// for an A2 dial-back).
+		// for an l2 dial-back).
 		dial := &anxmgmtpb.ReverseDial{DialId: accept.Transport, Addr: accept.ReverseDial, LinkKey: accept.LinkKey,
 			Quic: accept.ReverseQUIC, Faketcp: accept.ReverseFakeTCP}
 		if accept.L2 {
-			// The A2 dial-back (anx ANX-LINE-REVERSE §6.4): the first
-			// server name is the SNI.
+			// An l2 dial-back: the first server name is the SNI.
 			dial.A2ServerName, _, _ = strings.Cut(accept.ServerName, ",")
 			dial.HubPublic = accept.HubPublic
 		}

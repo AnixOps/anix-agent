@@ -9,8 +9,7 @@ import (
 	"strings"
 )
 
-// The QUIC listener's buffers (anx ANX-LINE-ONBOARDING §6, BOUNDARY
-// `--quic-sockbuf`, `--quic-dgram-buf`).
+// The QUIC listener's buffers (`--quic-sockbuf`, `--quic-dgram-buf`).
 const (
 	QUICSocketBuffer   = 8 << 20
 	QUICDatagramBuffer = 1 << 20

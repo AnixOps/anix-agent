@@ -1,5 +1,5 @@
 // Package anxmtls secures the gRPC management APIs of anx-server and
-// anx-node with mutual TLS (anx spec §7 "管理面传输安全", F-24).
+// anx-node with mutual TLS.
 //
 // The Agent holds the client certificate. For a process it starts itself,
 // Generate makes a one-off CA, a server certificate for the loopback

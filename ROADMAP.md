@@ -13,4 +13,4 @@ This file only lists Agent-side notes.
   dynamic speed limits included.
 - Validation is IPv4-only.
 - The dual-node relay (entry/exit tunnel, policy routing, exit NAT) was
-  removed; cross-border paths run on the network model.
+  removed; inter-node paths run on the network model.

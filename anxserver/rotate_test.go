@@ -80,7 +80,7 @@ func TestRotatorRotatesOnItsSchedule(t *testing.T) {
 	r.Step()
 	assert.Empty(t, h.rotates)
 
-	// Due: a reverse A2 rendezvous keeps the old key, the new key is
+	// Due: a reverse rendezvous keeps the old key, the new key is
 	// reported only after the processes had time to load it.
 	h.m.Run = wrapRun(h.m.Run, func() {
 		_, err := os.Stat(filepath.Join(h.m.Dir, ReverseA2KeyFile))
