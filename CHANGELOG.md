@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.10 - 2026-11-23
+
+Shipped with AnixOps Control 5.0.12 and anx-node 0.1.0-alpha.24. Docs and
+comments only; behaviour is the same as 5.0.9.
+
 ### Changed
 
 - Comments and docs describe ANX only through the names in
