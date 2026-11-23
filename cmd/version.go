@@ -8,7 +8,7 @@ import (
 
 // version is the release; release builds set it with
 // -ldflags "-X github.com/AnixOps/anix-agent/v5/cmd.version=<tag>".
-var version = "v5.0.9"
+var version = "v5.0.10"
 
 func init() {
 	command.AddCommand(&cobra.Command{
