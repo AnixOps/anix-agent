@@ -1,7 +1,6 @@
 package node
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/anxmtls"
 	"github.com/AnixOps/anix-agent/v5/anxserver"
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
@@ -68,11 +66,6 @@ var networkServers = func() *anxserver.Manager {
 	}
 	return &anxserver.Manager{
 		Binary: path, Dir: filepath.Join(conf.DefaultStateRoot, "anx-server"),
-		RST: func(links []anxline.Link) error {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			return anxline.ApplyRST(ctx, anxline.ExecRunner{}, "", anxserver.RSTTable, links)
-		},
 		Buffers: func() error { return anxserver.RaiseSocketBuffers("/proc/sys") },
 		// Releases that know --mgmt-tls-* get an mTLS management API.
 		MTLS: anxmtls.Supports(path, anxmtls.ServerMarker),

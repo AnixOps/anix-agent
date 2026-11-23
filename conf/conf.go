@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/anxserver"
 )
 
@@ -17,7 +16,6 @@ type Conf struct {
 	CoresConfig    []CoreConfig              `json:"Cores"`
 	NodeConfig     []NodeConfig              `json:"Nodes"`
 	Forward        *ForwardConfig            `json:"Forward"`
-	AnxLine        *anxline.Config           `json:"AnxLine"`
 	AnxKeyRotation *anxserver.RotationConfig `json:"AnxKeyRotation"`
 }
 
@@ -43,7 +41,6 @@ func (p *Conf) LoadFromPath(path string) error {
 		p.validateAgentIdentities,
 		p.validateNodeCredentials,
 		p.Forward.Validate,
-		p.AnxLine.Validate,
 		p.AnxKeyRotation.Validate,
 		p.ValidateForProduction,
 	} {

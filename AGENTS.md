@@ -33,7 +33,7 @@ anx-server 只作为独立进程，经 gRPC、HTTP 管理接口、配置文件�
 | `conf/` | 配置文件结构与路径 |
 | `core/` | 内核接口与选择器；`core/anixcore`、`core/wireguard` |
 | `node/` | 节点控制器：配置快照、用户增量、流量上报、证书、网络模型 |
-| `anxserver/`、`anxline/`、`anxmtls/` | anx-server 进程管理、ANX-Line 主机侧配置、管理面证书 |
+| `anxserver/`、`anxmtls/` | anx-server 进程管理、管理面证书 |
 | `forward/` | 入口高可用的 vantage 探测、转发诊断与 forward.report（Control 在用） |
 | `kernelfwd/` | 网络计划的内核转发跳：一张 nft 表（DNAT + masquerade + 计数器）与目标 TCP 探测 |
 | `networkroute/`、`realityprobe/`、`diagnostic/` | 路由健康、Reality 目标探测、诊断任务 |

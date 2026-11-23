@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Removed
+
+- The top-level `AnxLine` configuration section and the `anxline` package
+  (Control never sent it), and the faketcp rules the Agent installed for
+  accepting `anx_line` ends (`table ip anixops_anx_line_net`): anx-server
+  handles its own host settings from the release after anx-node
+  0.1.0-alpha.24. A leftover `AnxLine` member in config.json is ignored.
+
 ## 5.0.10 - 2026-11-23
 
 Shipped with AnixOps Control 5.0.12 and anx-node 0.1.0-alpha.24. Docs and

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"net"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v5/anxline"
 	"github.com/AnixOps/anix-agent/v5/anxmtls"
 	anxmgmtpb "github.com/AnixOps/anix-agent/v5/api/anxmgmt/v1"
 	networkv1 "github.com/AnixOps/anix-control/sdk/api/network/v1"
@@ -44,10 +42,6 @@ const (
 // (NetworkStatus public_keys); Control hands it to l2 egresses as
 // server_public.
 const ReverseA2PublicKind = "anx_reverse_a2"
-
-// RSTTable is the nftables table of the accepting ends' faketcp rules
-// (anxline; the AnxLine section has a table of its own).
-const RSTTable = "anixops_anx_line_net"
 
 // Supervision timings.
 var (
@@ -89,8 +83,6 @@ type Manager struct {
 	Launch  Launcher
 	Connect Connector
 	Run     Runner
-	// RST installs the faketcp rules; nil leaves the firewall alone.
-	RST func(links []anxline.Link) error
 	// Buffers lets the host's sockets have QUICSocketBuffer bytes before a
 	// QUIC listener starts; nil leaves the host alone.
 	Buffers func() error
@@ -102,8 +94,6 @@ type Manager struct {
 
 	mu      sync.Mutex
 	servers map[listener]*server
-	// rst is whether RST rules were installed.
-	rst bool
 }
 
 // PublicKey answers the server's public key, generating the key pair the
@@ -222,10 +212,6 @@ func (m *Manager) Apply(accepts []Accept) error {
 			return err
 		}
 	}
-	var failed error
-	if err := m.applyRST(accepts); err != nil {
-		failed = fmt.Errorf("fake-TCP RST rules: %w", err)
-	}
 	if m.Buffers != nil {
 		for l := range groups {
 			if l.QUIC != "" {
@@ -257,35 +243,6 @@ func (m *Manager) Apply(accepts []Accept) error {
 		}
 		s.want(group)
 	}
-	return failed
-}
-
-func (m *Manager) applyRST(accepts []Accept) error {
-	if m.RST == nil {
-		return nil
-	}
-	var links []anxline.Link
-	for _, accept := range accepts {
-		if accept.FakeTCP == "" {
-			continue
-		}
-		address, err := netip.ParseAddrPort(accept.FakeTCP)
-		if err != nil || !address.Addr().Unmap().Is4() {
-			return fmt.Errorf("transport %s: fake-TCP address %q is not IPv4 host:port", accept.Transport, accept.FakeTCP)
-		}
-		fake := &anxline.FakeTCP{Role: anxline.RoleServer, Port: int(address.Port())}
-		if local := address.Addr().Unmap(); !local.IsUnspecified() {
-			fake.Local = local.String()
-		}
-		links = append(links, anxline.Link{ID: accept.Transport, FakeTCP: fake})
-	}
-	if len(links) == 0 && !m.rst {
-		return nil
-	}
-	if err := m.RST(links); err != nil {
-		return err
-	}
-	m.rst = len(links) > 0
 	return nil
 }
 
