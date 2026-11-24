@@ -42,11 +42,6 @@ type RateLimitUpdater interface {
 	UpdateUserRateLimit(tag, uuid string, bytesPerSecond int) error
 }
 
-// TrafficRollbacker gives back traffic that could not be reported.
-type TrafficRollbacker interface {
-	RollbackUserTraffic(tag string, traffic []panel.UserTraffic) error
-}
-
 // DestinationProvider reports per-user destination statistics.
 type DestinationProvider interface {
 	GetDestinationTraffic(tag string) ([]destinations.Traffic, error)

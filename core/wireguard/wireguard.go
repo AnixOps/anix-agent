@@ -27,7 +27,6 @@ var _ vCore.Core = (*WireGuard)(nil)
 var _ vCore.OnlineDeviceProvider = (*WireGuard)(nil)
 var _ vCore.RuntimeHealthProvider = (*WireGuard)(nil)
 var _ vCore.RateLimitUpdater = (*WireGuard)(nil)
-var _ vCore.TrafficRollbacker = (*WireGuard)(nil)
 
 type commandExecutor interface {
 	Run(name string, args ...string) error
@@ -332,40 +331,6 @@ func (w *WireGuard) UserTraffic(tag string, reset bool) ([]panel.UserTraffic, er
 		return nil, nil
 	}
 	return trafficSlice, nil
-}
-
-// RollbackUserTraffic moves the WireGuard traffic cursor back by the
-// report that the panel rejected. The next sample then includes the failed
-// interval instead of silently losing billable traffic.
-func (w *WireGuard) RollbackUserTraffic(tag string, traffic []panel.UserTraffic) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	state, ok := w.nodes[tag]
-	if !ok {
-		return errors.New("the node is not have")
-	}
-	uidToPublicKey := make(map[int]string, len(state.users))
-	for _, user := range state.users {
-		uidToPublicKey[user.Id] = user.WireGuardPublicKey
-	}
-	previous := w.traffic[tag]
-	for _, report := range traffic {
-		publicKey, ok := uidToPublicKey[report.UID]
-		if !ok {
-			continue
-		}
-		cursor := previous[publicKey]
-		cursor.upload -= report.Upload
-		cursor.download -= report.Download
-		if cursor.upload < 0 {
-			cursor.upload = 0
-		}
-		if cursor.download < 0 {
-			cursor.download = 0
-		}
-		previous[publicKey] = cursor
-	}
-	return nil
 }
 
 func (w *WireGuard) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {

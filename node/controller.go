@@ -20,11 +20,14 @@ type Controller struct {
 	server vCore.Core
 	// nodeID is the node the controller runs; apiHost is Control's base
 	// URL, which names the node's core tag.
-	nodeID           int
-	apiHost          string
-	tag              string
-	rates            *rateLimits
-	traffic          map[string]int64
+	nodeID  int
+	apiHost string
+	tag     string
+	rates   *rateLimits
+	traffic map[string]int64
+	// unsent is traffic read from the core but not spooled yet, added to
+	// the next window (reportUserTrafficTask).
+	unsent           []panel.UserTraffic
 	userList         []panel.UserInfo
 	aliveMap         map[int]int
 	info             *panel.NodeInfo

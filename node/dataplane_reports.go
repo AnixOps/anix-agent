@@ -37,13 +37,18 @@ const (
 // variable for tests.
 var logBatchInterval = 30 * time.Second
 
-// submitTraffic hands a controller's traffic window to the spool as a
-// TrafficReport (in batches of trafficUsersPerBatch users). online is the
-// controller's online IPs; the report carries the union of every
+// spoolTraffic appends a TrafficReport to the spool; tests inject faults.
+var spoolTraffic = (*agentapi.DataPlane).SubmitTraffic
+
+// submitTraffic hands a controller's traffic window to the spool as
+// TrafficReports of at most trafficUsersPerBatch users each. online is the
+// controller's online IPs; each report carries the union of every
 // controller of the node, since Control replaces the node's whole alive set
 // with each report. A window with no traffic and no online IPs is not
-// reported, unless the last report had online IPs (to clear them).
-func (n *nodeDataPlane) submitTraffic(controller *Controller, traffic []panel.UserTraffic, online map[int][]string) error {
+// reported, unless the last report had online IPs (to clear them). It
+// answers the entries it could not spool: a batch spooled keeps its batch
+// id and counts once, the entries after a failed batch are not in any.
+func (n *nodeDataPlane) submitTraffic(controller *Controller, traffic []panel.UserTraffic, online map[int][]string) ([]panel.UserTraffic, error) {
 	plane := n.client.DataPlane()
 	n.reportMu.Lock()
 	if n.online == nil {
@@ -54,34 +59,30 @@ func (n *nodeDataPlane) submitTraffic(controller *Controller, traffic []panel.Us
 	clear := len(merged) == 0 && n.onlineSent
 	n.reportMu.Unlock()
 
+	entries := make([]panel.UserTraffic, 0, len(traffic))
 	users := make([]*agentv1pb.UserTraffic, 0, len(traffic))
 	for _, entry := range traffic {
 		if entry.UID <= 0 || (entry.Upload <= 0 && entry.Download <= 0) {
 			continue
 		}
+		entries = append(entries, entry)
 		users = append(users, &agentv1pb.UserTraffic{UserId: uint64(entry.UID), UploadBytes: uint64(max(entry.Upload, 0)), DownloadBytes: uint64(max(entry.Download, 0))}) // #nosec G115 -- checked positive.
 	}
 	if len(users) == 0 && len(merged) == 0 && !clear {
-		return nil
+		return nil, nil
 	}
 	windowEnd := time.Now().UnixMilli()
 	for start := 0; start == 0 || start < len(users); start += trafficUsersPerBatch {
 		end := min(start+trafficUsersPerBatch, len(users))
 		report := &agentv1pb.TrafficReport{Users: users[start:end], Online: merged, WindowEndUnixMs: windowEnd}
-		if err := plane.SubmitTraffic(report); err != nil {
-			if start == 0 {
-				return err
-			}
-			// The earlier batches are spooled and count; the rest of
-			// this window is lost rather than counted twice.
-			n.logger().WithError(err).Error("Could not spool part of a traffic window")
-			break
+		if err := spoolTraffic(plane, report); err != nil {
+			return entries[start:], err
 		}
 	}
 	n.reportMu.Lock()
 	n.onlineSent = len(merged) > 0
 	n.reportMu.Unlock()
-	return nil
+	return nil, nil
 }
 
 // reportDestinations reads the controller's destination statistics of the
