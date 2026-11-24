@@ -267,3 +267,25 @@ func TestReloadFailureRestoresTheDerivedTagAndLimiter(t *testing.T) {
 		t.Fatalf("rate limits = %p, want the controller's %p, user-1 unlimited", controller.rates, rates)
 	}
 }
+
+// A new TLS configuration whose certificate is missing is refused before
+// the running node is removed (AG-004).
+func TestReloadWithoutCertificateKeepsTheRunningNode(t *testing.T) {
+	core := newReloadCore()
+	controller := runningController(t, core, vlessNode(443))
+	controller.CertConfig = &conf.CertConfig{CertMode: "file"}
+	core.addCalls = nil
+	next := vlessNode(8443)
+	next.Security = panel.Tls
+
+	err := controller.reconcileLocked(next, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("reconcile error = %v, want the certificate failure", err)
+	}
+	if len(core.addCalls) != 0 {
+		t.Fatalf("AddNode attempts = %v, want none", core.addCalls)
+	}
+	if port := core.runningPort(t, "fixed-tag"); port != 443 || !controller.nodeAdded || controller.info.Common.ServerPort != 443 {
+		t.Fatalf("running port = %d, want the untouched 443", port)
+	}
+}
