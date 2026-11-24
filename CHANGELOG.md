@@ -12,6 +12,14 @@
   count once. A window that failed as a whole used to be given back to the
   core, which only the WireGuard core supported (anixcore silently kept
   nothing); it is now kept by the Agent the same way, for every core.
+- The report spool writes a new batch before it drops older ones to make
+  room, so a batch that cannot be written (for example on a full disk)
+  no longer costs an older one. A batch whose file cannot be deleted stays
+  pending and counted instead of being forgotten while still on disk; it
+  is resent and Control acknowledges it as already counted.
+- A node configuration change that needs a TLS certificate the node does
+  not have is refused before the running node is removed, so the node
+  keeps serving its previous configuration.
 
 ### Removed
 

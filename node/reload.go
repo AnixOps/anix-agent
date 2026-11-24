@@ -37,6 +37,13 @@ func nodeConfigEqual(a, b *panel.NodeInfo) bool {
 // reconcileMu is held.
 func (c *Controller) replaceNodeLocked(newN *panel.NodeInfo) error {
 	oldInfo, oldTag := c.info, c.tag
+	// What can be checked without the core is checked before the running
+	// node is removed: a missing certificate leaves it serving (AG-004).
+	if newN.Security == panel.Tls {
+		if err := c.ensureCertificate(); err != nil {
+			return fmt.Errorf("start node %s: certificate: %w", oldTag, err)
+		}
+	}
 	if c.nodeAdded {
 		if err := c.server.DelNode(oldTag); err != nil && !errors.Is(err, vCore.ErrNodeNotFound) {
 			log.WithFields(log.Fields{

@@ -130,3 +130,36 @@ func TestOpenRefusesUnsafeBounds(t *testing.T) {
 	_, err = Open(t.TempDir(), Limits{MaxAge: time.Hour}, nil)
 	require.Error(t, err)
 }
+
+// AG-003: a batch that cannot be written drops nothing older, and a batch
+// whose file cannot be deleted stays pending and counted, so the index and
+// the disk agree.
+func TestSpoolKeepsTheIndexInStepWithTheDisk(t *testing.T) {
+	at := &clock{now: time.Unix(1_800_000_000, 0)}
+	dir := filepath.Join(t.TempDir(), "traffic")
+	spool, err := Open(dir, Limits{MaxBytes: 1 << 20, MaxAge: time.Hour, MaxEntries: 2}, at.Now)
+	require.NoError(t, err)
+	require.NoError(t, spool.Append(traffic("b1", at.now, 1)))
+	require.NoError(t, spool.Append(traffic("b2", at.now, 1)))
+
+	spool.dir = filepath.Join(dir, "missing") // every write fails
+	require.Error(t, spool.Append(traffic("b3", at.now, 1)))
+	assert.Equal(t, []string{"b1", "b2"}, ids(spool.Pending()), "nothing dropped for a batch not written")
+	_, _, drops := spool.Stats()
+	assert.Zero(t, drops.Count)
+	spool.dir = dir
+
+	// b1's file cannot be deleted (a non-empty directory in its place).
+	path := spool.byBatch["b1"].path
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.MkdirAll(filepath.Join(path, "x"), 0o700))
+	assert.False(t, spool.Remove("b1"))
+	assert.Equal(t, []string{"b1", "b2"}, ids(spool.Pending()))
+	require.NoError(t, spool.Append(traffic("b3", at.now, 1)))
+	assert.Equal(t, []string{"b1", "b2", "b3"}, ids(spool.Pending()), "over the count until b1 can go")
+
+	require.NoError(t, os.RemoveAll(path))
+	assert.True(t, spool.Remove("b1"))
+	count, _, _ := spool.Stats()
+	assert.Equal(t, 2, count)
+}
