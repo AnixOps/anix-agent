@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.0.11 - 2026-11-24
+
+Shipped with AnixOps Control 5.0.13 and anx-node 0.1.0-alpha.24. Protocol
+revision 3 and the minimum anx-node are unchanged.
+
 ### Fixed
 
 - Traffic the Agent could not write to its report spool is no longer lost.
