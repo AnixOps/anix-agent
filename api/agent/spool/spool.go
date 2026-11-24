@@ -200,20 +200,25 @@ func (s *Spool) Append(message *agentv1pb.AgentToControl) error {
 		return nil
 	}
 	s.expireLocked()
-	for len(s.entries) > 0 && (s.bytes+size > s.limits.MaxBytes || len(s.entries)+1 > s.limits.MaxEntries) {
-		if s.bytes+size > s.limits.MaxBytes {
-			s.drops.Size++
-		} else {
-			s.drops.Count++
-		}
-		s.removeLocked(s.entries[0])
-	}
+	// The new batch is written first: when it cannot be, no older batch
+	// has been dropped for it (AG-003).
 	seq := s.nextSeq
 	path := filepath.Join(s.dir, fmt.Sprintf("%016x%s", seq, suffix))
 	if err := writeFile(path, data); err != nil {
 		return err
 	}
 	s.nextSeq++
+	for len(s.entries) > 0 && (s.bytes+size > s.limits.MaxBytes || len(s.entries)+1 > s.limits.MaxEntries) {
+		bySize := s.bytes+size > s.limits.MaxBytes
+		if err := s.removeLocked(s.entries[0]); err != nil {
+			break // kept on disk and in the index; counted when it goes
+		}
+		if bySize {
+			s.drops.Size++
+		} else {
+			s.drops.Count++
+		}
+	}
 	entry := &Entry{Seq: seq, BatchID: id, Size: size, CreatedAt: time.UnixMilli(message.GetSentAtUnixMs()), path: path}
 	s.entries = append(s.entries, entry)
 	s.byBatch[id] = entry
@@ -251,16 +256,15 @@ func (s *Spool) Read(id string) (*agentv1pb.AgentToControl, bool, error) {
 	return message, true, nil
 }
 
-// Remove drops a batch (acknowledged); it reports whether it was spooled.
+// Remove drops a batch (acknowledged); it reports whether it was spooled
+// and is gone. A batch whose file cannot be deleted stays pending, so the
+// index never disagrees with the disk; resent, Control acknowledges it as
+// seen.
 func (s *Spool) Remove(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.byBatch[id]
-	if entry == nil {
-		return false
-	}
-	s.removeLocked(entry)
-	return true
+	return entry != nil && s.removeLocked(entry) == nil
 }
 
 // Stats returns the spool's size and drops.
@@ -276,9 +280,8 @@ func (s *Spool) expireLocked() {
 	cutoff := s.now().Add(-s.limits.MaxAge)
 	kept := s.entries[:0]
 	for _, entry := range s.entries {
-		if entry.CreatedAt.Before(cutoff) {
+		if entry.CreatedAt.Before(cutoff) && removeFile(entry.path) == nil {
 			s.drops.Age++
-			_ = os.Remove(entry.path)
 			delete(s.byBatch, entry.BatchID)
 			s.bytes -= entry.Size
 			continue
@@ -288,8 +291,12 @@ func (s *Spool) expireLocked() {
 	s.entries = kept
 }
 
-func (s *Spool) removeLocked(entry *Entry) {
-	_ = os.Remove(entry.path)
+// removeLocked deletes entry's file and forgets it; when the file cannot be
+// deleted the entry is kept and the error returned.
+func (s *Spool) removeLocked(entry *Entry) error {
+	if err := removeFile(entry.path); err != nil {
+		return err
+	}
 	delete(s.byBatch, entry.BatchID)
 	s.bytes -= entry.Size
 	for index, candidate := range s.entries {
@@ -298,6 +305,15 @@ func (s *Spool) removeLocked(entry *Entry) {
 			break
 		}
 	}
+	return nil
+}
+
+// removeFile deletes path; a file already gone is deleted.
+func removeFile(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // writeFile writes data to path, 0600, through a synced temporary file.
