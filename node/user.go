@@ -54,9 +54,9 @@ func mergeOnlineDevices(users []panel.OnlineUser) []panel.OnlineUser {
 }
 
 // submitTraffic hands the window to the node's control stream.
-func (c *Controller) submitTraffic(userTraffic []panel.UserTraffic, online map[int][]string) error {
+func (c *Controller) submitTraffic(userTraffic []panel.UserTraffic, online map[int][]string) ([]panel.UserTraffic, error) {
 	if c.stream == nil {
-		return errNoStream
+		return userTraffic, errNoStream
 	}
 	return c.stream.submitTraffic(c, userTraffic, online)
 }

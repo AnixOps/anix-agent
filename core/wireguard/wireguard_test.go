@@ -281,39 +281,6 @@ func TestWireGuard_UserTrafficParsesTransferDeltas(t *testing.T) {
 	}
 }
 
-func TestWireGuard_RollbackUserTrafficRestoresCursor(t *testing.T) {
-	exec := &fakeExecutor{
-		outputs: map[string][]byte{
-			"wg show wgtest transfer": []byte("peer-public 1700 2600\n"),
-		},
-	}
-	core := &WireGuard{
-		cfg:      conf.NewWireGuardConfig(),
-		executor: exec,
-		nodes: map[string]*nodeState{
-			"test-node": {
-				tag:   "test-node",
-				iface: "wgtest",
-				info:  testNodeInfo(),
-				users: map[string]panel.UserInfo{"user-1": {Id: 7, Uuid: "user-1", WireGuardPublicKey: "peer-public"}},
-			},
-		},
-		traffic: make(map[string]map[string]trafficPair),
-	}
-
-	first, err := core.UserTraffic("test-node", true)
-	if err != nil || len(first) != 1 {
-		t.Fatalf("initial traffic = %#v, err = %v", first, err)
-	}
-	if err := core.RollbackUserTraffic("test-node", first); err != nil {
-		t.Fatalf("RollbackUserTraffic() error = %v", err)
-	}
-	second, err := core.UserTraffic("test-node", true)
-	if err != nil || len(second) != 1 || second[0].Upload != 1700 || second[0].Download != 2600 {
-		t.Fatalf("rolled back traffic = %#v, err = %v", second, err)
-	}
-}
-
 func TestWireGuard_GetOnlineDeviceParsesRecentHandshake(t *testing.T) {
 	now := time.Now().Unix()
 	exec := &fakeExecutor{

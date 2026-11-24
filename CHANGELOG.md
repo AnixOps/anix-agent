@@ -2,7 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+
+- Traffic the Agent could not write to its report spool is no longer lost.
+  A window of more than 5000 users is spooled in several batches; when a
+  later batch failed (for example a full disk), the rest of the window was
+  dropped. The Agent now keeps every entry not spooled in memory and adds
+  it to the next window; the batches already spooled keep their ids and
+  count once. A window that failed as a whole used to be given back to the
+  core, which only the WireGuard core supported (anixcore silently kept
+  nothing); it is now kept by the Agent the same way, for every core.
+
 ### Removed
+
+- The core's `TrafficRollbacker` interface and `RollbackUserTraffic` (the
+  Selector's and WireGuard's): the Agent keeps unreported traffic itself.
 
 - The top-level `AnxLine` configuration section and the `anxline` package
   (Control never sent it), and the faketcp rules the Agent installed for

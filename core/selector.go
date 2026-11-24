@@ -38,7 +38,6 @@ var (
 	_ Core                 = (*Selector)(nil)
 	_ OnlineDeviceProvider = (*Selector)(nil)
 	_ RateLimitUpdater     = (*Selector)(nil)
-	_ TrafficRollbacker    = (*Selector)(nil)
 	_ DestinationProvider  = (*Selector)(nil)
 	_ EgressApplier        = (*Selector)(nil)
 	_ QoSApplier           = (*Selector)(nil)
@@ -238,17 +237,6 @@ func (s *Selector) UpdateUserRateLimit(tag, uuid string, bytesPerSecond int) err
 	}
 	if u, ok := c.(RateLimitUpdater); ok {
 		return u.UpdateUserRateLimit(tag, uuid, bytesPerSecond)
-	}
-	return nil
-}
-
-func (s *Selector) RollbackUserTraffic(tag string, traffic []panel.UserTraffic) error {
-	c, err := s.coreOf(tag)
-	if err != nil {
-		return err
-	}
-	if r, ok := c.(TrafficRollbacker); ok {
-		return r.RollbackUserTraffic(tag, traffic)
 	}
 	return nil
 }

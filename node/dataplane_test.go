@@ -1,6 +1,8 @@
 package node
 
 import (
+	"errors"
+	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,9 +31,8 @@ type recordingCore struct {
 	delUsers int
 	// traffic is the next window UserTraffic returns; online the
 	// online devices.
-	traffic    []panel.UserTraffic
-	online     []panel.OnlineUser
-	rolledBack int
+	traffic []panel.UserTraffic
+	online  []panel.OnlineUser
 }
 
 func newRecordingCore() *recordingCore {
@@ -79,12 +80,6 @@ func (c *recordingCore) GetOnlineDevice(string) ([]panel.OnlineUser, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]panel.OnlineUser(nil), c.online...), nil
-}
-func (c *recordingCore) RollbackUserTraffic(string, []panel.UserTraffic) error {
-	c.mu.Lock()
-	c.rolledBack++
-	c.mu.Unlock()
-	return nil
 }
 func (c *recordingCore) setWindow(traffic []panel.UserTraffic, online []panel.OnlineUser) {
 	c.mu.Lock()
@@ -538,9 +533,43 @@ func TestStreamReportsWaitInTheSpoolDuringAnOutageAndCountOnce(t *testing.T) {
 	require.Eventually(t, func() bool { return len(fixture.control.Batches()) == 3 }, 10*time.Second, 20*time.Millisecond)
 	assert.Equal(t, map[uint64][2]uint64{7: {6, 60}}, fixture.control.Traffic(), "each window counted once")
 	require.Eventually(t, func() bool { return controller.stream.client.TransportStatus().DataPlane.Reports.Spooled == 0 }, 5*time.Second, 10*time.Millisecond)
-	fixture.core.mu.Lock()
-	assert.Zero(t, fixture.core.rolledBack)
-	fixture.core.mu.Unlock()
+	assert.Empty(t, controller.unsent)
+}
+
+// AG-001: a window spooled in batches whose second batch fails keeps the
+// entries not spooled and reports them with the next window. Control counts
+// the window's total once: nothing lost, nothing twice.
+func TestStreamTrafficWindowPartlySpooledCountsOnce(t *testing.T) {
+	fixture := newStreamNodeFixture(t, agenttest.ModeRequired,
+		agentcontrol.CapabilityConfig, agentcontrol.CapabilityUsers, agentcontrol.CapabilityReports)
+	fixture.control.SetDesiredConfig(agenttest.Snapshot(3, proxyDocument(443)), false)
+	node := fixture.start(t)
+	controller := node.controllers[0]
+
+	const users = 2*trafficUsersPerBatch + 2000
+	window := make([]panel.UserTraffic, 0, users)
+	want := map[uint64][2]uint64{}
+	for uid := 1; uid <= users; uid++ {
+		window = append(window, panel.UserTraffic{UID: uid, Upload: int64(uid), Download: 1})
+		want[uint64(uid)] = [2]uint64{uint64(uid), 1}
+	}
+	calls := 0
+	spoolTraffic = func(plane *agentapi.DataPlane, report *agentv1pb.TrafficReport) error {
+		if calls++; calls == 2 {
+			return errors.New("injected: disk full")
+		}
+		return plane.SubmitTraffic(report)
+	}
+	t.Cleanup(func() { spoolTraffic = (*agentapi.DataPlane).SubmitTraffic })
+
+	fixture.core.setWindow(window, nil)
+	require.NoError(t, controller.reportUserTrafficTask())
+	assert.Len(t, controller.unsent, users-trafficUsersPerBatch, "the second and third batches are kept")
+	require.NoError(t, controller.reportUserTrafficTask())
+	assert.Empty(t, controller.unsent)
+
+	require.Eventually(t, func() bool { return len(fixture.control.Batches()) == 3 }, 10*time.Second, 20*time.Millisecond)
+	assert.Equal(t, want, fixture.control.Traffic())
 }
 
 func TestStreamReportsStayInTheSpoolAfterTheGracePeriod(t *testing.T) {
