@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+
+- Intranet mesh (`docs/mesh.md`): `mesh.status` carries the kernel's
+  `instance_id` (`GET /v1/mesh`, 1-64 letters, digits or dashes; left out
+  otherwise), by which Control names host group gateways. The node
+  owner's region requests the kernel holds (feature
+  `mesh_region_requests`) go to Control as the PackageReport
+  `mesh.region_request` v1 (`{"region", "reason"}`, the reason cut to 500
+  characters) after each status, and are then deleted from the kernel
+  (`DELETE /v1/mesh/region_requests/{id}`); one without a region code is
+  dropped unsent.
+
+### Changed
+
+- Intranet mesh: the network sections `dns` and `host_groups` reach the
+  kernel only when it lists `mesh_dns` and `mesh_host_groups`, since it
+  rejects unknown fields; a restarted, updated kernel gets them. A node in
+  no region sends no mesh report, which Control would refuse
+  (`not_assigned`).
+
 ## 5.0.12 - 2026-11-25
 
 ### Added

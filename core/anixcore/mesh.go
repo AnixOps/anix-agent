@@ -2,6 +2,7 @@ package anixcore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,10 +16,19 @@ import (
 // with the feature meshFeature runs the networks of PUT /v1/mesh, each a
 // "type": "mesh" configuration (config_version 1) tagged meshTagPrefix +
 // id, and answers their state on GET /v1/mesh. {"networks": []} stops
-// them.
+// them. The sections dns and host_groups go only to a kernel that lists
+// meshDNSFeature and meshHostGroupsFeature: the kernel rejects unknown
+// fields. A kernel that lists meshRegionRequestsFeature holds the node
+// owner's region requests in the GET answer until
+// DELETE /v1/mesh/region_requests/{id}.
 
-// meshFeature is the anixcore feature of /v1/mesh.
-const meshFeature = "mesh"
+// The anixcore features of the mesh.
+const (
+	meshFeature               = "mesh"
+	meshDNSFeature            = "mesh_dns"
+	meshHostGroupsFeature     = "mesh_host_groups"
+	meshRegionRequestsFeature = "mesh_region_requests"
+)
 
 // meshTagPrefix starts the kernel tag of a mesh network.
 const meshTagPrefix = "mesh-"
@@ -47,7 +57,7 @@ func (c *Core) ApplyMesh(networks []panel.MeshNetwork) error {
 		}
 		return vCore.ErrMeshUnsupported
 	}
-	c.mesh = meshBody(networks)
+	c.mesh = append([]panel.MeshNetwork{}, networks...)
 	return c.putMesh()
 }
 
@@ -55,7 +65,8 @@ func (c *Core) ApplyMesh(networks []panel.MeshNetwork) error {
 func (c *Core) putMesh() error {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", c.mesh, nil); err != nil {
+	body := meshBody(c.mesh, c.client.meshDNS.Load(), c.client.meshHostGroups.Load())
+	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
 		return fmt.Errorf("anixcore mesh: %w", err)
 	}
 	return nil
@@ -69,30 +80,66 @@ func (c *Core) replayMesh() error {
 	return c.putMesh()
 }
 
-// MeshStatus implements vCore.MeshApplier.
-func (c *Core) MeshStatus(ctx context.Context) ([]panel.MeshNetworkStatus, error) {
+// MeshStatus implements vCore.MeshApplier. An instance id that is not
+// 1-64 letters, digits or dashes is left out, as are region requests
+// without an id that fits a path segment the same way, and every region
+// request of a kernel without meshRegionRequestsFeature.
+func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 	c.mu.Lock()
 	client := c.client
 	c.mu.Unlock()
 	if client == nil || !client.mesh.Load() {
-		return nil, vCore.ErrMeshUnsupported
+		return panel.MeshState{}, vCore.ErrMeshUnsupported
 	}
-	var answer struct {
-		Networks []panel.MeshNetworkStatus `json:"networks"`
-	}
+	var answer panel.MeshState
 	if err := client.do(ctx, http.MethodGet, "/v1/mesh", nil, &answer); err != nil {
-		return nil, fmt.Errorf("anixcore mesh status: %w", err)
+		return panel.MeshState{}, fmt.Errorf("anixcore mesh status: %w", err)
+	}
+	if !panel.MeshInstanceID(answer.InstanceID) {
+		answer.InstanceID = ""
 	}
 	for i := range answer.Networks {
 		answer.Networks[i].ID = strings.TrimPrefix(answer.Networks[i].Tag, meshTagPrefix)
 		answer.Networks[i].Tag = ""
 	}
-	return answer.Networks, nil
+	requests := answer.RegionRequests[:0]
+	if client.meshRegionRequests.Load() {
+		for _, request := range answer.RegionRequests {
+			if panel.MeshInstanceID(request.ID) {
+				request.Network = strings.TrimPrefix(request.Network, meshTagPrefix)
+				requests = append(requests, request)
+			}
+		}
+	}
+	answer.RegionRequests = requests
+	if len(answer.RegionRequests) == 0 {
+		answer.RegionRequests = nil
+	}
+	return answer, nil
+}
+
+// DoneMeshRegionRequest implements vCore.MeshApplier.
+func (c *Core) DoneMeshRegionRequest(ctx context.Context, id string) error {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil || !client.meshRegionRequests.Load() {
+		return vCore.ErrMeshUnsupported
+	}
+	if !panel.MeshInstanceID(id) {
+		return fmt.Errorf("anixcore mesh: region request id %q is invalid", id)
+	}
+	err := client.do(ctx, http.MethodDelete, "/v1/mesh/region_requests/"+id, nil, nil)
+	if err != nil && !isStatus(err, http.StatusNotFound) {
+		return fmt.Errorf("anixcore mesh region request: %w", err)
+	}
+	return nil
 }
 
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
-// panel in the kernel's layered configuration.
-func meshBody(networks []panel.MeshNetwork) map[string]any {
+// panel in the kernel's layered configuration, with dns and host_groups
+// only when the kernel takes them.
+func meshBody(networks []panel.MeshNetwork, dns, hostGroups bool) map[string]any {
 	out := make([]map[string]any, 0, len(networks))
 	for _, n := range networks {
 		network := map[string]any{"name": n.Name, "secret": n.Secret, "secure_mode": n.SecureMode}
@@ -122,7 +169,18 @@ func meshBody(networks []panel.MeshNetwork) map[string]any {
 		if len(n.Routing) > 0 {
 			config["routing"] = n.Routing
 		}
+		if dns && present(n.DNS) {
+			config["dns"] = n.DNS
+		}
+		if hostGroups && present(n.HostGroups) {
+			config["host_groups"] = n.HostGroups
+		}
 		out = append(out, config)
 	}
 	return map[string]any{"networks": out}
+}
+
+// present tells whether a section was sent, not empty nor null.
+func present(raw json.RawMessage) bool {
+	return len(raw) > 0 && string(raw) != "null"
 }

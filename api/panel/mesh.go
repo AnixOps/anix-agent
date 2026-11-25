@@ -36,6 +36,13 @@ type MeshNetwork struct {
 	Peers      json.RawMessage `json:"peers,omitempty"`
 	Subnets    json.RawMessage `json:"subnets,omitempty"`
 	Routing    json.RawMessage `json:"routing,omitempty"`
+	// DNS is the network's intranet names (enabled, suffix, names) and
+	// HostGroups its host groups (cidr, gateway, backup_gateway, the
+	// gateways by instance id). Control always sends both; the Agent
+	// passes each only to a kernel that takes it (its kernel rejects
+	// unknown fields), so an older kernel runs the network without them.
+	DNS        json.RawMessage `json:"dns,omitempty"`
+	HostGroups json.RawMessage `json:"host_groups,omitempty"`
 }
 
 // MeshTakeover names the existing mesh program on the node: its system
@@ -114,10 +121,14 @@ func meshID(id string) bool {
 }
 
 // MeshStatus is the payload of the PackageReport plugin_id "mesh", kind
-// "mesh.status", version "1".
+// "mesh.status", version "v1".
 type MeshStatus struct {
-	Networks []MeshNetworkStatus `json:"networks"`
-	Takeover *MeshTakeoverResult `json:"takeover,omitempty"`
+	// InstanceID is the kernel's mesh instance id (self.id of its mesh
+	// status), empty until the kernel answers a valid one. Control names
+	// host group gateways by it.
+	InstanceID string              `json:"instance_id,omitempty"`
+	Networks   []MeshNetworkStatus `json:"networks"`
+	Takeover   *MeshTakeoverResult `json:"takeover,omitempty"`
 }
 
 // MeshNetworkStatus is one network as the core runs it. The core answers
@@ -169,4 +180,60 @@ type MeshTakeoverResult struct {
 	Found   bool     `json:"found"`
 	Stopped []string `json:"stopped,omitempty"`
 	Error   string   `json:"error,omitempty"`
+}
+
+// MeshState is what the kernel answers on GET /v1/mesh: its instance id,
+// the networks it runs, and the region requests the node owner made on the
+// node (the kernel command mesh_request_region) that wait to go to
+// Control.
+type MeshState struct {
+	InstanceID     string              `json:"instance_id,omitempty"`
+	Networks       []MeshNetworkStatus `json:"networks"`
+	RegionRequests []MeshRegionRequest `json:"region_requests,omitempty"`
+}
+
+// MeshInstanceID tells whether id is a valid instance id: 1-64 letters,
+// digits or dashes.
+func MeshInstanceID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// MeshRegionRequest is one region request the kernel holds: ID names it to
+// the kernel, Network is the kernel tag of the network it was made on.
+type MeshRegionRequest struct {
+	ID      string `json:"id"`
+	Network string `json:"network,omitempty"`
+	Region  string `json:"region"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// MeshRegionRequestReasonMax bounds the reason, in characters.
+const MeshRegionRequestReasonMax = 500
+
+// MeshRegionRequestReport is the payload of the PackageReport plugin_id
+// "mesh", kind "mesh.region_request", version "v1".
+type MeshRegionRequestReport struct {
+	Region string `json:"region"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// Report is the request as Control takes it: the region must be a region
+// code; a longer reason is cut to MeshRegionRequestReasonMax characters.
+func (r MeshRegionRequest) Report() (MeshRegionRequestReport, error) {
+	if !meshID(r.Region) {
+		return MeshRegionRequestReport{}, fmt.Errorf("region %q is not a region code", r.Region)
+	}
+	reason := strings.TrimSpace(strings.ToValidUTF8(r.Reason, ""))
+	if runes := []rune(reason); len(runes) > MeshRegionRequestReasonMax {
+		reason = string(runes[:MeshRegionRequestReasonMax])
+	}
+	return MeshRegionRequestReport{Region: r.Region, Reason: reason}, nil
 }

@@ -126,8 +126,10 @@ type Core struct {
 	// proxies are the temporary proxies anixcore runs, wantedProxies
 	// those of the last ApplyTemporaryProxies still to run, by tag.
 	proxies, wantedProxies map[string]panel.TemporaryProxy
-	// mesh is the last PUT /v1/mesh body, nil for none.
-	mesh map[string]any
+	// mesh is the networks of the last ApplyMesh, nil for none; the PUT
+	// /v1/mesh body is made from them for the kernel's features at the
+	// time, so a restarted, updated kernel gets what it now takes.
+	mesh []panel.MeshNetwork
 
 	process *exec.Cmd
 	stop    chan struct{}

@@ -87,6 +87,10 @@ type MeshApplier interface {
 	MeshSupported() bool
 	// ApplyMesh replaces the networks the kernel runs; none stops them.
 	ApplyMesh(networks []panel.MeshNetwork) error
-	// MeshStatus answers each network as the kernel runs it, by Tag.
-	MeshStatus(ctx context.Context) ([]panel.MeshNetworkStatus, error)
+	// MeshStatus answers the kernel's instance id, each network as the
+	// kernel runs it (by ID) and the region requests it holds.
+	MeshStatus(ctx context.Context) (panel.MeshState, error)
+	// DoneMeshRegionRequest drops a region request from the kernel once
+	// it went to Control or can never go.
+	DoneMeshRegionRequest(ctx context.Context, id string) error
 }

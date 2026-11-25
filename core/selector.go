@@ -307,11 +307,18 @@ func (s *Selector) ApplyMesh(networks []panel.MeshNetwork) error {
 	return ErrMeshUnsupported
 }
 
-func (s *Selector) MeshStatus(ctx context.Context) ([]panel.MeshNetworkStatus, error) {
+func (s *Selector) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 	if a, ok := first[MeshApplier](s); ok {
 		return a.MeshStatus(ctx)
 	}
-	return nil, ErrMeshUnsupported
+	return panel.MeshState{}, ErrMeshUnsupported
+}
+
+func (s *Selector) DoneMeshRegionRequest(ctx context.Context, id string) error {
+	if a, ok := first[MeshApplier](s); ok {
+		return a.DoneMeshRegionRequest(ctx, id)
+	}
+	return ErrMeshUnsupported
 }
 
 func (s *Selector) MainlandBlocked(ctx context.Context) (uint64, error) {
