@@ -156,12 +156,26 @@ func TestControlRouteCorruptStoredRoute(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"relay-z.example.cn:50051"}, currentRelays(route))
 
-	// Without, the node identity does not start rather than go direct.
-	direct := &conf.ApiConfig{}
-	direct.AgentStream.StateDir = t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(direct.AgentStream.StateDir, "control-route-proxy-9105.json"), []byte("{"), 0o600))
-	_, err = newControlRoute("proxy-9105", direct, "ctl.example.com:50051", "ctl.example.com")
-	require.ErrorContains(t, err, "does not reach Control directly")
+	// Without, the node identity does not start rather than go direct:
+	// a file that does not parse, an empty route ({} or null) and relays
+	// this Agent cannot use are all damage.
+	for i, body := range []string{"{", "{}", "null", `{"relays":[" "]}`, `{"relays":["no port"]}`} {
+		direct := &conf.ApiConfig{}
+		direct.AgentStream.StateDir = t.TempDir()
+		owner := fmt.Sprintf("proxy-%d", 9110+i)
+		require.NoError(t, os.WriteFile(controlRouteFile(direct, owner), []byte(body), 0o600))
+		_, err = newControlRoute(owner, direct, "ctl.example.com:50051", "ctl.example.com")
+		require.ErrorContains(t, err, "does not reach Control directly", body)
+		require.NotContains(t, err.Error(), "remove the file")
+	}
+
+	// Control's explicit direct route is kept across a restart.
+	explicit := &conf.ApiConfig{}
+	explicit.AgentStream.StateDir = t.TempDir()
+	require.NoError(t, saveControlRoute(controlRouteFile(explicit, "proxy-9120"), storedControlRoute{Direct: true}))
+	route, err = newControlRoute("proxy-9120", explicit, "ctl.example.com:50051", "ctl.example.com")
+	require.NoError(t, err)
+	require.Nil(t, route.dial.Current())
 }
 
 func TestCheckRouteRelaysNeedsControlsCertificate(t *testing.T) {

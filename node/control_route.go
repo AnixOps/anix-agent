@@ -70,6 +70,9 @@ type storedControlRoute struct {
 	ReleaseCaches []string `json:"release_caches"`
 	ConfigRelays  []string `json:"config_relays"`
 	ConfigCaches  []string `json:"config_release_caches"`
+	// Direct records Control's explicit "direct": true; without it a
+	// stored route with no relays is not valid (never read as direct).
+	Direct bool `json:"direct,omitempty"`
 }
 
 // routeRetry is how long a relay list that failed its check is not
@@ -136,7 +139,7 @@ func newControlRoute(owner string, apiConfig *conf.ApiConfig, target, serverName
 	case err != nil && len(nonBlank(apiConfig.GRPCRelays)) == 0:
 		// The stored route may be all that keeps the node off a direct
 		// path to Control (R34): stop rather than go direct.
-		return nil, fmt.Errorf("the stored region relay route %s cannot be read (%w); the configuration has no GRPCRelays, so the node does not reach Control directly instead. Run the node group's install command again, or remove the file", route.file, err)
+		return nil, fmt.Errorf("the stored region relay route %s cannot be used (%w); the configuration has no GRPCRelays, so the node does not reach Control directly instead. Run the node group's install command again: it writes the group's relays and replaces the stored route", route.file, err)
 	case err != nil:
 		log.WithError(err).WithField("node", owner).Warn("Ignoring the stored region relay route; using the configuration's relays")
 	case stored != nil && (!slices.Equal(stored.ConfigRelays, nonBlank(apiConfig.GRPCRelays)) || !slices.Equal(stored.ConfigCaches, nonBlank(apiConfig.ReleaseCaches))):
@@ -277,7 +280,7 @@ func (r *controlRoute) switchLocked(relays, caches []string) error {
 		return fmt.Errorf("%s: %w", panel.ControlRouteMember, err)
 	}
 	stored := storedControlRoute{
-		Relays: relays, ReleaseCaches: caches,
+		Relays: relays, ReleaseCaches: caches, Direct: len(relays) == 0,
 		ConfigRelays: nonBlank(r.apiConfig.GRPCRelays), ConfigCaches: nonBlank(r.apiConfig.ReleaseCaches),
 	}
 	if err := saveControlRoute(r.file, stored); err != nil {
@@ -323,6 +326,16 @@ func loadControlRoute(path string) (*storedControlRoute, error) {
 	var stored storedControlRoute
 	if err := json.Unmarshal(data, &stored); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	// Only an explicit direct route may lack relays: an empty file body,
+	// {} or null is damage, never "reach Control directly" (R34).
+	if !stored.Direct {
+		if len(nonBlank(stored.Relays)) == 0 {
+			return nil, fmt.Errorf("%s holds no relays", path)
+		}
+		if _, err := agentapi.NewRelays(stored.Relays); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
 	}
 	return &stored, nil
 }

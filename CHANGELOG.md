@@ -17,6 +17,10 @@
   minutes. A stored route yields to a changed configuration (an edit, the
   installer run again), and a stored route that cannot be read with no
   `GRPCRelays` configured stops the node identity instead of going direct.
+  So does a stored route with no relays (`{}`, `null`) or relays the Agent
+  cannot use; only Control's explicit direct route is stored without
+  relays (`"direct": true`). The error points to re-running the group's
+  install command, not to removing the file.
 
 - Intranet mesh (`docs/mesh.md`): `mesh.status` carries the kernel's
   `instance_id` (`GET /v1/mesh`, 1-64 letters, digits or dashes; left out
