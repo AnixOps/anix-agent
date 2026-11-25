@@ -276,6 +276,10 @@ type MeshState struct {
 	StaticKeys     []MeshStaticKey     `json:"static_keys,omitempty"`
 	Networks       []MeshNetworkStatus `json:"networks"`
 	RegionRequests []MeshRegionRequest `json:"region_requests,omitempty"`
+	// Alerts are the kernel's node-level alerts (optional): the kernel
+	// repeats external_bridge_lock_held here, so it shows while the kernel
+	// runs no network.
+	Alerts []MeshAlert `json:"alerts,omitempty"`
 }
 
 // MeshInstanceID tells whether id is a valid instance id: 1-64 letters,

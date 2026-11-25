@@ -281,8 +281,11 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 	// instance whose rules still apply (§15.12 item 9). No network's
 	// bridge state is known then: externalBridge stays out, never null,
 	// and external_bridge_unsupported is not raised.
+	// The kernel gives it in every network's alerts and in its node-level
+	// alerts, which show while it runs no network.
 	lockHeld := false
 	if readErr == nil {
+		lockHeld = hasAlert(state.Alerts, panel.MeshAlertExternalBridgeLockHeld)
 		for _, network := range state.Networks {
 			if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeLockHeld) {
 				lockHeld = true
