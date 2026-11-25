@@ -259,6 +259,9 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 	}
 	status.InstanceID = state.InstanceID
 	nativeKeys := c.core.MeshNativeKeysSupported()
+	// bridge: the kernel was given the networks and does not take
+	// external_bridge.
+	bridge := applyErr == nil && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
 	var running map[string]panel.MeshNetworkStatus
 	if applyErr == nil {
 		applyErr = readErr
@@ -307,6 +310,13 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 			if failure.Code != "" && !hasAlert(entry.Alerts, failure.Code) {
 				entry.Alerts = append(entry.Alerts, panel.MeshAlert{Code: failure.Code, Detail: failure.Detail})
 			}
+		}
+		// The kernel runs the network without the bridge it does not take.
+		if bridge && meshSent(network.ExternalBridge) && !held[network.ID] && !holdNow(network, nativeKeys) && !hasAlert(entry.Alerts, panel.MeshAlertExternalBridgeUnsupported) {
+			entry.Alerts = append(entry.Alerts, panel.MeshAlert{
+				Code:   panel.MeshAlertExternalBridgeUnsupported,
+				Detail: "the kernel does not take external_bridge, so it runs this network without the bridge; update it",
+			})
 		}
 		entry.StaticKey = keys[network.Name]
 		status.Networks = append(status.Networks, entry)
@@ -406,4 +416,9 @@ func hasAlert(alerts []panel.MeshAlert, code string) bool {
 func holdNow(network panel.MeshNetwork, nativeKeys bool) bool {
 	code, _ := network.MeshHold(nativeKeys)
 	return code != ""
+}
+
+// meshSent tells whether the panel sent a section, not empty nor null.
+func meshSent(raw json.RawMessage) bool {
+	return len(raw) > 0 && string(raw) != "null"
 }

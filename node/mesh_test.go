@@ -22,18 +22,24 @@ import (
 type fakeMesh struct {
 	supported    bool
 	noNativeKeys bool
-	applied      [][]panel.MeshNetwork
-	instanceID   string
-	requests     []panel.MeshRegionRequest
-	keys         map[string]string
-	failures     map[string]*panel.MeshFailure
-	statusErr    error
-	done         []string
+	// externalBridge: the kernel takes external_bridge.
+	externalBridge bool
+	applied        [][]panel.MeshNetwork
+	instanceID     string
+	requests       []panel.MeshRegionRequest
+	keys           map[string]string
+	failures       map[string]*panel.MeshFailure
+	statusErr      error
+	// bridges are the networks' externalBridge (by id), raw.
+	bridges map[string]json.RawMessage
+	done    []string
 }
 
 func (f *fakeMesh) MeshSupported() bool { return f.supported }
 
 func (f *fakeMesh) MeshNativeKeysSupported() bool { return f.supported && !f.noNativeKeys }
+
+func (f *fakeMesh) MeshExternalBridgeSupported() bool { return f.supported && f.externalBridge }
 
 func (f *fakeMesh) ApplyMesh(networks []panel.MeshNetwork) error {
 	if len(networks) > 0 && !f.supported {
@@ -51,6 +57,7 @@ func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
 	if len(f.applied) > 0 {
 		for _, network := range f.applied[len(f.applied)-1] {
 			entry := panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}}
+			entry.ExternalBridge = f.bridges[network.ID]
 			if failure := f.failures[network.ID]; failure != nil {
 				entry.Running, entry.Failure = false, failure
 			}
@@ -384,5 +391,76 @@ func TestMeshHoldsANetworkOfAnUnknownKind(t *testing.T) {
 	c.retry()
 	if len(kernel.applied) != 1 {
 		t.Fatalf("applied = %+v", kernel.applied)
+	}
+}
+
+// The kernel's externalBridge goes on for a network it runs, an explicit
+// null too; while the Agent does not know the kernel's bridge (network
+// held, apply failed, kernel unreadable) the key is left out, never sent
+// as null.
+func TestMeshExternalBridgeOnlyWhenKnown(t *testing.T) {
+	kernel := &fakeMesh{supported: true, bridges: map[string]json.RawMessage{
+		"cn": json.RawMessage(`{"allowCount":1,"allowDigest":"d","appliedAt":"2026-11-25T21:00:00Z","routesDigest":"r"}`),
+		"eu": json.RawMessage(`null`),
+	}}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]},` +
+		`{"id":"odd","name":"odd","kind":"open","secret":"s","address":"10.98.0.5/24"}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	bridges := func() []string {
+		status, _, _ := c.status(context.Background())
+		var out []string
+		for _, network := range status.Networks {
+			entry, _ := json.Marshal(network)
+			_, after, found := strings.Cut(string(entry), `"externalBridge":`)
+			if !found {
+				out = append(out, "-")
+				continue
+			}
+			out = append(out, after[:4])
+		}
+		return out
+	}
+	if got := strings.Join(bridges(), " "); got != "{\"al null -" {
+		t.Fatalf("bridges = %s", got)
+	}
+	kernel.statusErr = errors.New("down")
+	if got := strings.Join(bridges(), " "); got != "- - -" {
+		t.Fatalf("kernel unreadable: bridges = %s", got)
+	}
+	kernel.statusErr = nil
+	c.mu.Lock()
+	c.err = errors.New("apply failed")
+	c.mu.Unlock()
+	if got := strings.Join(bridges(), " "); got != "- - -" {
+		t.Fatalf("apply failed: bridges = %s", got)
+	}
+}
+
+// A network with a bridge on a kernel that does not take external_bridge
+// runs without it and reports external_bridge_unsupported; once the
+// kernel takes it, the alert goes.
+func TestMeshAlertsAnExternalBridgeTheKernelDoesNotTake(t *testing.T) {
+	kernel := &fakeMesh{supported: true}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
+		`"external_bridge":{"interface":"ext0","routes":["100.100.1.2/32"],"allow":[]}},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _ := c.status(context.Background())
+	if !status.Networks[0].Running || !hasAlert(status.Networks[0].Alerts, panel.MeshAlertExternalBridgeUnsupported) ||
+		len(status.Networks[1].Alerts) != 0 {
+		t.Fatalf("status = %+v", status)
+	}
+	kernel.externalBridge = true
+	if status, _, _ := c.status(context.Background()); len(status.Networks[0].Alerts) != 0 {
+		t.Fatalf("status = %+v", status)
 	}
 }

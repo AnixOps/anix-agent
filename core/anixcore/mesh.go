@@ -47,6 +47,13 @@ func (c *Core) MeshNativeKeysSupported() bool {
 	return c.client != nil && c.client.meshNativeKeys.Load()
 }
 
+// MeshExternalBridgeSupported implements vCore.MeshApplier.
+func (c *Core) MeshExternalBridgeSupported() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client != nil && c.client.meshExternalBridge.Load()
+}
+
 // MeshSupported implements vCore.MeshApplier.
 func (c *Core) MeshSupported() bool {
 	c.mu.Lock()
@@ -128,7 +135,11 @@ func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 	for i := range answer.Networks {
 		answer.Networks[i].ID = strings.TrimPrefix(answer.Networks[i].Tag, meshTagPrefix)
 		answer.Networks[i].Tag = ""
-		if !present(answer.Networks[i].ExternalBridge) {
+		// externalBridge has three states, all passed on: a digest, an
+		// explicit null (the kernel runs no bridge on this network, so
+		// Control may release its addresses), or no key (unknown: never
+		// read as no bridge).
+		if len(answer.Networks[i].ExternalBridge) == 0 {
 			answer.Networks[i].ExternalBridge = nil
 		}
 	}
