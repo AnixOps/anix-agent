@@ -309,4 +309,20 @@ func TestMeshReplayLeavesOutWhatTheKernelMayNotRun(t *testing.T) {
 	if got := names(); len(got) != 1 || got[0] != "old" {
 		t.Fatalf("replayed = %v", got)
 	}
+	// Updated again: the restarted kernel gets the managed network back,
+	// with its native_keys.
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); len(got) != 2 || got[0] != managed.Name || got[1] != "old" {
+		t.Fatalf("replayed after the update = %v", got)
+	}
+	layer := api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)["network"].(map[string]any)
+	if layer["native_keys"] == nil {
+		t.Fatalf("network layer = %v", layer)
+	}
 }
