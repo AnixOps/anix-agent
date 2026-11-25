@@ -123,6 +123,9 @@ type Core struct {
 	// unsupportedProxies are the last plan's reverse proxies the kernel
 	// cannot run (no reverse_proxy feature), by id.
 	unsupportedProxies []string
+	// proxies are the temporary proxies anixcore runs, wantedProxies
+	// those of the last ApplyTemporaryProxies still to run, by tag.
+	proxies, wantedProxies map[string]panel.TemporaryProxy
 
 	process *exec.Cmd
 	stop    chan struct{}
@@ -371,6 +374,9 @@ func (c *Core) replay() error {
 		if err := c.putQoS(c.qos); err != nil {
 			failed = errors.Join(failed, err)
 		}
+	}
+	if err := c.replayTemporaryProxies(); err != nil {
+		failed = errors.Join(failed, err)
 	}
 	return failed
 }

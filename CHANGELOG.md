@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- Temporary proxies: Control can ask a node to serve a SOCKS5 proxy for a
+  limited time (the configuration member `temporary_proxies`, for example
+  15 minutes), so devices of an internal network such as a mesh reach the
+  internet through this node. Each one runs as an anixcore `socks` inbound
+  (tag `tmp-socks-<id>`) on an internal listen address only (loopback,
+  RFC 1918, `100.64.0.0/10`, link-local, IPv6 unique local), with a
+  required username and a password of at least 16 bytes, and with its end
+  time: anixcore closes it at that time by itself, also when the Agent or
+  Control is down. Expired entries are not sent, a restarted anixcore gets
+  the ones still running, and an entry that ends more than seven days
+  ahead is refused. Needs an anixcore with the `inbound_expiry` feature and
+  the `socks` type; an older one fails only a configuration that has
+  proxies.
+
 ## 5.0.11 - 2026-11-24
 
 Shipped with AnixOps Control 5.0.13 and anx-node 0.1.0-alpha.24. Protocol

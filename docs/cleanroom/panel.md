@@ -12,7 +12,7 @@ Deleted before implementation, to be written new:
 - `api/panel/user.go`, `api/panel/node_test.go`.
 
 Stays: the other files of the package (`egress.go`, `exit_policy.go`,
-`log.go`, `qos.go`, `version.go`, `protocols.go` and their tests).
+`temporary_proxy.go`, `log.go`, `qos.go`, `version.go`, `protocols.go` and their tests).
 
 ## Where the input comes from
 

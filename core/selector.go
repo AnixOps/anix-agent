@@ -19,6 +19,9 @@ import (
 var (
 	ErrEgressUnsupported  = errors.New("no core of this Agent runs egress routes (they need the anixcore core)")
 	ErrNetworkUnsupported = errors.New("no core of this Agent runs the network model (it needs the anixcore core)")
+	// ErrTemporaryProxyUnsupported answers temporary proxies for an Agent
+	// without the anixcore core.
+	ErrTemporaryProxyUnsupported = errors.New("no core of this Agent runs temporary proxies (they need the anixcore core)")
 )
 
 // namedCore is a configured core and its name (Name, else Type).
@@ -274,6 +277,16 @@ func (s *Selector) ApplyExitPolicy(policy panel.ExitPolicy) error {
 		return a.ApplyExitPolicy(policy)
 	}
 	return nil
+}
+
+func (s *Selector) ApplyTemporaryProxies(proxies []panel.TemporaryProxy) error {
+	if a, ok := first[TemporaryProxyApplier](s); ok {
+		return a.ApplyTemporaryProxies(proxies)
+	}
+	if len(proxies) == 0 {
+		return nil
+	}
+	return ErrTemporaryProxyUnsupported
 }
 
 func (s *Selector) MainlandBlocked(ctx context.Context) (uint64, error) {

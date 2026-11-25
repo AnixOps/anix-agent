@@ -84,6 +84,9 @@ type client struct {
 	// blockCIDRs is whether the kernel refuses address blocks
 	// (block_cidrs) and counts them (GET /v1/rules/counters).
 	blockCIDRs atomic.Bool
+	// temporaryProxies is whether the kernel runs socks inbounds and ends
+	// inbounds at their expires_at_ms (inbound_expiry).
+	temporaryProxies atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -140,6 +143,7 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 func (c *client) status(ctx context.Context) error {
 	var status struct {
 		Features []string `json:"features"`
+		Types    []string `json:"types"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/v1/status", nil, &status); err != nil {
 		return err
@@ -150,6 +154,7 @@ func (c *client) status(ctx context.Context) error {
 	c.qos.Store(slices.Contains(status.Features, qosFeature))
 	c.destinationStats.Store(slices.Contains(status.Features, destinationsFeature))
 	c.blockCIDRs.Store(slices.Contains(status.Features, blockCIDRsFeature))
+	c.temporaryProxies.Store(slices.Contains(status.Features, inboundExpiryFeature) && slices.Contains(status.Types, socksType))
 	return nil
 }
 

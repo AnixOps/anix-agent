@@ -164,7 +164,51 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 	if err := n.applyExitPolicy(snapshot); err != nil {
 		errs = append(errs, err)
 	}
+	if err := n.applyTemporaryProxies(snapshot); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// applyTemporaryProxies runs the snapshot's temporary proxies (the member
+// "temporary_proxies") on the node's core; a snapshot without them stops
+// the ones the core ran. A core that cannot run them fails only a snapshot
+// that has some.
+func (n *nodeDataPlane) applyTemporaryProxies(snapshot *agentv1pb.ConfigSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	proxies, err := panel.ParseTemporaryProxies(snapshot.GetConfigJson())
+	if err != nil {
+		return agentapi.InvalidConfig(err)
+	}
+	var server vCore.Core
+	for _, controller := range n.controllers {
+		if controller.server != nil {
+			server = controller.server
+			break
+		}
+	}
+	if server == nil {
+		if len(proxies) == 0 {
+			return nil
+		}
+		return errors.New("temporary proxies: the node has no core")
+	}
+	applier, ok := server.(vCore.TemporaryProxyApplier)
+	if !ok {
+		if len(proxies) == 0 {
+			return nil
+		}
+		return vCore.ErrTemporaryProxyUnsupported
+	}
+	if err := applier.ApplyTemporaryProxies(proxies); err != nil {
+		return fmt.Errorf("temporary proxies: %w", err)
+	}
+	if len(proxies) > 0 {
+		n.logger().WithField("temporary_proxies", len(proxies)).Info("Applied the node's temporary proxies")
+	}
+	return nil
 }
 
 // applyExitPolicy runs the snapshot's exit policy (the member

@@ -25,6 +25,7 @@ type fakeAPI struct {
 	rules    []rulesConfig
 	qos      []string
 	features []string
+	types    []string
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -51,7 +52,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == "GET" && r.URL.Path == "/v1/status":
-		reply(200, map[string]any{"version": "test", "features": f.features})
+		reply(200, map[string]any{"version": "test", "features": f.features, "types": f.types})
 	case r.Method == "PUT" && r.URL.Path == "/v1/egress":
 		var egress map[string]any
 		_ = json.Unmarshal(body, &egress)
