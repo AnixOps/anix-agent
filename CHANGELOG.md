@@ -10,7 +10,9 @@
   whose rules still apply. In that case no network reports
   `"externalBridge": null` or `external_bridge_unsupported`, and the key is
   left out (unknown), so Control keeps what it holds for the bridge. The
-  kernel's alert is passed on.
+  kernel's alert is passed on. A `null` that the kernel reports itself is
+  also dropped while the lock is held, and on a network with
+  `external_bridge_downgrade_residue`.
 - Intranet mesh, external network bridge: after a downgrade to a kernel
   without `mesh_external_bridge`, each network whose bridge the newer
   kernel reported as applied (an `externalBridge` object) reports the alert

@@ -34,9 +34,11 @@ type fakeMesh struct {
 	statusErr      error
 	// bridges are the networks' externalBridge (by id), raw.
 	bridges map[string]json.RawMessage
-	// alerts are the networks' kernel alerts (by id).
-	alerts map[string][]panel.MeshAlert
-	done   []string
+	// alerts are the networks' kernel alerts (by id); nodeAlerts the
+	// kernel's node-level ones.
+	alerts     map[string][]panel.MeshAlert
+	nodeAlerts []panel.MeshAlert
+	done       []string
 }
 
 func (f *fakeMesh) MeshSupported() bool { return f.supported }
@@ -57,7 +59,7 @@ func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
 	if f.statusErr != nil {
 		return panel.MeshState{}, f.statusErr
 	}
-	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests}
+	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests, Alerts: f.nodeAlerts}
 	if len(f.applied) > 0 {
 		for _, network := range f.applied[len(f.applied)-1] {
 			entry := panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}}
@@ -617,6 +619,12 @@ func TestMeshWarnsOfBridgeRulesLeftByADowngrade(t *testing.T) {
 	if got := check(c); got != "cn:R:- eu:U:null" {
 		t.Fatalf("downgraded: %s", got)
 	}
+	// A null the older kernel gives itself does not stand either.
+	kernel.bridges = map[string]json.RawMessage{"cn": json.RawMessage("null"), "eu": json.RawMessage("null")}
+	if got := check(c); got != "cn:R:- eu:U:null" {
+		t.Fatalf("downgraded, kernel reports null: %s", got)
+	}
+	kernel.bridges = nil
 	// The Agent restarts with the older kernel and the bridge is deleted.
 	restarted := testMeshComponent(t, kernel, nil)
 	restarted.bridgedPath = c.bridgedPath
@@ -743,9 +751,64 @@ func TestMeshLeavesBridgeStateUnknownWhileTheLockIsHeld(t *testing.T) {
 	if got := check(); got != "cn::- eu:L:-" {
 		t.Fatalf("lock held, reported on one network: %s", got)
 	}
+	// A null the kernel gives itself is dropped too.
+	kernel.bridges = map[string]json.RawMessage{"cn": json.RawMessage("null"), "eu": json.RawMessage("null")}
+	if got := check(); got != "cn::- eu:L:-" {
+		t.Fatalf("lock held, kernel reports null: %s", got)
+	}
+	kernel.bridges = nil
 	// The lock is released and the kernel still lacks the feature.
 	kernel.alerts = nil
 	if got := check(); got != "cn:U:null eu::null" {
 		t.Fatalf("lock free: %s", got)
+	}
+}
+
+// The kernel repeats external_bridge_lock_held in its node-level alerts,
+// so the lock shows while the kernel runs no network: here every network
+// is held back (the kernel does not take native_keys) and none reports
+// null.
+func TestMeshSeesTheBridgeLockWithoutNetworks(t *testing.T) {
+	lock := []panel.MeshAlert{{Code: panel.MeshAlertExternalBridgeLockHeld, Detail: "another process holds the bridge lock"}}
+	kernel := &fakeMesh{supported: true, noNativeKeys: true, nodeAlerts: lock}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	bridges := func() string {
+		t.Helper()
+		status, _, _ := c.status(context.Background())
+		if len(status.Networks) == 0 {
+			t.Fatalf("status = %+v", status)
+		}
+		var out []string
+		for _, network := range status.Networks {
+			if !hasAlert(network.Alerts, panel.MeshAlertNativeKeysUnsupported) {
+				t.Fatalf("%s not held: %+v", network.ID, network.Alerts)
+			}
+			entry, err := json.Marshal(network)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, after, found := strings.Cut(string(entry), `"externalBridge":`); found {
+				out = append(out, after[:4])
+			} else {
+				out = append(out, "-")
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	if len(kernel.applied) > 0 && len(kernel.applied[len(kernel.applied)-1]) > 0 {
+		t.Fatalf("kernel runs %+v", kernel.applied)
+	}
+	if got := bridges(); strings.Contains(got, "null") {
+		t.Fatalf("lock held without networks: externalBridge = %s", got)
+	}
+	// Without the alert the held networks report null as before.
+	kernel.nodeAlerts = nil
+	if got := bridges(); strings.Contains(got, "-") {
+		t.Fatalf("lock free: externalBridge = %s", got)
 	}
 }
