@@ -512,3 +512,34 @@ func TestMeshReportsNoBridgeOnAKernelWithoutIt(t *testing.T) {
 	kernel.statusErr = errors.New("down")
 	check("unreadable", false, "-")
 }
+
+// A kernel that takes external_bridge but leaves externalBridge out of a
+// network's status leaves it out of the report too: the Agent fills in
+// null only for kernels without the feature.
+func TestMeshLeavesOutABridgeTheKernelDoesNotReport(t *testing.T) {
+	kernel := &fakeMesh{supported: true, externalBridge: true}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
+		`"external_bridge":{"interface":"ext0","routes":["100.100.1.2/32"],"allow":[]}},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _ := c.status(context.Background())
+	if len(status.Networks) != 2 {
+		t.Fatalf("status = %+v", status)
+	}
+	for _, network := range status.Networks {
+		if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeUnsupported) {
+			t.Fatalf("%s: unexpected alert, status = %+v", network.ID, status)
+		}
+		entry, err := json.Marshal(network)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(entry), `"externalBridge"`) {
+			t.Fatalf("%s: externalBridge reported: %s", network.ID, entry)
+		}
+	}
+}
