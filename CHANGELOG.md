@@ -5,7 +5,7 @@
 ### Added
 
 - Intranet mesh: `dns.resolver_address` (the fixed resolver address) goes
-  to the kernel only when it lists `mesh_dns_resolver`; otherwise only that
+  to the kernel only when it lists `mesh_resolver_address`; otherwise only that
   field is dropped from `dns`, since an older kernel rejects unknown fields
   and with them the whole configuration. A restarted, updated kernel gets
   it.

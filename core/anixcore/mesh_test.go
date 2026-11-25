@@ -327,7 +327,7 @@ func TestMeshReplayLeavesOutWhatTheKernelMayNotRun(t *testing.T) {
 	}
 }
 
-// dns.resolver_address goes only to a kernel that lists mesh_dns_resolver:
+// dns.resolver_address goes only to a kernel that lists mesh_resolver_address:
 // an older one rejects the unknown field, and with it every network.
 func TestMeshDNSResolverAddressNeedsTheKernelFeature(t *testing.T) {
 	network := testMeshNetwork()
@@ -337,9 +337,9 @@ func TestMeshDNSResolverAddressNeedsTheKernelFeature(t *testing.T) {
 		resolver bool
 	}{
 		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature}, false},
-		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature, meshDNSResolverFeature}, true},
+		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature, meshResolverAddressFeature}, true},
 		// The resolver needs the dns section itself.
-		{[]string{meshFeature, meshNativeKeysFeature, meshDNSResolverFeature}, false},
+		{[]string{meshFeature, meshNativeKeysFeature, meshResolverAddressFeature}, false},
 	} {
 		api, server := newFakeAPI(t)
 		api.features = test.features
@@ -371,7 +371,7 @@ func TestMeshDNSResolverAddressNeedsTheKernelFeature(t *testing.T) {
 	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
 		t.Fatal(err)
 	}
-	api.features = append(api.features, meshDNSResolverFeature)
+	api.features = append(api.features, meshResolverAddressFeature)
 	if err := core.client.status(context.Background()); err != nil {
 		t.Fatal(err)
 	}

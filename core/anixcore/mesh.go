@@ -19,18 +19,18 @@ import (
 // them. The sections dns and host_groups go only to a kernel that lists
 // meshDNSFeature and meshHostGroupsFeature: the kernel rejects unknown
 // fields, and dns.resolver_address goes only to one that also lists
-// meshDNSResolverFeature. A kernel that lists meshRegionRequestsFeature holds the node
+// meshResolverAddressFeature. A kernel that lists meshRegionRequestsFeature holds the node
 // owner's region requests in the GET answer until
 // DELETE /v1/mesh/region_requests/{id}.
 
 // The anixcore features of the mesh.
 const (
-	meshFeature               = "mesh"
-	meshDNSFeature            = "mesh_dns"
-	meshDNSResolverFeature    = "mesh_dns_resolver"
-	meshHostGroupsFeature     = "mesh_host_groups"
-	meshRegionRequestsFeature = "mesh_region_requests"
-	meshNativeKeysFeature     = "mesh_native_keys"
+	meshFeature                = "mesh"
+	meshDNSFeature             = "mesh_dns"
+	meshResolverAddressFeature = "mesh_resolver_address"
+	meshHostGroupsFeature      = "mesh_host_groups"
+	meshRegionRequestsFeature  = "mesh_region_requests"
+	meshNativeKeysFeature      = "mesh_native_keys"
 )
 
 // meshTagPrefix starts the kernel tag of a mesh network.
@@ -76,7 +76,7 @@ func (c *Core) putMesh() error {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 	body := meshBody(c.mesh, meshSections{
-		dns: c.client.meshDNS.Load(), dnsResolver: c.client.meshDNSResolver.Load(),
+		dns: c.client.meshDNS.Load(), dnsResolver: c.client.meshResolverAddress.Load(),
 		hostGroups: c.client.meshHostGroups.Load(), nativeKeys: c.client.meshNativeKeys.Load(),
 	})
 	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
@@ -167,7 +167,7 @@ type meshSections struct {
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
 // panel in the kernel's layered configuration, with dns, host_groups and
 // native_keys only when the kernel takes them (dns.resolver_address only
-// with dnsResolver). A network the kernel must
+// with mesh_resolver_address). A network the kernel must
 // not run (MeshHold: a managed one on a kernel without native_keys, which
 // would run it open to any node, or one of an unknown kind) is left out
 // here too, so a restarted, older kernel never gets it on replay; the

@@ -90,9 +90,9 @@ type client struct {
 	// mesh is whether the kernel runs intranet mesh networks (/v1/mesh);
 	// meshDNS, meshHostGroups and meshRegionRequests whether it takes
 	// their dns and host_groups sections and holds region requests.
-	// meshNativeKeys whether it takes network.native_keys, meshDNSResolver
+	// meshNativeKeys whether it takes network.native_keys, meshResolverAddress
 	// whether it takes dns.resolver_address.
-	mesh, meshDNS, meshDNSResolver, meshHostGroups, meshRegionRequests, meshNativeKeys atomic.Bool
+	mesh, meshDNS, meshResolverAddress, meshHostGroups, meshRegionRequests, meshNativeKeys atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -163,7 +163,7 @@ func (c *client) status(ctx context.Context) error {
 	c.temporaryProxies.Store(slices.Contains(status.Features, inboundExpiryFeature) && slices.Contains(status.Types, socksType))
 	c.mesh.Store(slices.Contains(status.Features, meshFeature))
 	c.meshDNS.Store(c.mesh.Load() && slices.Contains(status.Features, meshDNSFeature))
-	c.meshDNSResolver.Store(c.meshDNS.Load() && slices.Contains(status.Features, meshDNSResolverFeature))
+	c.meshResolverAddress.Store(c.meshDNS.Load() && slices.Contains(status.Features, meshResolverAddressFeature))
 	c.meshHostGroups.Store(c.mesh.Load() && slices.Contains(status.Features, meshHostGroupsFeature))
 	c.meshRegionRequests.Store(c.mesh.Load() && slices.Contains(status.Features, meshRegionRequestsFeature))
 	c.meshNativeKeys.Store(c.mesh.Load() && slices.Contains(status.Features, meshNativeKeysFeature))
