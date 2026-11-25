@@ -326,3 +326,71 @@ func TestMeshReplayLeavesOutWhatTheKernelMayNotRun(t *testing.T) {
 		t.Fatalf("network layer = %v", layer)
 	}
 }
+
+// dns.resolver_address goes only to a kernel that lists mesh_resolver_address:
+// an older one rejects the unknown field, and with it every network.
+func TestMeshDNSResolverAddressNeedsTheKernelFeature(t *testing.T) {
+	network := testMeshNetwork()
+	network.DNS = json.RawMessage(`{"enabled":true,"suffix":"mesh.internal","resolver_address":"10.150.255.254"}`)
+	for _, test := range []struct {
+		features []string
+		resolver bool
+	}{
+		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature}, false},
+		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature, meshResolverAddressFeature}, true},
+		// The resolver needs the dns section itself.
+		{[]string{meshFeature, meshNativeKeysFeature, meshResolverAddressFeature}, false},
+	} {
+		api, server := newFakeAPI(t)
+		api.features = test.features
+		core := externalCore(t, server)
+		err := core.ApplyMesh([]panel.MeshNetwork{network})
+		_ = core.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := api.mesh[0]["networks"].([]any)[0].(map[string]any)
+		dns, _ := config["dns"].(map[string]any)
+		if !slices.Contains(test.features, meshDNSFeature) {
+			if dns != nil {
+				t.Fatalf("%v: dns = %v", test.features, dns)
+			}
+			continue
+		}
+		_, resolver := dns["resolver_address"]
+		if resolver != test.resolver || dns["enabled"] != true || dns["suffix"] != "mesh.internal" {
+			t.Fatalf("%v: dns = %v", test.features, dns)
+		}
+	}
+
+	// A restarted, updated kernel gets the resolver on replay.
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature, meshNativeKeysFeature, meshDNSFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
+		t.Fatal(err)
+	}
+	api.features = append(api.features, meshResolverAddressFeature)
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	dns := api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)["dns"].(map[string]any)
+	if dns["resolver_address"] != "10.150.255.254" {
+		t.Fatalf("replayed dns = %v", dns)
+	}
+}
+
+func TestMeshDNSKeepsWhatIsNotAnObject(t *testing.T) {
+	for _, raw := range []string{`{"enabled":true}`, `[1]`, `"x"`} {
+		if got := meshDNS(json.RawMessage(raw), false); string(got) != raw {
+			t.Fatalf("%s -> %s", raw, got)
+		}
+	}
+	if got := meshDNS(json.RawMessage(`{"enabled":true,"resolver_address":"10.0.0.1"}`), false); string(got) != `{"enabled":true}` {
+		t.Fatalf("dropped = %s", got)
+	}
+}

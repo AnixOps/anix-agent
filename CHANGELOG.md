@@ -4,6 +4,11 @@
 
 ### Added
 
+- Intranet mesh: `dns.resolver_address` (the fixed resolver address) goes
+  to the kernel only when it lists `mesh_resolver_address`; otherwise only that
+  field is dropped from `dns`, since an older kernel rejects unknown fields
+  and with them the whole configuration. A restarted, updated kernel gets
+  it.
 - Intranet mesh: each network in `mesh.status` carries `static_key`, the
   node's static public key in that network (`GET /v1/mesh` `static_keys`,
   by network name; 32 bytes in standard base64, others left out), from
