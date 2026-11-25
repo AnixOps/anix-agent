@@ -2,10 +2,14 @@ package upgrade
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,7 +28,7 @@ func TestDownloadFetchesOnTheControlConnectionFirst(t *testing.T) {
 	a := &Agent{Dir: t.TempDir(), HTTPClient: server.Client()}
 	read := func(ctx context.Context) string {
 		t.Helper()
-		path, err := a.download(ctx, agentcontrol.ReleaseKindAgent, "v5.1.0", server.URL, "a.zip", 5)
+		path, err := a.download(ctx, agentcontrol.ReleaseKindAgent, "v5.1.0", server.URL, "a.zip", "", 5)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,11 +69,78 @@ func TestDownloadStalledFetchLeavesTimeForHTTPS(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
-	path, err := a.download(stalled, agentcontrol.ReleaseKindAgent, "v5.1.0", server.URL, "a.zip", 5)
+	path, err := a.download(stalled, agentcontrol.ReleaseKindAgent, "v5.1.0", server.URL, "a.zip", "", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(path); string(data) != "https" {
 		t.Fatalf("got %q, want the https fallback", data)
 	}
+}
+
+// The region relay's cache goes first, asked by SHA-256 with the release
+// URL as its source; a copy with the wrong hash falls through to the next
+// source.
+func TestDownloadAsksTheReleaseCacheFirst(t *testing.T) {
+	const body = "cache"
+	sum := sha256Of(body)
+	origin := "https://github.com/AnixOps/anix-agent/releases/download/v5.1.0/a.zip"
+	var cacheAnswer atomic.Value
+	cacheAnswer.Store(body)
+	cache := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sha256/"+sum || r.URL.Query().Get("src") != origin {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(cacheAnswer.Load().(string)))
+	}))
+	defer cache.Close()
+	a := &Agent{Dir: t.TempDir(), HTTPClient: cache.Client()}
+	a.SetCaches([]string{"http://insecure.example", cache.URL + "/"})
+	fetched := 0
+	ctx := WithFetch(context.Background(), func(context.Context, string, string, string, int64) ([]byte, error) {
+		fetched++
+		return []byte("grpc!"), nil
+	})
+	read := func() string {
+		t.Helper()
+		path, err := a.download(ctx, agentcontrol.ReleaseKindAgent, "v5.1.0", origin, "a.zip", sum, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if got := read(); got != body || fetched != 0 {
+		t.Fatalf("got %q after %d control fetches, want the cache's bytes", got, fetched)
+	}
+	cacheAnswer.Store("evil!")
+	if got := read(); got != "grpc!" || fetched != 1 {
+		t.Fatalf("got %q after %d control fetches, want the control connection after a bad cached copy", got, fetched)
+	}
+	entries, err := os.ReadDir(a.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if data, _ := os.ReadFile(filepath.Join(a.Dir, entry.Name())); string(data) == "evil!" {
+			t.Fatal("the bad cached copy was left in the staging directory")
+		}
+	}
+}
+
+func TestSetCachesKeepsHTTPSOnly(t *testing.T) {
+	a := &Agent{}
+	a.SetCaches([]string{"", "http://relay.example", "https://user:pw@relay.example", "https://relay.example/?x=1", " https://relay-1.example:8443/ "})
+	if got := a.releaseCaches(); len(got) != 1 || got[0] != "https://relay-1.example:8443" {
+		t.Fatalf("caches = %v", got)
+	}
+}
+
+func sha256Of(data string) string {
+	sum := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(sum[:])
 }

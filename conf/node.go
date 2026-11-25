@@ -26,6 +26,15 @@ type ApiConfig struct {
 	GRPCHost       string `json:"GRPCHost"`
 	GRPCUseTLS     bool   `json:"GRPCUseTLS"`
 	GRPCServerName string `json:"GRPCServerName"`
+	// GRPCRelays are the region relays (host:port) the node reaches
+	// Control through (anix-control docs/design/region-relay). Set: every
+	// connection to Control goes to a relay, never to GRPCHost, while the
+	// gRPC target and the TLS name stay GRPCHost's and GRPCServerName.
+	GRPCRelays []string `json:"GRPCRelays"`
+	// ReleaseCaches are the region relays' release file caches (https base
+	// URLs); upgrades are downloaded there first, by SHA-256, and verified
+	// as from any other source.
+	ReleaseCaches []string `json:"ReleaseCaches"`
 	// GRPCKeepalive is the stream's keepalive in seconds.
 	GRPCKeepalive int `json:"GRPCKeepalive"`
 	// AgentControlAllowInsecure must be set explicitly for a plaintext

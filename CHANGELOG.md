@@ -4,6 +4,16 @@
 
 ### Added
 
+- Region relays (`docs/region-relay.md`): with `GRPCRelays` (host:port
+  list) every connection to Control, the control stream and enrollment,
+  goes to a relay that forwards it byte for byte, never to `GRPCHost`;
+  the gRPC target and the TLS name stay Control's, so the relay sees no key
+  and cannot read the stream. The fastest relay is picked, a clearly faster
+  one (30% lower connect time) takes new connections after the 10-minute
+  re-measure, and failed relays back off from 5 seconds to 5 minutes.
+  `ReleaseCaches` (https base URLs) are asked first for upgrade files by
+  SHA-256; a wrong copy falls through to the control connection and the
+  release URL, and every file is verified as before.
 - Temporary proxies: Control can ask a node to serve a SOCKS5 proxy for a
   limited time (the configuration member `temporary_proxies`, for example
   15 minutes), so devices of an internal network such as a mesh reach the
