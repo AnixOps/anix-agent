@@ -163,13 +163,18 @@ type meshSections struct {
 
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
 // panel in the kernel's layered configuration, with dns, host_groups and
-// native_keys only when the kernel takes them. The node component never
-// gives a kernel without native_keys a managed network (it would run it
-// open to any node), so the key list is dropped only from legacy ones,
-// where it only names the members' implementation.
+// native_keys only when the kernel takes them. A network the kernel must
+// not run (MeshHold: a managed one on a kernel without native_keys, which
+// would run it open to any node, or one of an unknown kind) is left out
+// here too, so a restarted, older kernel never gets it on replay; the
+// key list is dropped only from legacy networks, where it only names the
+// members' implementation.
 func meshBody(networks []panel.MeshNetwork, take meshSections) map[string]any {
 	out := make([]map[string]any, 0, len(networks))
 	for _, n := range networks {
+		if code, _ := n.MeshHold(take.nativeKeys); code != "" {
+			continue
+		}
 		network := map[string]any{"name": n.Name, "secret": n.Secret, "secure_mode": n.SecureMode}
 		if n.Cipher != "" {
 			network["cipher"] = n.Cipher
