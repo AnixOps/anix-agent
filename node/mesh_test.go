@@ -617,6 +617,12 @@ func TestMeshWarnsOfBridgeRulesLeftByADowngrade(t *testing.T) {
 	if got := check(c); got != "cn:R:- eu:U:null" {
 		t.Fatalf("downgraded: %s", got)
 	}
+	// A null the older kernel gives itself does not stand either.
+	kernel.bridges = map[string]json.RawMessage{"cn": json.RawMessage("null"), "eu": json.RawMessage("null")}
+	if got := check(c); got != "cn:R:- eu:U:null" {
+		t.Fatalf("downgraded, kernel reports null: %s", got)
+	}
+	kernel.bridges = nil
 	// The Agent restarts with the older kernel and the bridge is deleted.
 	restarted := testMeshComponent(t, kernel, nil)
 	restarted.bridgedPath = c.bridgedPath
@@ -743,6 +749,12 @@ func TestMeshLeavesBridgeStateUnknownWhileTheLockIsHeld(t *testing.T) {
 	if got := check(); got != "cn::- eu:L:-" {
 		t.Fatalf("lock held, reported on one network: %s", got)
 	}
+	// A null the kernel gives itself is dropped too.
+	kernel.bridges = map[string]json.RawMessage{"cn": json.RawMessage("null"), "eu": json.RawMessage("null")}
+	if got := check(); got != "cn::- eu:L:-" {
+		t.Fatalf("lock held, kernel reports null: %s", got)
+	}
+	kernel.bridges = nil
 	// The lock is released and the kernel still lacks the feature.
 	kernel.alerts = nil
 	if got := check(); got != "cn:U:null eu::null" {

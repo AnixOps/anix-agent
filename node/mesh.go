@@ -369,6 +369,11 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		if noBridge && entry.ExternalBridge == nil && !residue[network.ID] {
 			entry.ExternalBridge = json.RawMessage("null")
 		}
+		// Nor does a null the kernel gives itself stand then: the lock's
+		// holder, or the newer kernel's leftover rules, may still bridge.
+		if (lockHeld || residue[network.ID]) && string(entry.ExternalBridge) == "null" {
+			entry.ExternalBridge = nil
+		}
 		entry.StaticKey = keys[network.Name]
 		status.Networks = append(status.Networks, entry)
 	}
