@@ -125,7 +125,7 @@ func TestMeshSectionsGoOnlyToAKernelThatTakesThem(t *testing.T) {
 	// A null section is no section.
 	network := testMeshNetwork()
 	network.DNS, network.HostGroups = json.RawMessage(`null`), json.RawMessage(`null`)
-	body := meshBody([]panel.MeshNetwork{network}, true, true)["networks"].([]map[string]any)[0]
+	body := meshBody([]panel.MeshNetwork{network}, meshSections{dns: true, hostGroups: true, nativeKeys: true})["networks"].([]map[string]any)[0]
 	if _, ok := body["dns"]; ok {
 		t.Fatalf("null dns sent: %v", body)
 	}
@@ -191,7 +191,7 @@ func TestMeshInstanceIDAndRegionRequests(t *testing.T) {
 	// An invalid instance id is no instance id; a request whose id does
 	// not fit a path segment is left out.
 	if state.InstanceID != "" || len(state.RegionRequests) != 1 || state.RegionRequests[0].ID != "r1" ||
-		state.RegionRequests[0].Network != "cn" || state.RegionRequests[0].Region != "eu" {
+		state.RegionRequests[0].Network != "mesh-cn" || state.RegionRequests[0].Region != "eu" {
 		t.Fatalf("state = %+v", state)
 	}
 	if err := core.DoneMeshRegionRequest(context.Background(), "r1"); err != nil {
@@ -207,7 +207,7 @@ func TestMeshInstanceIDAndRegionRequests(t *testing.T) {
 
 func TestMeshNetworkLayerAndStaticKeys(t *testing.T) {
 	api, server := newFakeAPI(t)
-	api.features = []string{meshFeature}
+	api.features = []string{meshFeature, meshNativeKeysFeature}
 	api.meshKeys = []map[string]any{
 		{"network": "region-cn", "static_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
 		{"network": "region-eu", "static_key": "c2hvcnQ="},
@@ -217,13 +217,30 @@ func TestMeshNetworkLayerAndStaticKeys(t *testing.T) {
 	t.Cleanup(func() { _ = core.Close() })
 	network := testMeshNetwork()
 	network.Kind = "managed"
-	network.NativeKeys = json.RawMessage(`["AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="]`)
-	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
+	network.NativeKeys = json.RawMessage(`["AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=","HxQdHBsaGRgXFhUUExIREA8ODQwLCgkIBwYFBAMCAQA="]`)
+	empty := testMeshNetwork()
+	empty.ID, empty.Name, empty.NativeKeys = "eu", "region-eu", json.RawMessage(`[]`)
+	none := testMeshNetwork()
+	none.ID, none.Name, none.NativeKeys = "na", "region-na", json.RawMessage(`null`)
+	if !core.MeshNativeKeysSupported() {
+		t.Fatal("the kernel lists mesh_native_keys")
+	}
+	if err := core.ApplyMesh([]panel.MeshNetwork{network, empty, none}); err != nil {
 		t.Fatal(err)
 	}
-	layer := api.mesh[0]["networks"].([]any)[0].(map[string]any)["network"].(map[string]any)
-	if layer["kind"] != "managed" || len(layer["native_keys"].([]any)) != 1 {
+	networks := api.mesh[0]["networks"].([]any)
+	layer := networks[0].(map[string]any)["network"].(map[string]any)
+	// The list goes as it came, in order; an empty one too (the kernel
+	// holds that network), a null one not at all.
+	if got, _ := json.Marshal(layer["native_keys"]); layer["kind"] != "managed" ||
+		string(got) != `["AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=","HxQdHBsaGRgXFhUUExIREA8ODQwLCgkIBwYFBAMCAQA="]` {
 		t.Fatalf("network layer = %v", layer)
+	}
+	if keys, ok := networks[1].(map[string]any)["network"].(map[string]any)["native_keys"]; !ok || len(keys.([]any)) != 0 {
+		t.Fatalf("empty list = %v", networks[1])
+	}
+	if _, ok := networks[2].(map[string]any)["network"].(map[string]any)["native_keys"]; ok {
+		t.Fatalf("null list sent: %v", networks[2])
 	}
 	state, err := core.MeshStatus(context.Background())
 	if err != nil {
@@ -232,5 +249,25 @@ func TestMeshNetworkLayerAndStaticKeys(t *testing.T) {
 	// Only a 32-byte key in standard base64 under a network name stays.
 	if len(state.StaticKeys) != 1 || state.StaticKeys[0].Network != "region-cn" || state.StaticKeys[0].StaticKey != "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" {
 		t.Fatalf("static keys = %+v", state.StaticKeys)
+	}
+}
+
+func TestMeshNativeKeysNeedTheKernelFeature(t *testing.T) {
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	if core.MeshNativeKeysSupported() {
+		t.Fatal("no mesh_native_keys feature")
+	}
+	network := testMeshNetwork()
+	network.Kind = panel.MeshKindLegacy
+	network.NativeKeys = json.RawMessage(`["AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="]`)
+	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
+		t.Fatal(err)
+	}
+	layer := api.mesh[0]["networks"].([]any)[0].(map[string]any)["network"].(map[string]any)
+	if _, ok := layer["native_keys"]; ok || layer["kind"] != "legacy" {
+		t.Fatalf("network layer = %v", layer)
 	}
 }
