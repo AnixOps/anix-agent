@@ -262,6 +262,12 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 	// bridge: the kernel was given the networks and does not take
 	// external_bridge.
 	bridge := applyErr == nil && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
+	// noBridge: the kernel, read just now, does not take external_bridge,
+	// so no bridge runs in any of its networks. Each network then reports
+	// an explicit null, whether or not Control sent a bridge: Control
+	// releases what it held for a bridge deleted since, which the alert
+	// alone (sent only while a bridge is configured) never lets it do.
+	noBridge := readErr == nil && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
 	var running map[string]panel.MeshNetworkStatus
 	if applyErr == nil {
 		applyErr = readErr
@@ -317,6 +323,9 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 				Code:   panel.MeshAlertExternalBridgeUnsupported,
 				Detail: "the kernel does not take external_bridge, so it runs this network without the bridge; update it",
 			})
+		}
+		if noBridge && entry.ExternalBridge == nil {
+			entry.ExternalBridge = json.RawMessage("null")
 		}
 		entry.StaticKey = keys[network.Name]
 		status.Networks = append(status.Networks, entry)
