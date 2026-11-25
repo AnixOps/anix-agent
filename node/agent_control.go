@@ -262,6 +262,22 @@ func agentControlRelays(owner string, apiConfig *conf.ApiConfig) (*agentapi.Rela
 	return relays, nil
 }
 
+// releaseRelayOwner forgets node identity owner's relay list and upgrade
+// route, when the identity stops (it may not come back after a reload).
+func releaseRelayOwner(owner string) {
+	relaysMu.Lock()
+	if previous, ok := relaysOwners[owner]; ok {
+		delete(relaysOwners, owner)
+		if !relaysListInUse(previous) {
+			delete(relaysByList, previous)
+		}
+	}
+	relaysMu.Unlock()
+	if upgrader := agentUpgrader(); upgrader != nil {
+		upgrader.SetRoute(owner, upgrade.RelayRoute{})
+	}
+}
+
 // relaysListInUse reports whether a node identity uses the relay list key;
 // the caller holds relaysMu.
 func relaysListInUse(key string) bool {

@@ -224,6 +224,7 @@ func (n *Node) closeResources() error {
 
 	for _, controller := range n.controllers {
 		if controller != nil {
+			releaseRelayOwner("proxy-" + strconv.Itoa(controller.nodeID))
 			closeErr = errors.Join(closeErr, controller.Close())
 		}
 	}
