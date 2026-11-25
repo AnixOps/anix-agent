@@ -11,7 +11,12 @@
   through them; the release caches go to upgrades. No member keeps the
   route; empty relays keep the current ones with a warning (never direct);
   only `"direct": true` drops them. `agentapi.RelaySwitch` and
-  `Client.Reconnect` carry the switch.
+  `Client.Reconnect` carry the switch. New relays are taken only after a
+  TLS handshake with Control (certificate verified) through one of them;
+  a list that fails keeps the current route and is retried after 10
+  minutes. A stored route yields to a changed configuration (an edit, the
+  installer run again), and a stored route that cannot be read with no
+  `GRPCRelays` configured stops the node identity instead of going direct.
 
 - Intranet mesh (`docs/mesh.md`): `mesh.status` carries the kernel's
   `instance_id` (`GET /v1/mesh`, 1-64 letters, digits or dashes; left out
