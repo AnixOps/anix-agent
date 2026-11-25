@@ -18,7 +18,8 @@ import (
 // id, and answers their state on GET /v1/mesh. {"networks": []} stops
 // them. The sections dns and host_groups go only to a kernel that lists
 // meshDNSFeature and meshHostGroupsFeature: the kernel rejects unknown
-// fields. A kernel that lists meshRegionRequestsFeature holds the node
+// fields, and dns.resolver_address goes only to one that also lists
+// meshDNSResolverFeature. A kernel that lists meshRegionRequestsFeature holds the node
 // owner's region requests in the GET answer until
 // DELETE /v1/mesh/region_requests/{id}.
 
@@ -26,6 +27,7 @@ import (
 const (
 	meshFeature               = "mesh"
 	meshDNSFeature            = "mesh_dns"
+	meshDNSResolverFeature    = "mesh_dns_resolver"
 	meshHostGroupsFeature     = "mesh_host_groups"
 	meshRegionRequestsFeature = "mesh_region_requests"
 	meshNativeKeysFeature     = "mesh_native_keys"
@@ -74,7 +76,8 @@ func (c *Core) putMesh() error {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 	body := meshBody(c.mesh, meshSections{
-		dns: c.client.meshDNS.Load(), hostGroups: c.client.meshHostGroups.Load(), nativeKeys: c.client.meshNativeKeys.Load(),
+		dns: c.client.meshDNS.Load(), dnsResolver: c.client.meshDNSResolver.Load(),
+		hostGroups: c.client.meshHostGroups.Load(), nativeKeys: c.client.meshNativeKeys.Load(),
 	})
 	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
 		return fmt.Errorf("anixcore mesh: %w", err)
@@ -158,12 +161,13 @@ func (c *Core) DoneMeshRegionRequest(ctx context.Context, id string) error {
 
 // meshSections are the optional parts of a network the kernel takes.
 type meshSections struct {
-	dns, hostGroups, nativeKeys bool
+	dns, dnsResolver, hostGroups, nativeKeys bool
 }
 
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
 // panel in the kernel's layered configuration, with dns, host_groups and
-// native_keys only when the kernel takes them. A network the kernel must
+// native_keys only when the kernel takes them (dns.resolver_address only
+// with dnsResolver). A network the kernel must
 // not run (MeshHold: a managed one on a kernel without native_keys, which
 // would run it open to any node, or one of an unknown kind) is left out
 // here too, so a restarted, older kernel never gets it on replay; the
@@ -209,7 +213,7 @@ func meshBody(networks []panel.MeshNetwork, take meshSections) map[string]any {
 			config["routing"] = n.Routing
 		}
 		if take.dns && present(n.DNS) {
-			config["dns"] = n.DNS
+			config["dns"] = meshDNS(n.DNS, take.dnsResolver)
 		}
 		if take.hostGroups && present(n.HostGroups) {
 			config["host_groups"] = n.HostGroups
@@ -217,6 +221,29 @@ func meshBody(networks []panel.MeshNetwork, take meshSections) map[string]any {
 		out = append(out, config)
 	}
 	return map[string]any{"networks": out}
+}
+
+// meshDNS is the dns section for the kernel: without resolver it drops
+// resolver_address, which an older kernel rejects as an unknown field
+// (and with it the whole configuration). A section that is not an object
+// goes as it is, for the kernel to refuse.
+func meshDNS(dns json.RawMessage, resolver bool) json.RawMessage {
+	if resolver {
+		return dns
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(dns, &fields) != nil || fields == nil {
+		return dns
+	}
+	if _, ok := fields["resolver_address"]; !ok {
+		return dns
+	}
+	delete(fields, "resolver_address")
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return dns
+	}
+	return out
 }
 
 // present tells whether a section was sent, not empty nor null.
