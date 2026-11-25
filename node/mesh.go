@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/mesh"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -333,7 +335,7 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 			}
 		}
 		// The kernel runs the network without the bridge it does not take.
-		if bridge && meshSent(network.ExternalBridge) && !held[network.ID] && !holdNow(network, nativeKeys) && !hasAlert(entry.Alerts, panel.MeshAlertExternalBridgeUnsupported) {
+		if bridge && !residue[network.ID] && meshSent(network.ExternalBridge) && !held[network.ID] && !holdNow(network, nativeKeys) && !hasAlert(entry.Alerts, panel.MeshAlertExternalBridgeUnsupported) {
 			entry.Alerts = append(entry.Alerts, panel.MeshAlert{
 				Code:   panel.MeshAlertExternalBridgeUnsupported,
 				Detail: "the kernel does not take external_bridge, so it runs this network without the bridge; update it",
@@ -347,7 +349,10 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 					"then remove " + c.bridgedFile(),
 			})
 		}
-		if noBridge && entry.ExternalBridge == nil {
+		// A network that may keep a newer kernel's bridge rules has no known
+		// bridge state: externalBridge stays out, never null, so Control
+		// keeps what it holds for the bridge.
+		if noBridge && entry.ExternalBridge == nil && !residue[network.ID] {
 			entry.ExternalBridge = json.RawMessage("null")
 		}
 		entry.StaticKey = keys[network.Name]
@@ -450,11 +455,15 @@ func holdNow(network panel.MeshNetwork, nativeKeys bool) bool {
 	return code != ""
 }
 
-// defaultBridgedPath records the bridged networks, next to the takeover's
-// record.
+// defaultBridgedPath records the bridged networks in the Agent's own state
+// directory, which the Agent's user may write under the unit's sandbox
+// (the takeover's record is root's).
 func defaultBridgedPath() string {
-	return filepath.Join(filepath.Dir(mesh.DefaultStatePath), "bridged.json")
+	return filepath.Join(layout.StateDir, "mesh", "bridged.json")
 }
+
+// bridgeTracking: bridge rules exist on Linux only (§15.12).
+var bridgeTracking = runtime.GOOS == "linux"
 
 func (c *meshComponent) bridgedFile() string {
 	if c.bridgedPath != "" {
@@ -468,16 +477,20 @@ type bridgedRecord struct {
 	Networks []string `json:"networks"`
 }
 
-// trackBridges keeps the record of the networks that run an external
-// bridge on a kernel that takes external_bridge, read just now: capable
-// tells whether it does. On such a kernel the record becomes the networks
-// configured or reported with a bridge (the kernel removes the rules of a
-// bridge deleted since) and nothing is answered. On a kernel without it
-// the record stays as it was, so it outlives an Agent restarted with the
-// older kernel, and is answered: those networks may keep the newer
-// kernel's rules. The record is cleared once a capable kernel runs again,
-// or when the operator removes the file.
+// trackBridges keeps the record of the networks whose external bridge a
+// kernel that takes external_bridge applied, read just now: capable tells
+// whether it does. On such a kernel a network the kernel reports with a
+// bridge (an externalBridge object) is added, one it reports with null is
+// dropped, one whose bridge it does not report stays as it was, and one no
+// longer in the member is dropped; nothing is answered. On a kernel
+// without it the record stays as it was, so it outlives an Agent
+// restarted with the older kernel, and is answered: those networks may
+// keep the newer kernel's rules. The record is cleared by a capable kernel
+// reporting null, or when the operator removes the file.
 func (c *meshComponent) trackBridges(networks []panel.MeshNetwork, running []panel.MeshNetworkStatus, capable bool) map[string]bool {
+	if !bridgeTracking {
+		return nil
+	}
 	path := c.bridgedFile()
 	// The file is read each time, so removing it takes effect at once.
 	c.bridgedMu.Lock()
@@ -486,15 +499,23 @@ func (c *meshComponent) trackBridges(networks []panel.MeshNetwork, running []pan
 	if !capable {
 		return recorded
 	}
-	now := map[string]bool{}
+	member := make(map[string]bool, len(networks))
 	for _, network := range networks {
-		if meshSent(network.ExternalBridge) {
-			now[network.ID] = true
+		member[network.ID] = true
+	}
+	now := map[string]bool{}
+	for id := range recorded {
+		if member[id] {
+			now[id] = true
 		}
 	}
 	for _, network := range running {
-		if meshSent(network.ExternalBridge) {
+		switch {
+		case !member[network.ID]:
+		case bridgeApplied(network.ExternalBridge):
 			now[network.ID] = true
+		case string(network.ExternalBridge) == "null":
+			delete(now, network.ID)
 		}
 	}
 	if !reflect.DeepEqual(now, recorded) {
@@ -503,6 +524,13 @@ func (c *meshComponent) trackBridges(networks []panel.MeshNetwork, running []pan
 		}
 	}
 	return nil
+}
+
+// bridgeApplied tells whether the kernel reports a bridge it applies: an
+// object, not null nor left out.
+func bridgeApplied(raw json.RawMessage) bool {
+	var digest map[string]json.RawMessage
+	return len(raw) > 0 && json.Unmarshal(raw, &digest) == nil && digest != nil
 }
 
 // readBridged reads the record at path; missing or unreadable is empty.
@@ -539,10 +567,38 @@ func writeBridged(path string, bridged map[string]bool) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- the Agent reads it.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644) // #nosec G306 -- network ids only, no secret.
+	// Written whole or not at all: a temporary file, synced, renamed over
+	// the record, then the directory synced.
+	tmp, err := os.CreateTemp(dir, ".bridged-*.json")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name) // #nosec G104 -- gone after the rename.
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	d, err := os.Open(dir) // #nosec G304 -- the Agent's own state directory.
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // meshSent tells whether the panel sent a section, not empty nor null.
