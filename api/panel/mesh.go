@@ -220,8 +220,8 @@ type MeshPeerStatus struct {
 	ForwardSecrecy bool     `json:"forward_secrecy"`
 }
 
-// Mesh alert codes. The core raises the address ones (requirement R29)
-// and start_refused (R12), and the code of a network it holds back
+// Mesh alert codes. The core raises the address ones (requirement R29),
+// start_refused (R12), external_bridge_lock_held, and the code of a network it holds back
 // (failure, such as native_keys_pending); the Agent raises unsupported,
 // takeover_pending, native_keys_unsupported, invalid_kind,
 // external_bridge_unsupported and external_bridge_downgrade_residue.
@@ -244,6 +244,10 @@ const (
 	// network on a kernel that takes external_bridge and now runs one
 	// that does not, which leaves the newer kernel's bridge rules alone.
 	MeshAlertExternalBridgeDowngradeResidue = "external_bridge_downgrade_residue"
+	// MeshAlertExternalBridgeLockHeld: raised by the kernel, which could
+	// not take the host's bridge lock (another process on the host runs
+	// a bridge) and so does not list mesh_external_bridge.
+	MeshAlertExternalBridgeLockHeld = "external_bridge_lock_held"
 )
 
 // MeshAlert is one alert of a network.
