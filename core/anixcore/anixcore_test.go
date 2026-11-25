@@ -30,6 +30,7 @@ type fakeAPI struct {
 	meshInstance string
 	meshRequests []map[string]any
 	meshDone     []string
+	meshKeys     []map[string]any
 	features     []string
 	types        []string
 }
@@ -94,7 +95,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		f.meshDone = append(f.meshDone, segments[len(segments)-1])
 		reply(200, map[string]any{})
 	case r.Method == "GET" && r.URL.Path == "/v1/mesh":
-		reply(200, map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests, "networks": []any{map[string]any{
+		reply(200, map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests, "static_keys": f.meshKeys, "networks": []any{map[string]any{
 			"tag": "mesh-cn", "running": true, "address": "10.150.0.5/16", "forward_secrecy": true,
 			"peers": []any{map[string]any{"address": "10.150.0.1", "hops": 1, "via": []string{"10.150.0.3"}, "latency_ms": 12, "forward_secrecy": true}},
 		}}})

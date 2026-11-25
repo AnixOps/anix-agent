@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -24,11 +25,16 @@ type Mesh struct {
 // validates them.
 type MeshNetwork struct {
 	// ID is the region code (cn, apac, eu, na, ...).
-	ID         string          `json:"id"`
-	Name       string          `json:"name"`
-	Secret     string          `json:"secret"`
-	SecureMode bool            `json:"secure_mode"`
-	Cipher     string          `json:"cipher,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Secret     string `json:"secret"`
+	SecureMode bool   `json:"secure_mode"`
+	Cipher     string `json:"cipher,omitempty"`
+	// Kind (managed or legacy) and NativeKeys, the static keys of the
+	// operator's own nodes in this network, belong to the kernel's network
+	// layer; a managed network needs NativeKeys.
+	Kind       string          `json:"kind,omitempty"`
+	NativeKeys json.RawMessage `json:"native_keys,omitempty"`
 	Address    string          `json:"address"`
 	AddressV6  string          `json:"address_v6,omitempty"`
 	Role       string          `json:"role,omitempty"`
@@ -142,8 +148,12 @@ type MeshNetworkStatus struct {
 	ForwardSecrecy         bool             `json:"forward_secrecy"`
 	Peers                  []MeshPeerStatus `json:"peers"`
 	RejectedAdvertisements int              `json:"rejected_advertisements"`
-	Overlaps               []string         `json:"overlaps,omitempty"`
-	Alerts                 []MeshAlert      `json:"alerts,omitempty"`
+	// StaticKey is this node's static public key in the network (the
+	// kernel's static_keys), from which Control builds native_keys;
+	// empty for a network without one.
+	StaticKey string      `json:"static_key,omitempty"`
+	Overlaps  []string    `json:"overlaps,omitempty"`
+	Alerts    []MeshAlert `json:"alerts,omitempty"`
 }
 
 // MeshPeerStatus is one peer of a network.
@@ -187,7 +197,10 @@ type MeshTakeoverResult struct {
 // node (the kernel command mesh_request_region) that wait to go to
 // Control.
 type MeshState struct {
-	InstanceID     string              `json:"instance_id,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
+	// StaticKeys are the node's static public keys, one per secure-mode
+	// network, by the network's name.
+	StaticKeys     []MeshStaticKey     `json:"static_keys,omitempty"`
 	Networks       []MeshNetworkStatus `json:"networks"`
 	RegionRequests []MeshRegionRequest `json:"region_requests,omitempty"`
 }
@@ -237,4 +250,22 @@ func (r MeshRegionRequest) Report() (MeshRegionRequestReport, error) {
 		reason = string(runes[:MeshRegionRequestReasonMax])
 	}
 	return MeshRegionRequestReport{Region: r.Region, Reason: reason}, nil
+}
+
+// MeshStaticKey is the node's static public key in one network: Network
+// is the network's name (network.name), StaticKey the 32-byte X25519 key
+// in standard base64 with padding.
+type MeshStaticKey struct {
+	Network   string `json:"network"`
+	StaticKey string `json:"static_key"`
+}
+
+// MeshStaticKeyValid tells whether key is a 32-byte key in standard base64
+// with padding (44 characters).
+func MeshStaticKeyValid(key string) bool {
+	if len(key) != 44 {
+		return false
+	}
+	raw, err := base64.StdEncoding.Strict().DecodeString(key)
+	return err == nil && len(raw) == 32
 }

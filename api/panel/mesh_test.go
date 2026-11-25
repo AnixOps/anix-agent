@@ -69,3 +69,17 @@ func TestMeshRegionRequestReport(t *testing.T) {
 		}
 	}
 }
+
+func TestMeshStaticKeyValid(t *testing.T) {
+	for key, ok := range map[string]bool{
+		"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=": true,
+		"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8":  false,
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!": false,
+		"________________________________________AAA=": false,
+		"c2hvcnQ=": false, "": false,
+	} {
+		if MeshStaticKeyValid(key) != ok {
+			t.Errorf("%q: %v", key, !ok)
+		}
+	}
+}

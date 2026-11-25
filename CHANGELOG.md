@@ -4,6 +4,11 @@
 
 ### Added
 
+- Intranet mesh: each network in `mesh.status` carries `static_key`, the
+  node's static public key in that network (`GET /v1/mesh` `static_keys`,
+  by network name; 32 bytes in standard base64, others left out), from
+  which Control builds the network's `native_keys`. The member's `kind` and
+  `native_keys` go to the kernel's `network` layer.
 - Region relays (`docs/region-relay.md`): the Agent follows the member
   `control_route` of Control's desired configuration without a reinstall.
   New relays are stored (`<AgentStream.StateDir>/control-route-<node>.json`,

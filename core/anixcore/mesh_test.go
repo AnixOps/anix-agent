@@ -204,3 +204,33 @@ func TestMeshInstanceIDAndRegionRequests(t *testing.T) {
 		t.Fatalf("deleted = %v", api.meshDone)
 	}
 }
+
+func TestMeshNetworkLayerAndStaticKeys(t *testing.T) {
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature}
+	api.meshKeys = []map[string]any{
+		{"network": "region-cn", "static_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
+		{"network": "region-eu", "static_key": "c2hvcnQ="},
+		{"network": "", "static_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
+	}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	network := testMeshNetwork()
+	network.Kind = "managed"
+	network.NativeKeys = json.RawMessage(`["AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="]`)
+	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
+		t.Fatal(err)
+	}
+	layer := api.mesh[0]["networks"].([]any)[0].(map[string]any)["network"].(map[string]any)
+	if layer["kind"] != "managed" || len(layer["native_keys"].([]any)) != 1 {
+		t.Fatalf("network layer = %v", layer)
+	}
+	state, err := core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only a 32-byte key in standard base64 under a network name stays.
+	if len(state.StaticKeys) != 1 || state.StaticKeys[0].Network != "region-cn" || state.StaticKeys[0].StaticKey != "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" {
+		t.Fatalf("static keys = %+v", state.StaticKeys)
+	}
+}

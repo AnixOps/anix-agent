@@ -22,6 +22,7 @@ type fakeMesh struct {
 	applied    [][]panel.MeshNetwork
 	instanceID string
 	requests   []panel.MeshRegionRequest
+	keys       []panel.MeshStaticKey
 	done       []string
 }
 
@@ -36,7 +37,7 @@ func (f *fakeMesh) ApplyMesh(networks []panel.MeshNetwork) error {
 }
 
 func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
-	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests}
+	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests, StaticKeys: f.keys}
 	if len(f.applied) > 0 {
 		for _, network := range f.applied[len(f.applied)-1] {
 			state.Networks = append(state.Networks, panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}})
@@ -199,5 +200,28 @@ func TestMeshReportsTheStatusThenTheRegionRequests(t *testing.T) {
 	c.report()
 	if len(kernel.requests) != 1 || len(kernel.done) != 2 {
 		t.Fatalf("requests %v, done %v", kernel.requests, kernel.done)
+	}
+}
+
+func TestMeshReportsTheStaticKeyOfEachNetwork(t *testing.T) {
+	kernel := &fakeMesh{supported: true, keys: []panel.MeshStaticKey{{Network: "n", StaticKey: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}}}
+	active := map[string]bool{"old.service": true}
+	c := testMeshComponent(t, kernel, active)
+	if err := c.apply(meshSnapshot(meshMember)); err != nil {
+		t.Fatal(err)
+	}
+	// The key goes even while the network waits for the takeover.
+	status, _, ok := c.status(context.Background())
+	if !ok || status.Networks[0].StaticKey != "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" || status.Networks[0].Alerts[0].Code != panel.MeshAlertTakeoverPending {
+		t.Fatalf("status = %+v", status)
+	}
+	active["old.service"] = false
+	c.retry()
+	if status, _, _ := c.status(context.Background()); !status.Networks[0].Running || status.Networks[0].StaticKey != "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=" {
+		t.Fatalf("status = %+v", status)
+	}
+	payload, _ := json.Marshal(status)
+	if !strings.Contains(string(payload), `"static_key":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="`) {
+		t.Fatalf("payload = %s", payload)
 	}
 }

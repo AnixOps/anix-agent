@@ -32,6 +32,8 @@
 
 - `networks` 每项是一个地区网络，`id` 为地区代码（1–32 位小写字母、数字或 `-`），边界节点可有多项。
 - Agent 只检查 `id`、`name`、`secret`、`address` 和 `takeover` 的名字；其余字段原样交给内核，由内核校验。
+- `kind`（`managed` 或 `legacy`）与 `native_keys`（我方节点在该网络的静态公钥清单，`managed` 网络必填）属于内核配置的 `network` 层，
+  Agent 原样放进去。
 - `dns`（内网域名，R28）与 `host_groups`（宿主组，R21、R25；网关以实例 ID 指定）由面板始终下发。内核拒绝未知字段，
   所以 Agent 只把本机内核支持的节交给内核：`features` 有 `mesh_dns`（内核 0.3 起）才带 `dns`，有 `mesh_host_groups`
   （内核 0.4 起）才带 `host_groups`；值为 `null` 视同未下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
@@ -45,10 +47,10 @@
 | 方法与路径 | 请求 | 应答 |
 |---|---|---|
 | `PUT /v1/mesh` | `{"networks": [MeshConfig]}`，`[]` 停止全部 | 与 `GET` 相同 |
-| `GET /v1/mesh` | | `{"instance_id": "…", "networks": [MeshNetworkStatus], "region_requests": [MeshRegionRequest]}` |
+| `GET /v1/mesh` | | `{"instance_id": "…", "static_keys": [{"network", "static_key"}], "networks": [MeshNetworkStatus], "region_requests": [MeshRegionRequest]}` |
 | `DELETE /v1/mesh/region_requests/{id}` | | 删除一条已转交的申请；不存在时 404，Agent 视同成功 |
 
-`MeshConfig` 是内核 `"type": "mesh"` 的分层配置（`config_version` 1）：`network{name, secret, secure_mode, cipher}`、
+`MeshConfig` 是内核 `"type": "mesh"` 的分层配置（`config_version` 1）：`network{name, secret, secure_mode, cipher, kind, native_keys}`、
 `node{address, address_v6, role, listen}`、`peers`、`subnets`、`routing`，内核支持时另有 `dns`、`host_groups`（原样取自面板），
 另加 `tag`（`mesh-<id>`）。内核重启后 Agent 重新发送最后一次的网络。
 
@@ -63,6 +65,9 @@
 
 `instance_id` 是本机的组网实例 ID，即组网状态快照的 `self.id`（首次启动生成，重启与升级不变），1–64 位字母、数字或 `-`，首字符须为字母或数字；
 不合规时 Agent 按未给出处理。网络暂缓启动（`takeover_pending`）时内核也应给出。
+
+`static_keys` 是本机各安全模式网络的静态公钥，`network` 为该网络的 `network.name`，`static_key` 为 32 字节 X25519 公钥的标准 base64
+（带填充，44 个字符）。不合规的项 Agent 丢弃。
 
 `MeshRegionRequest`：`id`（1–64 位字母、数字或 `-`，首字符须为字母或数字，内核生成，用于删除）、`network`（发起申请的网络 `tag`）、`region`（目标地区代码）、
 `reason`（可省略）。节点所有者在本机执行内核命令 `mesh_request_region`（R24）时由内核记下，一直保留到 Agent 删除。
@@ -88,6 +93,8 @@
 
 Agent 自己给出的告警码：`unsupported`（内核没有组网）、`takeover_pending`（现有组网程序仍在运行，网络暂缓启动）。
 
+- 每个网络带 `static_key`：本机在该网络的静态公钥，按网络名取自内核 `GET /v1/mesh` 的 `static_keys`，网络暂缓启动时也上报；
+  面板只采信 Agent 通道的值，汇总为各网络的 `native_keys`。旧模式网络没有该字段。
 - `instance_id` 取自内核 `GET /v1/mesh`；内核没有组网或未给出合规值时省略。面板据此确定宿主组网关，未上报前不下发以该节点为网关的宿主组。
 - 节点不在任何地区（配置没有成员 `mesh`，或成员没有网络）时不上报：面板会按 `not_assigned` 拒绝。
 - 状态里 `peers[].address` 由面板用来刷新设备地址的最近使用时间（R29），Agent 照内核原样上报。
