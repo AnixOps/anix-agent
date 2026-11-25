@@ -39,6 +39,13 @@
 
 ### Changed
 
+- Intranet mesh: a managed network goes only to a kernel that lists
+  `mesh_native_keys`; otherwise it is held back with the alert
+  `native_keys_unsupported` and sent once the kernel is updated, and a
+  legacy network goes without `native_keys`. Why the kernel holds a
+  network (`failure`, such as `native_keys_pending`) is reported as an
+  alert. Network names in the member must be unique. A region request's
+  `network` is kept as the kernel gives it (the network name).
 - Intranet mesh: an instance id or region request id must start with a
   letter or digit (`^[0-9A-Za-z][0-9A-Za-z-]{0,63}$`); others are left out.
 - Intranet mesh: the network sections `dns` and `host_groups` reach the

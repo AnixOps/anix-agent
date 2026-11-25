@@ -18,12 +18,13 @@ func TestParseMesh(t *testing.T) {
 		t.Fatalf("mesh = %+v", m)
 	}
 	for name, document := range map[string]string{
-		"bad id":       `{"mesh":{"networks":[{"id":"CN","name":"n","secret":"s","address":"a"}]}}`,
-		"repeated id":  `{"mesh":{"networks":[{"id":"cn","name":"n","secret":"s","address":"a"},{"id":"cn","name":"n","secret":"s","address":"a"}]}}`,
-		"no secret":    `{"mesh":{"networks":[{"id":"cn","name":"n","address":"a"}]}}`,
-		"option name":  `{"mesh":{"networks":[],"takeover":{"service_names":["--now"]}}}`,
-		"path name":    `{"mesh":{"networks":[],"takeover":{"process_names":["../x"]}}}`,
-		"relative cfg": `{"mesh":{"networks":[],"takeover":{"config_paths":["etc/x.conf"]}}}`,
+		"bad id":        `{"mesh":{"networks":[{"id":"CN","name":"n","secret":"s","address":"a"}]}}`,
+		"repeated id":   `{"mesh":{"networks":[{"id":"cn","name":"n","secret":"s","address":"a"},{"id":"cn","name":"n","secret":"s","address":"a"}]}}`,
+		"no secret":     `{"mesh":{"networks":[{"id":"cn","name":"n","address":"a"}]}}`,
+		"repeated name": `{"mesh":{"networks":[{"id":"cn","name":"n","secret":"s","address":"a"},{"id":"eu","name":"n","secret":"s","address":"a"}]}}`,
+		"option name":   `{"mesh":{"networks":[],"takeover":{"service_names":["--now"]}}}`,
+		"path name":     `{"mesh":{"networks":[],"takeover":{"process_names":["../x"]}}}`,
+		"relative cfg":  `{"mesh":{"networks":[],"takeover":{"config_paths":["etc/x.conf"]}}}`,
 	} {
 		if _, err := ParseMesh([]byte(document)); err == nil || !strings.HasPrefix(err.Error(), "mesh: ") {
 			t.Errorf("%s: err = %v", name, err)
@@ -81,5 +82,11 @@ func TestMeshStaticKeyValid(t *testing.T) {
 		if MeshStaticKeyValid(key) != ok {
 			t.Errorf("%q: %v", key, !ok)
 		}
+	}
+}
+
+func TestMeshNetworkManaged(t *testing.T) {
+	if !(MeshNetwork{}).Managed() || !(MeshNetwork{Kind: MeshKindManaged}).Managed() || (MeshNetwork{Kind: MeshKindLegacy}).Managed() {
+		t.Fatal("kind")
 	}
 }

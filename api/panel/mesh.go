@@ -87,7 +87,7 @@ func ParseMesh(document []byte) (*Mesh, error) {
 // core's networks) and the takeover names (they reach systemctl and
 // /proc). The core checks the rest.
 func (m *Mesh) Validate() error {
-	ids := map[string]bool{}
+	ids, names := map[string]bool{}, map[string]bool{}
 	for _, network := range m.Networks {
 		if !meshID(network.ID) || ids[network.ID] {
 			return fmt.Errorf("network id %q is invalid or repeated", network.ID)
@@ -96,6 +96,11 @@ func (m *Mesh) Validate() error {
 		if network.Name == "" || network.Secret == "" || network.Address == "" {
 			return fmt.Errorf("network %s: name, secret and address are required", network.ID)
 		}
+		// The kernel names its networks' static keys by name.
+		if names[network.Name] {
+			return fmt.Errorf("network %s: name %q is repeated", network.ID, network.Name)
+		}
+		names[network.Name] = true
 	}
 	if m.Takeover == nil {
 		return nil
@@ -148,6 +153,10 @@ type MeshNetworkStatus struct {
 	ForwardSecrecy         bool             `json:"forward_secrecy"`
 	Peers                  []MeshPeerStatus `json:"peers"`
 	RejectedAdvertisements int              `json:"rejected_advertisements"`
+	// Failure is why the kernel does not run the network ({code,
+	// detail}, such as native_keys_pending); the report carries it as an
+	// alert instead.
+	Failure *MeshFailure `json:"failure,omitempty"`
 	// StaticKey is this node's static public key in the network (the
 	// kernel's static_keys), from which Control builds native_keys;
 	// empty for a network without one.
@@ -155,6 +164,24 @@ type MeshNetworkStatus struct {
 	Overlaps  []string    `json:"overlaps,omitempty"`
 	Alerts    []MeshAlert `json:"alerts,omitempty"`
 }
+
+// MeshFailure is why the kernel does not run a network.
+type MeshFailure struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// Managed tells whether the network is managed (the default kind):
+// a region network that admits only the native_keys.
+func (n MeshNetwork) Managed() bool {
+	return n.Kind == "" || n.Kind == MeshKindManaged
+}
+
+// The network kinds.
+const (
+	MeshKindManaged = "managed"
+	MeshKindLegacy  = "legacy"
+)
 
 // MeshPeerStatus is one peer of a network.
 type MeshPeerStatus struct {
@@ -167,14 +194,18 @@ type MeshPeerStatus struct {
 }
 
 // Mesh alert codes. The core raises the address ones (requirement R29)
-// and start_refused (R12); the Agent raises unsupported and
-// takeover_pending.
+// and start_refused (R12), and the code of a network it holds back
+// (failure, such as native_keys_pending); the Agent raises unsupported,
+// takeover_pending and native_keys_unsupported.
 const (
 	MeshAlertTakeoverPending  = "takeover_pending"
 	MeshAlertAddressConflict  = "address_conflict"
 	MeshAlertAddressUnmanaged = "address_unmanaged"
 	MeshAlertUnsupported      = "unsupported"
 	MeshAlertStartRefused     = "start_refused"
+	// MeshAlertNativeKeysUnsupported: the kernel does not take
+	// native_keys, so the Agent holds the managed network back.
+	MeshAlertNativeKeysUnsupported = "native_keys_unsupported"
 )
 
 // MeshAlert is one alert of a network.

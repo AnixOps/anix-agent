@@ -45,6 +45,9 @@ type meshComponent struct {
 	err    error
 	// took is what the takeover found, nil for nothing.
 	took *panel.MeshTakeoverResult
+	// held are the managed networks, by id, held back from a kernel that
+	// does not take native_keys.
+	held map[string]bool
 	// sendReport sends a mesh PackageReport; nil sends it on client's
 	// data plane (tests set it).
 	sendReport func(*agentv1pb.PackageReport) error
@@ -125,12 +128,16 @@ func (c *meshComponent) loop() {
 }
 
 // retry applies the member again once what held it back is gone: an
-// updated kernel has the mesh, or the existing program was taken over.
+// updated kernel has the mesh or takes native_keys, or the existing
+// program was taken over.
 func (c *meshComponent) retry() {
 	c.mu.Lock()
-	member, err := c.member, c.err
+	member, err, held := c.member, c.err, len(c.held) > 0
 	c.mu.Unlock()
-	if member != nil && (errors.Is(err, vCore.ErrMeshUnsupported) || errors.Is(err, errTakeoverPending)) {
+	// Held networks wait only for an updated kernel: no reapplying the
+	// others every minute until then.
+	held = held && c.core.MeshNativeKeysSupported()
+	if member != nil && (held || errors.Is(err, vCore.ErrMeshUnsupported) || errors.Is(err, errTakeoverPending)) {
 		_ = c.run(member)
 	}
 }
@@ -164,7 +171,8 @@ func (c *meshComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 var errTakeoverPending = errors.New("the existing mesh program still runs; take it over with `anix-agent mesh takeover` (as root)")
 
 // run gives the kernel the networks, unless the kernel has no mesh or the
-// existing program the member names still runs.
+// existing program the member names still runs. A kernel that does not
+// take native_keys gets no managed network: it would admit any node.
 func (c *meshComponent) run(member *panel.Mesh) error {
 	c.runMu.Lock()
 	defer c.runMu.Unlock()
@@ -181,19 +189,21 @@ func (c *meshComponent) run(member *panel.Mesh) error {
 		took.Found = true
 	}
 	var err error
+	var held map[string]bool
 	switch {
 	case len(networks) > 0 && !c.core.MeshSupported():
 		err = vCore.ErrMeshUnsupported
 	case len(networks) > 0 && took.Error != "":
 		err = errTakeoverPending
 	default:
+		networks, held = c.admissible(networks)
 		err = c.core.ApplyMesh(networks)
 	}
 	if !took.Found {
 		took = nil
 	}
 	c.mu.Lock()
-	c.member, c.err, c.took = member, err, took
+	c.member, c.err, c.took, c.held = member, err, took, held
 	c.mu.Unlock()
 	if err == nil && len(networks) > 0 {
 		c.logger().WithField("networks", len(networks)).Info("Applied the mesh networks")
@@ -201,13 +211,38 @@ func (c *meshComponent) run(member *panel.Mesh) error {
 	return err
 }
 
+// admissible splits networks into those the kernel may run and the
+// managed ones it may not, by id: those need native_keys.
+func (c *meshComponent) admissible(networks []panel.MeshNetwork) ([]panel.MeshNetwork, map[string]bool) {
+	if c.core.MeshNativeKeysSupported() {
+		return networks, nil
+	}
+	var run []panel.MeshNetwork
+	held := map[string]bool{}
+	for _, network := range networks {
+		if network.Managed() {
+			held[network.ID] = true
+			continue
+		}
+		run = append(run, network)
+	}
+	if len(held) == 0 {
+		return networks, nil
+	}
+	c.logger().WithField("networks", len(held)).Warn("Held back the managed mesh networks: the kernel does not take native_keys; update it")
+	return run, held
+}
+
+// errNativeKeysUnsupported says why a managed network is held back.
+var errNativeKeysUnsupported = errors.New("the kernel does not take native_keys, so it cannot keep this managed network to the operator's own nodes; update it")
+
 // status is the report payload now and the region requests the kernel
 // holds. ok is false while the node is in no region (no member, or one
 // without networks): Control refuses that node's reports (not_assigned),
 // so none go, and the kernel keeps its region requests.
 func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, requests []panel.MeshRegionRequest, ok bool) {
 	c.mu.Lock()
-	member, applyErr, took := c.member, c.err, c.took
+	member, applyErr, took, held := c.member, c.err, c.took, c.held
 	c.mu.Unlock()
 	status = panel.MeshStatus{Networks: []panel.MeshNetworkStatus{}, Takeover: took}
 	if member == nil || len(member.Networks) == 0 {
@@ -243,6 +278,8 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		if !found {
 			entry = panel.MeshNetworkStatus{ID: network.ID, Peers: []panel.MeshPeerStatus{}}
 			switch {
+			case applyErr == nil && held[network.ID]:
+				entry.Alerts = []panel.MeshAlert{{Code: panel.MeshAlertNativeKeysUnsupported, Detail: errNativeKeysUnsupported.Error()}}
 			case errors.Is(applyErr, vCore.ErrMeshUnsupported):
 				entry.Alerts = []panel.MeshAlert{{Code: panel.MeshAlertUnsupported, Detail: applyErr.Error()}}
 			case errors.Is(applyErr, errTakeoverPending):
@@ -255,6 +292,14 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		}
 		if entry.Peers == nil {
 			entry.Peers = []panel.MeshPeerStatus{}
+		}
+		// Why the kernel holds the network (native_keys_pending, ...)
+		// goes as an alert.
+		if failure := entry.Failure; failure != nil {
+			entry.Failure = nil
+			if failure.Code != "" && !hasAlert(entry.Alerts, failure.Code) {
+				entry.Alerts = append(entry.Alerts, panel.MeshAlert{Code: failure.Code, Detail: failure.Detail})
+			}
 		}
 		entry.StaticKey = keys[network.Name]
 		status.Networks = append(status.Networks, entry)
@@ -338,4 +383,14 @@ func (c *meshComponent) send(send func(*agentv1pb.PackageReport) error, kind, ve
 		PluginId: agentapi.MeshPluginID, Kind: kind, Version: version,
 		PayloadJson: payload, ObservedAtUnixMs: time.Now().UnixMilli(),
 	})
+}
+
+// hasAlert tells whether alerts has one of code.
+func hasAlert(alerts []panel.MeshAlert, code string) bool {
+	for _, alert := range alerts {
+		if alert.Code == code {
+			return true
+		}
+	}
+	return false
 }

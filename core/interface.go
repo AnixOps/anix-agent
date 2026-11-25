@@ -85,6 +85,9 @@ type TemporaryProxyApplier interface {
 type MeshApplier interface {
 	// MeshSupported tells whether the running kernel has the mesh.
 	MeshSupported() bool
+	// MeshNativeKeysSupported tells whether it takes native_keys, without
+	// which it cannot hold a managed network to the operator's own nodes.
+	MeshNativeKeysSupported() bool
 	// ApplyMesh replaces the networks the kernel runs; none stops them.
 	ApplyMesh(networks []panel.MeshNetwork) error
 	// MeshStatus answers the kernel's instance id, each network as the

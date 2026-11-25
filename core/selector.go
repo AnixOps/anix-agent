@@ -297,6 +297,11 @@ func (s *Selector) MeshSupported() bool {
 	return ok && a.MeshSupported()
 }
 
+func (s *Selector) MeshNativeKeysSupported() bool {
+	a, ok := first[MeshApplier](s)
+	return ok && a.MeshNativeKeysSupported()
+}
+
 func (s *Selector) ApplyMesh(networks []panel.MeshNetwork) error {
 	if a, ok := first[MeshApplier](s); ok {
 		return a.ApplyMesh(networks)
