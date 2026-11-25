@@ -38,6 +38,9 @@ type NodeConfig struct {
 	// Upgrader runs Control-pushed upgrades (agent.upgrade, upgrade.v1,
 	// listed when its updater is installed); nil turns them off.
 	Upgrader *upgrade.Agent
+	// Next gets every snapshot after the forwarding state (the node's
+	// region relay route); nil for none.
+	Next agentapi.ConfigApplier
 }
 
 // NodeDiagnostics answers the agent.diagnostic executor of a node that
@@ -81,7 +84,7 @@ func StartNode(ctx context.Context, config NodeConfig) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	applier := config.Component.Applier(nil)
+	applier := config.Component.Applier(config.Next)
 	clientConfig := config.Client
 	clientConfig.NodeKind = agentcontrol.NodeKindForward
 	clientConfig.DataPlane = &agentapi.DataPlaneConfig{State: store, Config: applier, Forward: config.Component, Diagnostics: true}

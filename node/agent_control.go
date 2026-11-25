@@ -58,7 +58,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		return nil, fmt.Errorf("agent control needs TLS (GRPCUseTLS or an https ApiHost): the agent identity is the node's only credential")
 	}
 	owner := "proxy-" + strconv.Itoa(nodeID)
-	relays, err := agentControlRelays(owner, apiConfig)
+	route, err := newControlRoute(owner, apiConfig, target, serverName)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	// privileged updater is installed.
 	controller.upgrader = agentUpgrader()
 	if controller.upgrader != nil {
-		controller.upgrader.SetRoute(owner, relayRoute(apiConfig, relays, target, serverName))
+		// newControlRoute set the upgrade route.
 		dataPlaneConfig.Upgrade = controller.upgrader.Available(context.Background())
 	}
 
@@ -97,7 +97,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		NodeID:        nodeID,
 		UseTLS:        useTLS,
 		ServerName:    serverName,
-		Relays:        relays,
+		RelaySwitch:   route.dial,
 		Identity:      identity,
 		AgentVersion:  panel.Version,
 		InstanceID:    agentapi.InstanceID(hostname, strconv.Itoa(nodeID)),
@@ -122,6 +122,8 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		return nil, err
 	}
 	dataPlane.client = client
+	dataPlane.route = route
+	route.attach(client)
 	if dataPlane.forward != nil {
 		attachForward(dataPlane.forward, client)
 	}
@@ -234,13 +236,13 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 	return config, nil
 }
 
-// agentControlRelays answers the region relays of node identity owner's
-// apiConfig (GRPCRelays, anix-control docs/design/region-relay), nil
-// without any. Every node identity of the process with the same list
+// agentControlRelays answers the region relays list of node identity
+// owner (its route, controlRoute; anix-control docs/design/region-relay),
+// nil without any. Every node identity of the process with the same list
 // shares one dialer, so the relays are measured once and a failed relay is
 // passed over by all; a list no identity uses any more is dropped.
-func agentControlRelays(owner string, apiConfig *conf.ApiConfig) (*agentapi.Relays, error) {
-	key := strings.Join(apiConfig.GRPCRelays, ",")
+func agentControlRelays(owner string, list []string) (*agentapi.Relays, error) {
+	key := strings.Join(list, ",")
 	if strings.TrimSpace(key) == "" {
 		key = ""
 	}
@@ -258,7 +260,7 @@ func agentControlRelays(owner string, apiConfig *conf.ApiConfig) (*agentapi.Rela
 	relays, ok := relaysByList[key]
 	if !ok {
 		var err error
-		if relays, err = agentapi.NewRelays(apiConfig.GRPCRelays); err != nil {
+		if relays, err = agentapi.NewRelays(list); err != nil {
 			return nil, fmt.Errorf("GRPCRelays: %w", err)
 		}
 		if relays == nil {
@@ -307,8 +309,8 @@ var (
 // relayRoute is the upgrade route of a node identity: its release caches,
 // and, when it reaches Control through relays, Control's host names, which
 // a release is then never downloaded from directly.
-func relayRoute(apiConfig *conf.ApiConfig, relays *agentapi.Relays, target, serverName string) upgrade.RelayRoute {
-	route := upgrade.RelayRoute{Caches: apiConfig.ReleaseCaches}
+func relayRoute(apiConfig *conf.ApiConfig, caches []string, relays *agentapi.Relays, target, serverName string) upgrade.RelayRoute {
+	route := upgrade.RelayRoute{Caches: caches}
 	if relays == nil {
 		return route
 	}
