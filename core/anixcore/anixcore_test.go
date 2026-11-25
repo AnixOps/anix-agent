@@ -30,8 +30,12 @@ type fakeAPI struct {
 	meshInstance string
 	meshRequests []map[string]any
 	meshDone     []string
-	features     []string
-	types        []string
+	// meshKeys is static_keys of GET /v1/mesh; meshExtra adds fields to
+	// its network.
+	meshKeys  []map[string]any
+	meshExtra map[string]any
+	features  []string
+	types     []string
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -94,10 +98,15 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		f.meshDone = append(f.meshDone, segments[len(segments)-1])
 		reply(200, map[string]any{})
 	case r.Method == "GET" && r.URL.Path == "/v1/mesh":
-		reply(200, map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests, "networks": []any{map[string]any{
+		network := map[string]any{
 			"tag": "mesh-cn", "running": true, "address": "10.150.0.5/16", "forward_secrecy": true,
 			"peers": []any{map[string]any{"address": "10.150.0.1", "hops": 1, "via": []string{"10.150.0.3"}, "latency_ms": 12, "forward_secrecy": true}},
-		}}})
+		}
+		for key, value := range f.meshExtra {
+			network[key] = value
+		}
+		reply(200, map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests,
+			"static_keys": f.meshKeys, "networks": []any{network}})
 	case r.Method == "POST" && r.URL.Path == "/v1/inbounds":
 		var inbound map[string]any
 		_ = json.Unmarshal(body, &inbound)

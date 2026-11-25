@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -43,6 +44,13 @@ type MeshNetwork struct {
 	// unknown fields), so an older kernel runs the network without them.
 	DNS        json.RawMessage `json:"dns,omitempty"`
 	HostGroups json.RawMessage `json:"host_groups,omitempty"`
+	// Kind is the network's kind ("managed" for a region network,
+	// "legacy" for an existing one in migration); empty leaves the core's
+	// default. NativeKeys lists the members' static keys a managed network
+	// accepts; an empty list is still sent (the core then holds the network
+	// back). The core checks both.
+	Kind       string          `json:"kind,omitempty"`
+	NativeKeys json.RawMessage `json:"native_keys,omitempty"`
 }
 
 // MeshTakeover names the existing mesh program on the node: its system
@@ -144,6 +152,36 @@ type MeshNetworkStatus struct {
 	RejectedAdvertisements int              `json:"rejected_advertisements"`
 	Overlaps               []string         `json:"overlaps,omitempty"`
 	Alerts                 []MeshAlert      `json:"alerts,omitempty"`
+	// Failure is why the network does not run, as the core gives it.
+	Failure *MeshFailure `json:"failure,omitempty"`
+	// StaticKey is the network's static public key as the core gives it
+	// (standard base64 of 32 bytes); empty for a legacy network. Control
+	// builds the managed networks' native_keys from it.
+	StaticKey string `json:"static_key,omitempty"`
+}
+
+// MeshFailure is a failure the core gives for a network: a code and, for
+// some codes, a detail (for peer_not_native, the peer's node id).
+type MeshFailure struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// MeshStaticKey is one entry of static_keys on GET /v1/mesh: the static
+// public key of the network whose configured name is Network.
+type MeshStaticKey struct {
+	Network   string `json:"network"`
+	StaticKey string `json:"static_key"`
+}
+
+// MeshStaticKeyValid tells whether key is standard base64 (with padding)
+// of exactly 32 bytes.
+func MeshStaticKeyValid(key string) bool {
+	if len(key) != 44 {
+		return false
+	}
+	raw, err := base64.StdEncoding.Strict().DecodeString(key)
+	return err == nil && len(raw) == 32
 }
 
 // MeshPeerStatus is one peer of a network.
@@ -165,6 +203,9 @@ const (
 	MeshAlertAddressUnmanaged = "address_unmanaged"
 	MeshAlertUnsupported      = "unsupported"
 	MeshAlertStartRefused     = "start_refused"
+	// MeshAlertPeerNotNative: a managed network refused a peer whose
+	// static key is not in its native_keys; Peer is the peer's node id.
+	MeshAlertPeerNotNative = "peer_not_native"
 )
 
 // MeshAlert is one alert of a network.
@@ -190,6 +231,8 @@ type MeshState struct {
 	InstanceID     string              `json:"instance_id,omitempty"`
 	Networks       []MeshNetworkStatus `json:"networks"`
 	RegionRequests []MeshRegionRequest `json:"region_requests,omitempty"`
+	// StaticKeys are the networks' static public keys, by network name.
+	StaticKeys []MeshStaticKey `json:"static_keys,omitempty"`
 }
 
 // MeshInstanceID tells whether id is a valid instance id: 1-64 letters,

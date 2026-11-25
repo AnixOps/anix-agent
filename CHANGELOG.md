@@ -4,6 +4,14 @@
 
 ### Added
 
+- Mesh managed networks: the member `mesh` network fields `kind` and
+  `native_keys` go to the kernel's `network` section (`native_keys` also
+  when empty). `mesh.status` carries each network's `static_key`, taken by
+  network name from `static_keys` of the kernel's `GET /v1/mesh` (also for
+  a network the kernel holds back; malformed keys are dropped), and the
+  kernel's `failure`. A failure `peer_not_native` adds the alert
+  `{"code": "peer_not_native", "peer": <peer node id>}` once per peer.
+
 - Region relays (`docs/region-relay.md`): the Agent follows the member
   `control_route` of Control's desired configuration without a reinstall.
   New relays are stored (`<AgentStream.StateDir>/control-route-<node>.json`,

@@ -223,6 +223,12 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		readErr = vCore.ErrMeshUnsupported
 	}
 	status.InstanceID = state.InstanceID
+	// Keys exist from the moment the kernel has the configuration, also for
+	// a network it holds back, so every entry carries its own.
+	keys := make(map[string]string, len(state.StaticKeys))
+	for _, key := range state.StaticKeys {
+		keys[key.Network] = key.StaticKey
+	}
 	var running map[string]panel.MeshNetworkStatus
 	if applyErr == nil {
 		applyErr = readErr
@@ -248,6 +254,9 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		}
 		if entry.Peers == nil {
 			entry.Peers = []panel.MeshPeerStatus{}
+		}
+		if key, ok := keys[network.Name]; ok {
+			entry.StaticKey = key
 		}
 		status.Networks = append(status.Networks, entry)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -99,8 +100,31 @@ func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 		answer.InstanceID = ""
 	}
 	for i := range answer.Networks {
-		answer.Networks[i].ID = strings.TrimPrefix(answer.Networks[i].Tag, meshTagPrefix)
-		answer.Networks[i].Tag = ""
+		network := &answer.Networks[i]
+		network.ID = strings.TrimPrefix(network.Tag, meshTagPrefix)
+		network.Tag = ""
+		if !panel.MeshStaticKeyValid(network.StaticKey) {
+			network.StaticKey = ""
+		}
+		// A refused peer goes to the alerts, once, as Control shows it.
+		if f := network.Failure; f != nil && f.Code == panel.MeshAlertPeerNotNative && f.Detail != "" {
+			alert := panel.MeshAlert{Code: panel.MeshAlertPeerNotNative, Peer: f.Detail}
+			if !slices.ContainsFunc(network.Alerts, func(a panel.MeshAlert) bool {
+				return a.Code == alert.Code && a.Peer == alert.Peer
+			}) {
+				network.Alerts = append(network.Alerts, alert)
+			}
+		}
+	}
+	keys := answer.StaticKeys[:0]
+	for _, key := range answer.StaticKeys {
+		if key.Network != "" && panel.MeshStaticKeyValid(key.StaticKey) {
+			keys = append(keys, key)
+		}
+	}
+	answer.StaticKeys = keys
+	if len(answer.StaticKeys) == 0 {
+		answer.StaticKeys = nil
 	}
 	requests := answer.RegionRequests[:0]
 	if client.meshRegionRequests.Load() {
@@ -145,6 +169,12 @@ func meshBody(networks []panel.MeshNetwork, dns, hostGroups bool) map[string]any
 		network := map[string]any{"name": n.Name, "secret": n.Secret, "secure_mode": n.SecureMode}
 		if n.Cipher != "" {
 			network["cipher"] = n.Cipher
+		}
+		if n.Kind != "" {
+			network["kind"] = n.Kind
+		}
+		if present(n.NativeKeys) {
+			network["native_keys"] = n.NativeKeys
 		}
 		node := map[string]any{"address": n.Address}
 		if n.AddressV6 != "" {

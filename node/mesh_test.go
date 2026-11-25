@@ -23,6 +23,7 @@ type fakeMesh struct {
 	instanceID string
 	requests   []panel.MeshRegionRequest
 	done       []string
+	keys       []panel.MeshStaticKey
 }
 
 func (f *fakeMesh) MeshSupported() bool { return f.supported }
@@ -36,7 +37,7 @@ func (f *fakeMesh) ApplyMesh(networks []panel.MeshNetwork) error {
 }
 
 func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
-	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests}
+	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests, StaticKeys: f.keys}
 	if len(f.applied) > 0 {
 		for _, network := range f.applied[len(f.applied)-1] {
 			state.Networks = append(state.Networks, panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}})
@@ -199,5 +200,29 @@ func TestMeshReportsTheStatusThenTheRegionRequests(t *testing.T) {
 	c.report()
 	if len(kernel.requests) != 1 || len(kernel.done) != 2 {
 		t.Fatalf("requests %v, done %v", kernel.requests, kernel.done)
+	}
+}
+
+func TestMeshReportsEachNetworksStaticKey(t *testing.T) {
+	key := "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+	// The kernel names keys by network name; the report carries each by id,
+	// also for a network the kernel does not run (yet).
+	kernel := &fakeMesh{supported: true, keys: []panel.MeshStaticKey{{Network: "n", StaticKey: key}}}
+	c := testMeshComponent(t, kernel, nil)
+	if err := c.apply(meshSnapshot(meshMember)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, ok := c.status(context.Background())
+	if !ok || len(status.Networks) != 1 || status.Networks[0].ID != "cn" || status.Networks[0].StaticKey != key {
+		t.Fatalf("status = %+v", status)
+	}
+	kernel.applied = nil
+	status, _, _ = c.status(context.Background())
+	if status.Networks[0].Running || status.Networks[0].StaticKey != key {
+		t.Fatalf("status = %+v", status)
+	}
+	payload, _ := json.Marshal(status)
+	if !strings.Contains(string(payload), `"static_key":"`+key+`"`) {
+		t.Fatalf("payload = %s", payload)
 	}
 }

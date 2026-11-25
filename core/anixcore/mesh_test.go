@@ -204,3 +204,60 @@ func TestMeshInstanceIDAndRegionRequests(t *testing.T) {
 		t.Fatalf("deleted = %v", api.meshDone)
 	}
 }
+
+func TestMeshManagedNetworksAndStaticKeys(t *testing.T) {
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+
+	// kind and native_keys go to the kernel's network section; an empty
+	// list is still sent.
+	managed := testMeshNetwork()
+	managed.Kind = "managed"
+	managed.NativeKeys = json.RawMessage(`[]`)
+	if err := core.ApplyMesh([]panel.MeshNetwork{managed}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)["network"])
+	if want := `{"cipher":"aes-gcm","kind":"managed","name":"region-cn","native_keys":[],"secret":"s3cret","secure_mode":true}`; string(got) != want {
+		t.Fatalf("network section\n got %s\nwant %s", got, want)
+	}
+
+	key := "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+	api.meshKeys = []map[string]any{
+		{"network": "region-cn", "static_key": key},
+		{"network": "region-eu", "static_key": "not base64"},
+		{"network": "region-na", "static_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwd"},
+	}
+	api.meshExtra = map[string]any{
+		"static_key": "short",
+		"failure":    map[string]any{"code": "peer_not_native", "detail": "node-7"},
+		"alerts":     []any{map[string]any{"code": "peer_not_native", "peer": "node-9"}},
+	}
+	state, err := core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only well-formed keys are kept.
+	if len(state.StaticKeys) != 1 || state.StaticKeys[0].Network != "region-cn" || state.StaticKeys[0].StaticKey != key {
+		t.Fatalf("static keys = %+v", state.StaticKeys)
+	}
+	network := state.Networks[0]
+	if network.StaticKey != "" {
+		t.Fatalf("a malformed key was kept: %q", network.StaticKey)
+	}
+	// A refused peer becomes an alert, beside the kernel's own, once.
+	want := []panel.MeshAlert{{Code: "peer_not_native", Peer: "node-9"}, {Code: "peer_not_native", Peer: "node-7"}}
+	if !slices.Equal(network.Alerts, want) || network.Failure == nil || network.Failure.Code != "peer_not_native" {
+		t.Fatalf("network = %+v", network)
+	}
+	api.meshExtra["alerts"] = []any{map[string]any{"code": "peer_not_native", "peer": "node-7"}}
+	state, err = core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Networks[0].Alerts) != 1 {
+		t.Fatalf("alerts = %+v", state.Networks[0].Alerts)
+	}
+}
