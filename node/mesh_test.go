@@ -399,7 +399,7 @@ func TestMeshHoldsANetworkOfAnUnknownKind(t *testing.T) {
 // held, apply failed, kernel unreadable) the key is left out, never sent
 // as null.
 func TestMeshExternalBridgeOnlyWhenKnown(t *testing.T) {
-	kernel := &fakeMesh{supported: true, bridges: map[string]json.RawMessage{
+	kernel := &fakeMesh{supported: true, externalBridge: true, bridges: map[string]json.RawMessage{
 		"cn": json.RawMessage(`{"allowCount":1,"allowDigest":"d","appliedAt":"2026-11-25T21:00:00Z","routesDigest":"r"}`),
 		"eu": json.RawMessage(`null`),
 	}}
@@ -463,4 +463,52 @@ func TestMeshAlertsAnExternalBridgeTheKernelDoesNotTake(t *testing.T) {
 	if status, _, _ := c.status(context.Background()); len(status.Networks[0].Alerts) != 0 {
 		t.Fatalf("status = %+v", status)
 	}
+}
+
+// A kernel that does not take external_bridge runs no bridge: every
+// network reports an explicit null, the held one too, and still after the
+// bridge is deleted, when Control no longer sends it and the alert stops;
+// so Control can release what it held for that bridge. Unread, the key is
+// left out.
+func TestMeshReportsNoBridgeOnAKernelWithoutIt(t *testing.T) {
+	kernel := &fakeMesh{supported: true}
+	c := testMeshComponent(t, kernel, nil)
+	withBridge := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
+		`"external_bridge":{"interface":"ext0","routes":["100.100.1.2/32"],"allow":[]}},` +
+		`{"id":"odd","name":"odd","kind":"open","secret":"s","address":"10.98.0.5/24"}]}`
+	deleted := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]},` +
+		`{"id":"odd","name":"odd","kind":"open","secret":"s","address":"10.98.0.5/24"}]}`
+	check := func(stage string, alert bool, want string) {
+		t.Helper()
+		status, _, _ := c.status(context.Background())
+		if got := hasAlert(status.Networks[0].Alerts, panel.MeshAlertExternalBridgeUnsupported); got != alert {
+			t.Fatalf("%s: alert = %v, status = %+v", stage, got, status)
+		}
+		for _, network := range status.Networks {
+			entry, err := json.Marshal(network)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, after, found := strings.Cut(string(entry), `"externalBridge":`)
+			got := "-"
+			if found {
+				got = after[:4]
+			}
+			if got != want {
+				t.Fatalf("%s: %s externalBridge = %s, want %s", stage, network.ID, got, want)
+			}
+		}
+	}
+	if err := c.apply(meshSnapshot(withBridge)); err != nil {
+		t.Fatal(err)
+	}
+	check("configured", true, "null")
+	if err := c.apply(meshSnapshot(deleted)); err != nil {
+		t.Fatal(err)
+	}
+	check("deleted", false, "null")
+	kernel.statusErr = errors.New("down")
+	check("unreadable", false, "-")
 }
