@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 5.0.12 - 2026-11-25
+
 ### Added
 
 - Intranet mesh (`docs/mesh.md`): the configuration member `mesh` lists
