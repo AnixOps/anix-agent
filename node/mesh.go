@@ -231,6 +231,13 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 			running[network.ID] = network
 		}
 	}
+	// The static keys come by network name: the node's key in each
+	// network, read even while the networks wait, for Control's
+	// native_keys.
+	keys := make(map[string]string, len(state.StaticKeys))
+	for _, key := range state.StaticKeys {
+		keys[key.Network] = key.StaticKey
+	}
 	for _, network := range member.Networks {
 		entry, found := running[network.ID]
 		if !found {
@@ -249,6 +256,7 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		if entry.Peers == nil {
 			entry.Peers = []panel.MeshPeerStatus{}
 		}
+		entry.StaticKey = keys[network.Name]
 		status.Networks = append(status.Networks, entry)
 	}
 	return status, state.RegionRequests, true

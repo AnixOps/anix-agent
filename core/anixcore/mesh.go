@@ -81,7 +81,8 @@ func (c *Core) replayMesh() error {
 }
 
 // MeshStatus implements vCore.MeshApplier. An instance id that is not
-// 1-64 letters, digits or dashes is left out, as are region requests
+// 1-64 letters, digits or dashes is left out, as is a static key that is
+// not 32 bytes in standard base64, as are region requests
 // without an id that fits a path segment the same way, and every region
 // request of a kernel without meshRegionRequestsFeature.
 func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
@@ -97,6 +98,16 @@ func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 	}
 	if !panel.MeshInstanceID(answer.InstanceID) {
 		answer.InstanceID = ""
+	}
+	keys := answer.StaticKeys[:0]
+	for _, key := range answer.StaticKeys {
+		if key.Network != "" && panel.MeshStaticKeyValid(key.StaticKey) {
+			keys = append(keys, key)
+		}
+	}
+	answer.StaticKeys = keys
+	if len(keys) == 0 {
+		answer.StaticKeys = nil
 	}
 	for i := range answer.Networks {
 		answer.Networks[i].ID = strings.TrimPrefix(answer.Networks[i].Tag, meshTagPrefix)
@@ -145,6 +156,12 @@ func meshBody(networks []panel.MeshNetwork, dns, hostGroups bool) map[string]any
 		network := map[string]any{"name": n.Name, "secret": n.Secret, "secure_mode": n.SecureMode}
 		if n.Cipher != "" {
 			network["cipher"] = n.Cipher
+		}
+		if n.Kind != "" {
+			network["kind"] = n.Kind
+		}
+		if present(n.NativeKeys) {
+			network["native_keys"] = n.NativeKeys
 		}
 		node := map[string]any{"address": n.Address}
 		if n.AddressV6 != "" {
