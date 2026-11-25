@@ -19,7 +19,8 @@ import (
 // them. The sections dns and host_groups go only to a kernel that lists
 // meshDNSFeature and meshHostGroupsFeature: the kernel rejects unknown
 // fields, and dns.resolver_address goes only to one that also lists
-// meshResolverAddressFeature. A kernel that lists meshRegionRequestsFeature holds the node
+// meshResolverAddressFeature; external_bridge only to one that lists
+// meshExternalBridgeFeature. A kernel that lists meshRegionRequestsFeature holds the node
 // owner's region requests in the GET answer until
 // DELETE /v1/mesh/region_requests/{id}.
 
@@ -29,6 +30,7 @@ const (
 	meshDNSFeature             = "mesh_dns"
 	meshResolverAddressFeature = "mesh_resolver_address"
 	meshHostGroupsFeature      = "mesh_host_groups"
+	meshExternalBridgeFeature  = "mesh_external_bridge"
 	meshRegionRequestsFeature  = "mesh_region_requests"
 	meshNativeKeysFeature      = "mesh_native_keys"
 )
@@ -77,7 +79,8 @@ func (c *Core) putMesh() error {
 	defer cancel()
 	body := meshBody(c.mesh, meshSections{
 		dns: c.client.meshDNS.Load(), dnsResolver: c.client.meshResolverAddress.Load(),
-		hostGroups: c.client.meshHostGroups.Load(), nativeKeys: c.client.meshNativeKeys.Load(),
+		hostGroups: c.client.meshHostGroups.Load(), externalBridge: c.client.meshExternalBridge.Load(),
+		nativeKeys: c.client.meshNativeKeys.Load(),
 	})
 	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
 		return fmt.Errorf("anixcore mesh: %w", err)
@@ -125,6 +128,9 @@ func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 	for i := range answer.Networks {
 		answer.Networks[i].ID = strings.TrimPrefix(answer.Networks[i].Tag, meshTagPrefix)
 		answer.Networks[i].Tag = ""
+		if !present(answer.Networks[i].ExternalBridge) {
+			answer.Networks[i].ExternalBridge = nil
+		}
 	}
 	requests := answer.RegionRequests[:0]
 	if client.meshRegionRequests.Load() {
@@ -161,7 +167,7 @@ func (c *Core) DoneMeshRegionRequest(ctx context.Context, id string) error {
 
 // meshSections are the optional parts of a network the kernel takes.
 type meshSections struct {
-	dns, dnsResolver, hostGroups, nativeKeys bool
+	dns, dnsResolver, hostGroups, externalBridge, nativeKeys bool
 }
 
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
@@ -217,6 +223,9 @@ func meshBody(networks []panel.MeshNetwork, take meshSections) map[string]any {
 		}
 		if take.hostGroups && present(n.HostGroups) {
 			config["host_groups"] = n.HostGroups
+		}
+		if take.externalBridge && present(n.ExternalBridge) {
+			config["external_bridge"] = n.ExternalBridge
 		}
 		out = append(out, config)
 	}

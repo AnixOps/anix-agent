@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -392,5 +393,63 @@ func TestMeshDNSKeepsWhatIsNotAnObject(t *testing.T) {
 	}
 	if got := meshDNS(json.RawMessage(`{"enabled":true,"resolver_address":"10.0.0.1"}`), false); string(got) != `{"enabled":true}` {
 		t.Fatalf("dropped = %s", got)
+	}
+}
+
+// external_bridge goes only to a kernel that lists mesh_external_bridge,
+// on replay too; the digest of the bridge the kernel applies
+// (externalBridge) goes on as it gives it.
+func TestMeshExternalBridge(t *testing.T) {
+	network := testMeshNetwork()
+	network.ExternalBridge = json.RawMessage(`{"interface":"ext0","routes":["100.100.1.2/32"],"allow":["10.150.128.7/32"]}`)
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
+		t.Fatal(err)
+	}
+	config := api.mesh[0]["networks"].([]any)[0].(map[string]any)
+	if _, ok := config["external_bridge"]; ok {
+		t.Fatalf("external_bridge sent to a kernel without it: %v", config)
+	}
+	api.features = append(api.features, meshExternalBridgeFeature)
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	config = api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)
+	bridge, _ := config["external_bridge"].(map[string]any)
+	if bridge["interface"] != "ext0" || len(bridge["allow"].([]any)) != 1 {
+		t.Fatalf("external_bridge = %v", config["external_bridge"])
+	}
+
+	// No bridge, or null: none in the state.
+	for _, absent := range []any{nil, json.RawMessage(`null`)} {
+		api.meshBridge = absent
+		state, err := core.MeshStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Networks[0].ExternalBridge != nil {
+			t.Fatalf("externalBridge = %s", state.Networks[0].ExternalBridge)
+		}
+	}
+	// The kernel's digest goes on as it gives it, an empty list's too.
+	digest := `{"allowCount":0,"allowDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",` +
+		`"appliedAt":"2026-11-25T21:00:00Z","routesDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}`
+	api.meshBridge = json.RawMessage(digest)
+	state, err := core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(state.Networks[0].ExternalBridge); got != digest {
+		t.Fatalf("externalBridge = %s", got)
+	}
+	report, _ := json.Marshal(state.Networks[0])
+	if !strings.Contains(string(report), `"externalBridge":`+digest) {
+		t.Fatalf("report = %s", report)
 	}
 }

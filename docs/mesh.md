@@ -46,7 +46,7 @@
 - **发布顺序：** 带上述检查的 Agent 必须在内核列出 `mesh_native_keys` 之后发布，否则节点上全部 `managed`（地区）网络都会被扣下。
 - `dns`（内网域名，R28）与 `host_groups`（宿主组，R21、R25；网关以实例 ID 指定）由面板始终下发。内核拒绝未知字段，
   所以 Agent 只把本机内核支持的节交给内核：`features` 有 `mesh_dns`（内核 0.3 起）才带 `dns`（另有 `mesh_resolver_address` 才保留其中的 `resolver_address`，否则只去掉这一项），有 `mesh_host_groups`
-  （内核 0.4 起）才带 `host_groups`；值为 `null` 视同未下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
+  （内核 0.4 起）才带 `host_groups`，有 `mesh_external_bridge`（内核 0.4 起）才带 `external_bridge`（桥接节点才有此节）；值为 `null` 视同未下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
 - 一个 Agent 进程里由第一个带内核的节点驱动组网（内核只运行一套网络）。
 
 ## 内核接口（需内核提供）
@@ -72,6 +72,7 @@
 | `mesh_dns` | 网络配置接受 `dns` | 0.3 |
 | `mesh_resolver_address` | `dns` 节接受 `resolver_address`（固定解析地址） | 0.4 |
 | `mesh_host_groups` | 网络配置接受 `host_groups` | 0.4 |
+| `mesh_external_bridge` | 网络配置接受 `external_bridge`（外部网络桥接，R36），`GET /v1/mesh` 的网络带 `externalBridge`（摘要） | 0.4 |
 | `mesh_region_requests` | `GET /v1/mesh` 带 `region_requests`，并有 `DELETE /v1/mesh/region_requests/{id}` | 0.4 |
 | `mesh_native_keys` | 网络配置的 `network` 层接受 `native_keys`，`GET /v1/mesh` 带 `static_keys` | 0.3 |
 
@@ -108,6 +109,8 @@ Agent 把它转成同码的告警上报，不上报 `failure` 本身。
 Agent 自己给出的告警码：`unsupported`（内核没有组网）、`takeover_pending`（现有组网程序仍在运行，网络暂缓启动）、
 `native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）、`invalid_kind`（网络 `kind` 未知，暂不下发）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。
 
+- 运行外部网络桥接的网络带 `externalBridge`（`{allowDigest, routesDigest, allowCount, appliedAt}`）：内核 `GET /v1/mesh` 中该网络
+  已生效桥接配置的摘要，Agent 原样转述，不改写、不校验；面板对自己下发的名单按同一算法计算，相等即视为已应用。内核未给出或为 `null` 时不带该项。
 - 每个网络带 `static_key`：本机在该网络的静态公钥，按网络名取自内核 `GET /v1/mesh` 的 `static_keys`；面板只采信 Agent 通道的值，
   汇总为各网络的 `native_keys`。旧模式网络、内核读取失败时没有该字段，面板不应把缺省当作移除。
 - 公钥由内核在收到网络配置时生成，所以首次接管时（现有组网程序仍在运行，网络从未交给内核）还没有公钥。顺序是：接管完成后 Agent

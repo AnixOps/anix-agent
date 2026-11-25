@@ -91,8 +91,9 @@ type client struct {
 	// meshDNS, meshHostGroups and meshRegionRequests whether it takes
 	// their dns and host_groups sections and holds region requests.
 	// meshNativeKeys whether it takes network.native_keys, meshResolverAddress
-	// whether it takes dns.resolver_address.
-	mesh, meshDNS, meshResolverAddress, meshHostGroups, meshRegionRequests, meshNativeKeys atomic.Bool
+	// whether it takes dns.resolver_address, meshExternalBridge whether it
+	// takes external_bridge.
+	mesh, meshDNS, meshResolverAddress, meshHostGroups, meshExternalBridge, meshRegionRequests, meshNativeKeys atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -165,6 +166,7 @@ func (c *client) status(ctx context.Context) error {
 	c.meshDNS.Store(c.mesh.Load() && slices.Contains(status.Features, meshDNSFeature))
 	c.meshResolverAddress.Store(c.meshDNS.Load() && slices.Contains(status.Features, meshResolverAddressFeature))
 	c.meshHostGroups.Store(c.mesh.Load() && slices.Contains(status.Features, meshHostGroupsFeature))
+	c.meshExternalBridge.Store(c.mesh.Load() && slices.Contains(status.Features, meshExternalBridgeFeature))
 	c.meshRegionRequests.Store(c.mesh.Load() && slices.Contains(status.Features, meshRegionRequestsFeature))
 	c.meshNativeKeys.Store(c.mesh.Load() && slices.Contains(status.Features, meshNativeKeysFeature))
 	return nil
