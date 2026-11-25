@@ -4,6 +4,13 @@
 
 ### Added
 
+- Intranet mesh, external network bridge: while the kernel reports the
+  alert `external_bridge_lock_held` on any network, another process on the
+  host holds the bridge lock. That process may be a hung older instance
+  whose rules still apply. In that case no network reports
+  `"externalBridge": null` or `external_bridge_unsupported`, and the key is
+  left out (unknown), so Control keeps what it holds for the bridge. The
+  kernel's alert is passed on.
 - Intranet mesh, external network bridge: after a downgrade to a kernel
   without `mesh_external_bridge`, each network whose bridge the newer
   kernel reported as applied (an `externalBridge` object) reports the alert

@@ -34,7 +34,9 @@ type fakeMesh struct {
 	statusErr      error
 	// bridges are the networks' externalBridge (by id), raw.
 	bridges map[string]json.RawMessage
-	done    []string
+	// alerts are the networks' kernel alerts (by id).
+	alerts map[string][]panel.MeshAlert
+	done   []string
 }
 
 func (f *fakeMesh) MeshSupported() bool { return f.supported }
@@ -60,6 +62,7 @@ func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
 		for _, network := range f.applied[len(f.applied)-1] {
 			entry := panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}}
 			entry.ExternalBridge = f.bridges[network.ID]
+			entry.Alerts = f.alerts[network.ID]
 			if failure := f.failures[network.ID]; failure != nil {
 				entry.Running, entry.Failure = false, failure
 			}
@@ -688,5 +691,61 @@ func TestMeshBridgedRecordIsTheAgentsOwn(t *testing.T) {
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Fatalf("empty record kept: %v", err)
+	}
+}
+
+// A kernel that could not take the host's bridge lock reports
+// external_bridge_lock_held and does not list mesh_external_bridge.
+// Another process may still run its bridge, so no network reports null
+// nor external_bridge_unsupported: externalBridge stays out (§15.12 item
+// 9). Once the lock is the kernel's, the usual report resumes.
+func TestMeshLeavesBridgeStateUnknownWhileTheLockIsHeld(t *testing.T) {
+	lock := []panel.MeshAlert{{Code: panel.MeshAlertExternalBridgeLockHeld, Detail: "another process holds the bridge lock"}}
+	kernel := &fakeMesh{supported: true, alerts: map[string][]panel.MeshAlert{"cn": lock, "eu": lock}}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
+		`"external_bridge":{"interface":"ext0","routes":["100.100.1.2/32"],"allow":[]}},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	check := func() string {
+		t.Helper()
+		status, _, _ := c.status(context.Background())
+		var out []string
+		for _, network := range status.Networks {
+			mark := network.ID + ":"
+			if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeLockHeld) {
+				mark += "L"
+			}
+			if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeUnsupported) {
+				mark += "U"
+			}
+			entry, err := json.Marshal(network)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, after, found := strings.Cut(string(entry), `"externalBridge":`); found {
+				mark += ":" + after[:4]
+			} else {
+				mark += ":-"
+			}
+			out = append(out, mark)
+		}
+		return strings.Join(out, " ")
+	}
+	if got := check(); got != "cn:L:- eu:L:-" {
+		t.Fatalf("lock held: %s", got)
+	}
+	// The alert on one network is enough.
+	kernel.alerts = map[string][]panel.MeshAlert{"eu": lock}
+	if got := check(); got != "cn::- eu:L:-" {
+		t.Fatalf("lock held, reported on one network: %s", got)
+	}
+	// The lock is released and the kernel still lacks the feature.
+	kernel.alerts = nil
+	if got := check(); got != "cn:U:null eu::null" {
+		t.Fatalf("lock free: %s", got)
 	}
 }

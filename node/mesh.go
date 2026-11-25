@@ -276,15 +276,29 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 	if readErr == nil && c.core.MeshSupported() {
 		residue = c.trackBridges(member.Networks, state.Networks, c.core.MeshExternalBridgeSupported())
 	}
+	// lockHeld: the kernel reports external_bridge_lock_held, so another
+	// process on the host holds the bridge lock; it may be a hung older
+	// instance whose rules still apply (§15.12 item 9). No network's
+	// bridge state is known then: externalBridge stays out, never null,
+	// and external_bridge_unsupported is not raised.
+	lockHeld := false
+	if readErr == nil {
+		for _, network := range state.Networks {
+			if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeLockHeld) {
+				lockHeld = true
+				break
+			}
+		}
+	}
 	// bridge: the kernel was given the networks and does not take
 	// external_bridge.
-	bridge := applyErr == nil && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
+	bridge := applyErr == nil && !lockHeld && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
 	// noBridge: the kernel, read just now, does not take external_bridge,
 	// so no bridge runs in any of its networks. Each network then reports
 	// an explicit null, whether or not Control sent a bridge: Control
 	// releases what it held for a bridge deleted since, which the alert
 	// alone (sent only while a bridge is configured) never lets it do.
-	noBridge := readErr == nil && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
+	noBridge := readErr == nil && !lockHeld && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
 	var running map[string]panel.MeshNetworkStatus
 	if applyErr == nil {
 		applyErr = readErr
