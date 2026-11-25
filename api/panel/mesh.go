@@ -167,11 +167,11 @@ type MeshNetworkStatus struct {
 	StaticKey string      `json:"static_key,omitempty"`
 	Overlaps  []string    `json:"overlaps,omitempty"`
 	Alerts    []MeshAlert `json:"alerts,omitempty"`
-	// ExternalBridge is the bridge as the kernel applies it now
-	// ({allow, routes}), passed on as the kernel gives it; absent for a
-	// network that runs no bridge. Control confirms a removed address by
-	// it.
-	ExternalBridge json.RawMessage `json:"external_bridge,omitempty"`
+	// ExternalBridge is the digest of the bridge the kernel applies now
+	// (externalBridge: allowDigest, routesDigest, allowCount, appliedAt),
+	// passed on as the kernel gives it; absent for a network that runs no
+	// bridge. Control confirms its allow list by it.
+	ExternalBridge json.RawMessage `json:"externalBridge,omitempty"`
 }
 
 // MeshFailure is why the kernel does not run a network.

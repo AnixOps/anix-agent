@@ -31,7 +31,7 @@ type fakeAPI struct {
 	meshRequests []map[string]any
 	meshDone     []string
 	meshKeys     []map[string]any
-	// meshBridge is the network's external_bridge in GET /v1/mesh, if set.
+	// meshBridge is the network's externalBridge in GET /v1/mesh, if set.
 	meshBridge any
 	features   []string
 	types      []string
@@ -102,7 +102,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			"peers": []any{map[string]any{"address": "10.150.0.1", "hops": 1, "via": []string{"10.150.0.3"}, "latency_ms": 12, "forward_secrecy": true}},
 		}
 		if f.meshBridge != nil {
-			network["external_bridge"] = f.meshBridge
+			network["externalBridge"] = f.meshBridge
 		}
 		reply(200, map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests, "static_keys": f.meshKeys, "networks": []any{network}})
 	case r.Method == "POST" && r.URL.Path == "/v1/inbounds":

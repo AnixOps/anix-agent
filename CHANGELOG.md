@@ -6,9 +6,10 @@
 
 - Intranet mesh, external network bridge (R36): a network's
   `external_bridge` goes to the kernel only when it lists
-  `mesh_external_bridge` (on replay too), and the bridge the kernel
-  applies (`GET /v1/mesh` `networks[].external_bridge`, `{allow, routes}`)
-  goes on in `mesh.status` as the kernel gives it.
+  `mesh_external_bridge` (on replay too), and the digest of the bridge
+  the kernel applies (`GET /v1/mesh` `networks[].externalBridge`:
+  `allowDigest`, `routesDigest`, `allowCount`, `appliedAt`) goes on in
+  `mesh.status` as the kernel gives it.
 - Intranet mesh: `dns.resolver_address` (the fixed resolver address) goes
   to the kernel only when it lists `mesh_resolver_address`; otherwise only that
   field is dropped from `dns`, since an older kernel rejects unknown fields

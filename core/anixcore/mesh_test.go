@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/AnixOps/anix-agent/v5/api/panel"
@@ -396,7 +397,8 @@ func TestMeshDNSKeepsWhatIsNotAnObject(t *testing.T) {
 }
 
 // external_bridge goes only to a kernel that lists mesh_external_bridge,
-// on replay too; the bridge the kernel applies goes on as it gives it.
+// on replay too; the digest of the bridge the kernel applies
+// (externalBridge) goes on as it gives it.
 func TestMeshExternalBridge(t *testing.T) {
 	network := testMeshNetwork()
 	network.ExternalBridge = json.RawMessage(`{"interface":"ext0","routes":["100.100.1.2/32"],"allow":["10.150.128.7/32"]}`)
@@ -432,16 +434,22 @@ func TestMeshExternalBridge(t *testing.T) {
 			t.Fatal(err)
 		}
 		if state.Networks[0].ExternalBridge != nil {
-			t.Fatalf("external_bridge = %s", state.Networks[0].ExternalBridge)
+			t.Fatalf("externalBridge = %s", state.Networks[0].ExternalBridge)
 		}
 	}
-	// An emptied list is kept: Control confirms a removal by it.
-	api.meshBridge = map[string]any{"allow": []string{}, "routes": []string{"100.100.1.2/32"}}
+	// The kernel's digest goes on as it gives it, an empty list's too.
+	digest := `{"allowCount":0,"allowDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",` +
+		`"appliedAt":"2026-11-25T21:00:00Z","routesDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}`
+	api.meshBridge = json.RawMessage(digest)
 	state, err := core.MeshStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(state.Networks[0].ExternalBridge); got != `{"allow":[],"routes":["100.100.1.2/32"]}` {
-		t.Fatalf("external_bridge = %s", got)
+	if got := string(state.Networks[0].ExternalBridge); got != digest {
+		t.Fatalf("externalBridge = %s", got)
+	}
+	report, _ := json.Marshal(state.Networks[0])
+	if !strings.Contains(string(report), `"externalBridge":`+digest) {
+		t.Fatalf("report = %s", report)
 	}
 }
