@@ -49,6 +49,10 @@ type MeshNetwork struct {
 	// unknown fields), so an older kernel runs the network without them.
 	DNS        json.RawMessage `json:"dns,omitempty"`
 	HostGroups json.RawMessage `json:"host_groups,omitempty"`
+	// ExternalBridge is the external network bridge (R36: interface,
+	// routes, allow), only on a bridge node; it goes only to a kernel
+	// that takes it.
+	ExternalBridge json.RawMessage `json:"external_bridge,omitempty"`
 }
 
 // MeshTakeover names the existing mesh program on the node: its system
@@ -163,6 +167,11 @@ type MeshNetworkStatus struct {
 	StaticKey string      `json:"static_key,omitempty"`
 	Overlaps  []string    `json:"overlaps,omitempty"`
 	Alerts    []MeshAlert `json:"alerts,omitempty"`
+	// ExternalBridge is the bridge as the kernel applies it now
+	// ({allow, routes}), passed on as the kernel gives it; absent for a
+	// network that runs no bridge. Control confirms a removed address by
+	// it.
+	ExternalBridge json.RawMessage `json:"external_bridge,omitempty"`
 }
 
 // MeshFailure is why the kernel does not run a network.

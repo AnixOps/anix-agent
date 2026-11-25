@@ -394,3 +394,54 @@ func TestMeshDNSKeepsWhatIsNotAnObject(t *testing.T) {
 		t.Fatalf("dropped = %s", got)
 	}
 }
+
+// external_bridge goes only to a kernel that lists mesh_external_bridge,
+// on replay too; the bridge the kernel applies goes on as it gives it.
+func TestMeshExternalBridge(t *testing.T) {
+	network := testMeshNetwork()
+	network.ExternalBridge = json.RawMessage(`{"interface":"ext0","routes":["100.100.1.2/32"],"allow":["10.150.128.7/32"]}`)
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
+		t.Fatal(err)
+	}
+	config := api.mesh[0]["networks"].([]any)[0].(map[string]any)
+	if _, ok := config["external_bridge"]; ok {
+		t.Fatalf("external_bridge sent to a kernel without it: %v", config)
+	}
+	api.features = append(api.features, meshExternalBridgeFeature)
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	config = api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)
+	bridge, _ := config["external_bridge"].(map[string]any)
+	if bridge["interface"] != "ext0" || len(bridge["allow"].([]any)) != 1 {
+		t.Fatalf("external_bridge = %v", config["external_bridge"])
+	}
+
+	// No bridge, or null: none in the state.
+	for _, absent := range []any{nil, json.RawMessage(`null`)} {
+		api.meshBridge = absent
+		state, err := core.MeshStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.Networks[0].ExternalBridge != nil {
+			t.Fatalf("external_bridge = %s", state.Networks[0].ExternalBridge)
+		}
+	}
+	// An emptied list is kept: Control confirms a removal by it.
+	api.meshBridge = map[string]any{"allow": []string{}, "routes": []string{"100.100.1.2/32"}}
+	state, err := core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(state.Networks[0].ExternalBridge); got != `{"allow":[],"routes":["100.100.1.2/32"]}` {
+		t.Fatalf("external_bridge = %s", got)
+	}
+}
