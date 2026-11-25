@@ -25,8 +25,13 @@ type fakeAPI struct {
 	rules    []rulesConfig
 	qos      []string
 	mesh     []map[string]any
-	features []string
-	types    []string
+	// meshInstance and meshRequests are what GET /v1/mesh answers beside
+	// the networks; meshDone the region requests deleted.
+	meshInstance string
+	meshRequests []map[string]any
+	meshDone     []string
+	features     []string
+	types        []string
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -85,8 +90,11 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &mesh)
 		f.mesh = append(f.mesh, mesh)
 		reply(200, map[string]any{"networks": []any{}})
+	case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/v1/mesh/region_requests/"):
+		f.meshDone = append(f.meshDone, segments[len(segments)-1])
+		reply(200, map[string]any{})
 	case r.Method == "GET" && r.URL.Path == "/v1/mesh":
-		reply(200, map[string]any{"networks": []any{map[string]any{
+		reply(200, map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests, "networks": []any{map[string]any{
 			"tag": "mesh-cn", "running": true, "address": "10.150.0.5/16", "forward_secrecy": true,
 			"peers": []any{map[string]any{"address": "10.150.0.1", "hops": 1, "via": []string{"10.150.0.3"}, "latency_ms": 12, "forward_secrecy": true}},
 		}}})

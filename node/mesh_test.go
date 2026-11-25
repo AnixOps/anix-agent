@@ -2,8 +2,10 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
@@ -13,10 +15,14 @@ import (
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 )
 
-// fakeMesh is a kernel's mesh: supported or not, recording what it runs.
+// fakeMesh is a kernel's mesh: supported or not, recording what it runs,
+// with an instance id and the region requests it holds.
 type fakeMesh struct {
-	supported bool
-	applied   [][]panel.MeshNetwork
+	supported  bool
+	applied    [][]panel.MeshNetwork
+	instanceID string
+	requests   []panel.MeshRegionRequest
+	done       []string
 }
 
 func (f *fakeMesh) MeshSupported() bool { return f.supported }
@@ -29,13 +35,26 @@ func (f *fakeMesh) ApplyMesh(networks []panel.MeshNetwork) error {
 	return nil
 }
 
-func (f *fakeMesh) MeshStatus(context.Context) ([]panel.MeshNetworkStatus, error) {
-	last := f.applied[len(f.applied)-1]
-	out := make([]panel.MeshNetworkStatus, 0, len(last))
-	for _, network := range last {
-		out = append(out, panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}})
+func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
+	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests}
+	if len(f.applied) > 0 {
+		for _, network := range f.applied[len(f.applied)-1] {
+			state.Networks = append(state.Networks, panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}})
+		}
 	}
-	return out, nil
+	return state, nil
+}
+
+func (f *fakeMesh) DoneMeshRegionRequest(_ context.Context, id string) error {
+	f.done = append(f.done, id)
+	kept := f.requests[:0]
+	for _, request := range f.requests {
+		if request.ID != id {
+			kept = append(kept, request)
+		}
+	}
+	f.requests = kept
+	return nil
 }
 
 func meshSnapshot(member string) *agentv1pb.ConfigSnapshot {
@@ -69,8 +88,8 @@ func TestMeshRunsTheMemberOnTheKernel(t *testing.T) {
 	if len(kernel.applied) != 1 || kernel.applied[0][0].ID != "cn" {
 		t.Fatalf("applied = %+v", kernel.applied)
 	}
-	status := c.status(context.Background())
-	if len(status.Networks) != 1 || !status.Networks[0].Running || status.Takeover != nil {
+	status, _, ok := c.status(context.Background())
+	if !ok || len(status.Networks) != 1 || !status.Networks[0].Running || status.Takeover != nil {
 		t.Fatalf("status = %+v", status)
 	}
 	// The same member again changes nothing; none stops the networks.
@@ -80,8 +99,9 @@ func TestMeshRunsTheMemberOnTheKernel(t *testing.T) {
 	if err := c.apply(meshSnapshot("")); err != nil || len(kernel.applied) != 2 || kernel.applied[1] != nil {
 		t.Fatalf("no member: %v, applied %+v", err, kernel.applied)
 	}
-	if status := c.status(context.Background()); len(status.Networks) != 0 {
-		t.Fatalf("status = %+v", status)
+	// A node in no region reports nothing: Control refuses it (not_assigned).
+	if status, _, ok := c.status(context.Background()); ok || len(status.Networks) != 0 {
+		t.Fatalf("status = %+v, ok %v", status, ok)
 	}
 }
 
@@ -94,22 +114,24 @@ func TestMeshWaitsForTheKernelAndTheTakeover(t *testing.T) {
 	if err := c.apply(meshSnapshot(meshMember)); err != nil {
 		t.Fatal(err)
 	}
-	if status := c.status(context.Background()); status.Networks[0].Running || status.Networks[0].Alerts[0].Code != panel.MeshAlertUnsupported {
+	if status, _, _ := c.status(context.Background()); status.Networks[0].Running || status.Networks[0].Alerts[0].Code != panel.MeshAlertUnsupported || status.InstanceID != "" {
 		t.Fatalf("status = %+v", status)
 	}
 
 	// An updated kernel: the networks still wait for the existing program.
-	kernel.supported = true
+	// It answers its instance id even while they wait.
+	kernel.supported, kernel.instanceID = true, "2f6d7c1e-0b8a-4c55-9e0e-6a1f3b9d2c10"
 	c.retry()
-	status := c.status(context.Background())
-	if len(kernel.applied) != 0 || status.Networks[0].Alerts[0].Code != panel.MeshAlertTakeoverPending || !status.Takeover.Found {
+	status, _, _ := c.status(context.Background())
+	if len(kernel.applied) != 0 || status.Networks[0].Alerts[0].Code != panel.MeshAlertTakeoverPending || !status.Takeover.Found ||
+		status.InstanceID != kernel.instanceID {
 		t.Fatalf("applied %+v, status %+v", kernel.applied, status)
 	}
 
 	// Taken over: the next retry starts them.
 	active["old.service"] = false
 	c.retry()
-	if len(kernel.applied) != 1 || !c.status(context.Background()).Networks[0].Running {
+	if status, _, _ := c.status(context.Background()); len(kernel.applied) != 1 || !status.Networks[0].Running {
 		t.Fatalf("applied = %+v", kernel.applied)
 	}
 }
@@ -119,5 +141,63 @@ func TestMeshRefusesAnInvalidMember(t *testing.T) {
 	err := c.apply(meshSnapshot(`,"mesh":{"networks":[{"id":"cn"}]}`))
 	if !errors.Is(err, agentapi.ErrConfigInvalid) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMeshReportsTheStatusThenTheRegionRequests(t *testing.T) {
+	kernel := &fakeMesh{supported: true, instanceID: "node-a", requests: []panel.MeshRegionRequest{
+		{ID: "r1", Network: "cn", Region: "eu", Reason: "  " + strings.Repeat("迁", panel.MeshRegionRequestReasonMax+10)},
+		{ID: "r2", Region: "EU!"},
+	}}
+	c := testMeshComponent(t, kernel, nil)
+	var sent []*agentv1pb.PackageReport
+	c.sendReport = func(report *agentv1pb.PackageReport) error {
+		sent = append(sent, report)
+		return nil
+	}
+	c.negotiated = true
+
+	// In no region: nothing goes and the kernel keeps the requests.
+	c.report()
+	if len(sent) != 0 || len(kernel.done) != 0 {
+		t.Fatalf("sent %d reports, done %v", len(sent), kernel.done)
+	}
+
+	if err := c.apply(meshSnapshot(meshMember)); err != nil {
+		t.Fatal(err)
+	}
+	c.report()
+	if len(sent) != 2 {
+		t.Fatalf("sent %d reports", len(sent))
+	}
+	if sent[0].GetKind() != agentapi.MeshStatusKind || sent[0].GetVersion() != agentapi.MeshStatusVersion ||
+		!strings.Contains(string(sent[0].GetPayloadJson()), `"instance_id":"node-a"`) {
+		t.Fatalf("status = %s %s", sent[0].GetKind(), sent[0].GetPayloadJson())
+	}
+	var request panel.MeshRegionRequestReport
+	if err := json.Unmarshal(sent[1].GetPayloadJson(), &request); err != nil {
+		t.Fatal(err)
+	}
+	if sent[1].GetPluginId() != agentapi.MeshPluginID || sent[1].GetKind() != agentapi.MeshRegionRequestKind ||
+		sent[1].GetVersion() != agentapi.MeshRegionRequestVersion || request.Region != "eu" ||
+		len([]rune(request.Reason)) != panel.MeshRegionRequestReasonMax || strings.HasPrefix(request.Reason, " ") {
+		t.Fatalf("region request = %s %s", sent[1].GetKind(), sent[1].GetPayloadJson())
+	}
+	// Both leave the kernel: r1 sent, r2 never takeable.
+	if strings.Join(kernel.done, ",") != "r1,r2" {
+		t.Fatalf("done = %v", kernel.done)
+	}
+
+	// A session that is gone keeps the requests in the kernel.
+	kernel.requests = []panel.MeshRegionRequest{{ID: "r3", Region: "na"}}
+	c.sendReport = func(report *agentv1pb.PackageReport) error {
+		if report.GetKind() == agentapi.MeshRegionRequestKind {
+			return agentapi.ErrSessionGone
+		}
+		return nil
+	}
+	c.report()
+	if len(kernel.requests) != 1 || len(kernel.done) != 2 {
+		t.Fatalf("requests %v, done %v", kernel.requests, kernel.done)
 	}
 }

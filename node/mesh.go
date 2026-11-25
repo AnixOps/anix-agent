@@ -21,8 +21,10 @@ import (
 // program the member names still runs, the networks wait for it to be
 // taken over (as root, `anix-agent mesh takeover`); the
 // kernel's state goes to Control as the PackageReport "mesh.status" after
-// each change and every meshStatusInterval. One node of an Agent drives
-// it: the kernel runs one set of networks.
+// each change and every meshStatusInterval, followed by the node owner's
+// region requests the kernel holds ("mesh.region_request"). A node in no
+// region reports nothing. One node of an Agent drives it: the kernel runs
+// one set of networks.
 
 // meshStatusInterval spaces out the status reports.
 var meshStatusInterval = time.Minute
@@ -43,6 +45,9 @@ type meshComponent struct {
 	err    error
 	// took is what the takeover found, nil for nothing.
 	took *panel.MeshTakeoverResult
+	// sendReport sends a mesh PackageReport; nil sends it on client's
+	// data plane (tests set it).
+	sendReport func(*agentv1pb.PackageReport) error
 
 	wake    chan struct{}
 	stop    chan struct{}
@@ -196,27 +201,39 @@ func (c *meshComponent) run(member *panel.Mesh) error {
 	return err
 }
 
-// status is the report payload now.
-func (c *meshComponent) status(ctx context.Context) panel.MeshStatus {
+// status is the report payload now and the region requests the kernel
+// holds. ok is false while the node is in no region (no member, or one
+// without networks): Control refuses that node's reports (not_assigned),
+// so none go, and the kernel keeps its region requests.
+func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, requests []panel.MeshRegionRequest, ok bool) {
 	c.mu.Lock()
 	member, applyErr, took := c.member, c.err, c.took
 	c.mu.Unlock()
-	status := panel.MeshStatus{Networks: []panel.MeshNetworkStatus{}, Takeover: took}
+	status = panel.MeshStatus{Networks: []panel.MeshNetworkStatus{}, Takeover: took}
 	if member == nil || len(member.Networks) == 0 {
-		return status
+		return status, nil, false
 	}
+	// A kernel with the mesh answers its instance id and region requests
+	// even while the networks wait for the takeover.
+	var state panel.MeshState
+	var readErr error
+	if c.core.MeshSupported() {
+		state, readErr = c.core.MeshStatus(ctx)
+	} else if applyErr == nil {
+		readErr = vCore.ErrMeshUnsupported
+	}
+	status.InstanceID = state.InstanceID
 	var running map[string]panel.MeshNetworkStatus
 	if applyErr == nil {
-		read, err := c.core.MeshStatus(ctx)
-		applyErr = err
-		running = make(map[string]panel.MeshNetworkStatus, len(read))
-		for _, network := range read {
+		applyErr = readErr
+		running = make(map[string]panel.MeshNetworkStatus, len(state.Networks))
+		for _, network := range state.Networks {
 			running[network.ID] = network
 		}
 	}
 	for _, network := range member.Networks {
-		entry, ok := running[network.ID]
-		if !ok {
+		entry, found := running[network.ID]
+		if !found {
 			entry = panel.MeshNetworkStatus{ID: network.ID, Peers: []panel.MeshPeerStatus{}}
 			switch {
 			case errors.Is(applyErr, vCore.ErrMeshUnsupported):
@@ -234,29 +251,83 @@ func (c *meshComponent) status(ctx context.Context) panel.MeshStatus {
 		}
 		status.Networks = append(status.Networks, entry)
 	}
-	return status
+	return status, state.RegionRequests, true
 }
 
-// report sends the status on a session that negotiated the mesh.
+// report sends the status, then the kernel's region requests, on a
+// session that negotiated the mesh.
 func (c *meshComponent) report() {
 	c.mu.Lock()
-	client, negotiated := c.client, c.negotiated
+	send, negotiated := c.sendReport, c.negotiated
+	if client := c.client; send == nil && client != nil {
+		send = client.DataPlane().SendMeshReport
+	}
 	c.mu.Unlock()
-	if client == nil || !negotiated {
+	if send == nil || !negotiated {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	payload, err := json.Marshal(c.status(ctx))
+	status, requests, ok := c.status(ctx)
 	cancel()
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(status)
 	if err != nil {
 		c.logger().WithError(err).Warn("Could not build the mesh status")
 		return
 	}
-	report := &agentv1pb.PackageReport{
-		PluginId: agentapi.MeshPluginID, Kind: agentapi.MeshStatusKind, Version: agentapi.MeshStatusVersion,
+	if err := c.send(send, agentapi.MeshStatusKind, agentapi.MeshStatusVersion, payload); err != nil {
+		if !errors.Is(err, agentapi.ErrSessionGone) {
+			c.logger().WithError(err).Warn("Could not send the mesh status")
+		}
+		return
+	}
+	for _, request := range requests {
+		if !c.sendRegionRequest(send, request) {
+			return
+		}
+	}
+}
+
+// sendRegionRequest sends one region request the kernel holds and then
+// drops it from the kernel; it answers false when the session is gone.
+// Control never acknowledges it: it records the request for the network
+// manager, and the decision comes back as the configuration. A request
+// Control can never take (no region code) is dropped unsent; one that
+// could not be sent stays in the kernel for the next report.
+func (c *meshComponent) sendRegionRequest(send func(*agentv1pb.PackageReport) error, request panel.MeshRegionRequest) bool {
+	logger := c.logger().WithField("region_request", request.ID)
+	report, err := request.Report()
+	if err == nil {
+		var payload []byte
+		if payload, err = json.Marshal(report); err == nil {
+			err = c.send(send, agentapi.MeshRegionRequestKind, agentapi.MeshRegionRequestVersion, payload)
+			if errors.Is(err, agentapi.ErrSessionGone) {
+				return false
+			}
+			if err != nil {
+				logger.WithError(err).Warn("Could not send the mesh region request")
+				return true
+			}
+			logger.WithField("region", report.Region).Info("Sent the mesh region request to Control")
+		}
+	}
+	if err != nil {
+		logger.WithError(err).Warn("Dropped a mesh region request Control cannot take")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := c.core.DoneMeshRegionRequest(ctx, request.ID); err != nil {
+		logger.WithError(err).Warn("Could not drop the sent mesh region request from the kernel")
+	}
+	return true
+}
+
+// send sends one mesh PackageReport.
+func (c *meshComponent) send(send func(*agentv1pb.PackageReport) error, kind, version string, payload []byte) error {
+	return send(&agentv1pb.PackageReport{
+		PluginId: agentapi.MeshPluginID, Kind: kind, Version: version,
 		PayloadJson: payload, ObservedAtUnixMs: time.Now().UnixMilli(),
-	}
-	if err := client.DataPlane().SendMeshStatus(report); err != nil && !errors.Is(err, agentapi.ErrSessionGone) {
-		c.logger().WithError(err).Warn("Could not send the mesh status")
-	}
+	})
 }

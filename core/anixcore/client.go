@@ -87,8 +87,10 @@ type client struct {
 	// temporaryProxies is whether the kernel runs socks inbounds and ends
 	// inbounds at their expires_at_ms (inbound_expiry).
 	temporaryProxies atomic.Bool
-	// mesh is whether the kernel runs intranet mesh networks (/v1/mesh).
-	mesh atomic.Bool
+	// mesh is whether the kernel runs intranet mesh networks (/v1/mesh);
+	// meshDNS, meshHostGroups and meshRegionRequests whether it takes
+	// their dns and host_groups sections and holds region requests.
+	mesh, meshDNS, meshHostGroups, meshRegionRequests atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -158,6 +160,9 @@ func (c *client) status(ctx context.Context) error {
 	c.blockCIDRs.Store(slices.Contains(status.Features, blockCIDRsFeature))
 	c.temporaryProxies.Store(slices.Contains(status.Features, inboundExpiryFeature) && slices.Contains(status.Types, socksType))
 	c.mesh.Store(slices.Contains(status.Features, meshFeature))
+	c.meshDNS.Store(c.mesh.Load() && slices.Contains(status.Features, meshDNSFeature))
+	c.meshHostGroups.Store(c.mesh.Load() && slices.Contains(status.Features, meshHostGroupsFeature))
+	c.meshRegionRequests.Store(c.mesh.Load() && slices.Contains(status.Features, meshRegionRequestsFeature))
 	return nil
 }
 
