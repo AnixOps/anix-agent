@@ -4,6 +4,16 @@
 
 ### Added
 
+- Intranet mesh (`docs/mesh.md`): the configuration member `mesh` lists
+  the region networks the node joins; the Agent sends them to anixcore
+  (`PUT /v1/mesh`, only when the kernel lists the `mesh` feature) and
+  reports their peers, paths, latency and forward secrecy as the
+  PackageReport `mesh.status` (capability `mesh` v1) after each change and
+  every minute. Without the feature each network reports `unsupported` and
+  starts once the kernel is updated. While the existing mesh program the
+  member names still runs, the networks wait (`takeover_pending`);
+  `anix-agent mesh takeover` (root) stops it, start at boot first, keeping
+  its files, and `anix-agent mesh restore` brings it back.
 - Region relays (`docs/region-relay.md`): with `GRPCRelays` (host:port
   list) every connection to Control, the control stream and enrollment,
   goes to a relay that forwards it byte for byte, never to `GRPCHost`;
@@ -233,7 +243,7 @@ revision 3 (Snell); Snell nodes need a later anx-node release.
   Control-shaped configuration answer for each of them.
 - CI step "No third-party engines or GPL modules": `scripts/check_forbidden_deps.sh`
   rejects sing-box (sagernet), metacubex, Xray (xtls), v2fly, Hysteria
-  (apernet), Mieru, EasyTier and gost modules in `go.mod` / `go.sum`, and
+  (apernet), Mieru, a mesh program and gost modules in `go.mod` / `go.sum`, and
   go-licenses rejects any restricted or forbidden (GPL / AGPL) licence in the
   `anixcore` build. The Agent already stopped linking these engines in
   5.0.0-rc.22; this keeps it that way.

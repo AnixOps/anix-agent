@@ -37,6 +37,7 @@ anx-server 只作为独立进程，经 gRPC、HTTP 管理接口、配置文件�
 | `forward/` | 入口高可用的 vantage 探测、转发诊断与 forward.report（Control 在用） |
 | `kernelfwd/` | 网络计划的内核转发跳：一张 nft 表（DNAT + masquerade + 计数器）与目标 TCP 探测 |
 | `networkroute/`、`realityprobe/`、`diagnostic/` | 路由健康、Reality 目标探测、诊断任务 |
+| `mesh/` | 内网组网：检测与接管现有组网程序（`anix-agent mesh takeover/restore`）；组网配置与上报在 `node/mesh.go` |
 | `plugin/` | 插件 Supervisor 与机器监控插件 |
 | `upgrade/` | 自升级与旧安装（gost、nftables）清理 |
 | `limiter/` | 用户 / 节点限速与设备数限制 |

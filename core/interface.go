@@ -80,3 +80,13 @@ type NetworkApplier interface {
 type TemporaryProxyApplier interface {
 	ApplyTemporaryProxies(proxies []panel.TemporaryProxy) error
 }
+
+// MeshApplier runs the node's intranet mesh networks (the member "mesh").
+type MeshApplier interface {
+	// MeshSupported tells whether the running kernel has the mesh.
+	MeshSupported() bool
+	// ApplyMesh replaces the networks the kernel runs; none stops them.
+	ApplyMesh(networks []panel.MeshNetwork) error
+	// MeshStatus answers each network as the kernel runs it, by Tag.
+	MeshStatus(ctx context.Context) ([]panel.MeshNetworkStatus, error)
+}

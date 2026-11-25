@@ -64,6 +64,9 @@ type nodeDataPlane struct {
 	// network runs the device's network plan (network.v1), nil when the
 	// node does not drive the core's network model.
 	network *networkComponent
+	// mesh runs the intranet mesh networks, nil when the node does not
+	// drive the kernel's mesh.
+	mesh *meshComponent
 	// awaiting is set while the node waits in the background for its
 	// stream (enrollment, then Control's snapshot).
 	awaiting   atomic.Bool
@@ -166,6 +169,11 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 	}
 	if err := n.applyTemporaryProxies(snapshot); err != nil {
 		errs = append(errs, err)
+	}
+	if n.mesh != nil {
+		if err := n.mesh.apply(snapshot); err != nil {
+			errs = append(errs, fmt.Errorf("mesh: %w", err))
+		}
 	}
 	return errors.Join(errs...)
 }

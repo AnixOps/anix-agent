@@ -126,6 +126,8 @@ type Core struct {
 	// proxies are the temporary proxies anixcore runs, wantedProxies
 	// those of the last ApplyTemporaryProxies still to run, by tag.
 	proxies, wantedProxies map[string]panel.TemporaryProxy
+	// mesh is the last PUT /v1/mesh body, nil for none.
+	mesh map[string]any
 
 	process *exec.Cmd
 	stop    chan struct{}
@@ -376,6 +378,9 @@ func (c *Core) replay() error {
 		}
 	}
 	if err := c.replayTemporaryProxies(); err != nil {
+		failed = errors.Join(failed, err)
+	}
+	if err := c.replayMesh(); err != nil {
 		failed = errors.Join(failed, err)
 	}
 	return failed

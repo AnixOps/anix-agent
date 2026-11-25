@@ -226,6 +226,9 @@ func (n *nodeDataPlane) close() {
 		if n.network != nil {
 			n.network.close()
 		}
+		if n.mesh != nil {
+			n.mesh.close()
+		}
 	})
 }
 
