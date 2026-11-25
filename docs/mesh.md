@@ -61,10 +61,10 @@
 | `mesh_host_groups` | 网络配置接受 `host_groups` | 0.4 |
 | `mesh_region_requests` | `GET /v1/mesh` 带 `region_requests`，并有 `DELETE /v1/mesh/region_requests/{id}` | 0.4 |
 
-`instance_id` 是本机的组网实例 ID，即组网状态快照的 `self.id`（首次启动生成，重启与升级不变），1–64 位字母、数字或 `-`；
+`instance_id` 是本机的组网实例 ID，即组网状态快照的 `self.id`（首次启动生成，重启与升级不变），1–64 位字母、数字或 `-`，首字符须为字母或数字；
 不合规时 Agent 按未给出处理。网络暂缓启动（`takeover_pending`）时内核也应给出。
 
-`MeshRegionRequest`：`id`（1–64 位字母、数字或 `-`，内核生成，用于删除）、`network`（发起申请的网络 `tag`）、`region`（目标地区代码）、
+`MeshRegionRequest`：`id`（1–64 位字母、数字或 `-`，首字符须为字母或数字，内核生成，用于删除）、`network`（发起申请的网络 `tag`）、`region`（目标地区代码）、
 `reason`（可省略）。节点所有者在本机执行内核命令 `mesh_request_region`（R24）时由内核记下，一直保留到 Agent 删除。
 
 `MeshNetworkStatus`：`tag`、`running`、`error`、`address`、`forward_secrecy`、`peers[{address, subnets, via, hops, latency_ms, forward_secrecy}]`、

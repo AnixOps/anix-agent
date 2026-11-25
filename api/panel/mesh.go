@@ -193,9 +193,10 @@ type MeshState struct {
 }
 
 // MeshInstanceID tells whether id is a valid instance id: 1-64 letters,
-// digits or dashes.
+// digits or dashes, starting with a letter or digit (so it never reads as
+// a command-line option).
 func MeshInstanceID(id string) bool {
-	if id == "" || len(id) > 64 {
+	if id == "" || len(id) > 64 || id[0] == '-' {
 		return false
 	}
 	for _, r := range id {
