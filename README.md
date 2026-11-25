@@ -24,11 +24,11 @@ AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，只通过 mTLS 
 - 可选的官方签名插件 Supervisor（官方插件现只剩 `machine-telemetry`）
 - Linux、Windows 和 macOS 构建
 
-## 5.0.11 范围
+## 5.0.12 范围
 
-`v5.0.11` 提供 AnixOps 官方签名软件包与 Agent 二进制，配套 AnixOps Control 5.0.13 与 anx-node
-0.1.0-alpha.24。5.0 起 Control 与 Agent 共用主、次版本号，补丁号各自编号，兼容性看 Hello 里的协议修订号
-`protocol.revision`。5.0.11 修复流量上报 spool 与节点重载（后端评审 AG-001～AG-004），并删除未使用的 `AnxLine` 配置段。5.0.9 是首个以 AGPL-3.0 发布的版本：从 V2bX 派生的代码已按两方 clean-room 流程全部重写；
+`v5.0.12` 提供 AnixOps 官方签名软件包与 Agent 二进制，配套 AnixOps Control 5.0.14 与 anx-node
+0.1.0-alpha.25。5.0 起 Control 与 Agent 共用主、次版本号，补丁号各自编号，兼容性看 Hello 里的协议修订号
+`protocol.revision`。5.0.12 新增内网组网（`mesh`）、区域中继和临时 SOCKS5 代理（`temporary_proxies`）。5.0.11 修复流量上报 spool 与节点重载（后端评审 AG-001～AG-004），并删除未使用的 `AnxLine` 配置段。5.0.9 是首个以 AGPL-3.0 发布的版本：从 V2bX 派生的代码已按两方 clean-room 流程全部重写；
 新增可达性探测 `reach.probe`（`agent.diagnostic`）。各版本的变化见 `CHANGELOG.md`。
 
 相对 4.2.0 的变化：
@@ -51,7 +51,7 @@ main `5a234986`（anix-control#339 的合并提交，含 `AgentEnrollment.Join` 
 
 升级顺序：先升级 Agent，再升级 Control。详见 `CHANGELOG.md`。
 
-## 历史 v4 Alpha 运行时预览（非 5.0.11 发布范围）
+## 历史 v4 Alpha 运行时预览（非 5.0.12 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。`nftables-forward`
 与 `nat-egress` 插件已随 nftables 转发引擎一起删除：中转走网络模型（ANX），出口网卡、
@@ -90,7 +90,7 @@ systemd 沙箱），配置只含凭据（无 `ApiKey`、无 `Cores`）。早期�
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v5.0.11
+export VERSION=v5.0.12
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
