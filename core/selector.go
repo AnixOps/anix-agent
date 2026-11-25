@@ -302,6 +302,11 @@ func (s *Selector) MeshNativeKeysSupported() bool {
 	return ok && a.MeshNativeKeysSupported()
 }
 
+func (s *Selector) MeshExternalBridgeSupported() bool {
+	a, ok := first[MeshApplier](s)
+	return ok && a.MeshExternalBridgeSupported()
+}
+
 func (s *Selector) ApplyMesh(networks []panel.MeshNetwork) error {
 	if a, ok := first[MeshApplier](s); ok {
 		return a.ApplyMesh(networks)

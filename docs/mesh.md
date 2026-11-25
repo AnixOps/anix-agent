@@ -107,7 +107,7 @@ Agent 把它转成同码的告警上报，不上报 `failure` 本身。
 ```
 
 Agent 自己给出的告警码：`unsupported`（内核没有组网）、`takeover_pending`（现有组网程序仍在运行，网络暂缓启动）、
-`native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）、`invalid_kind`（网络 `kind` 未知，暂不下发）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。
+`native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）、`invalid_kind`（网络 `kind` 未知，暂不下发）、`external_bridge_unsupported`（内核未列出 `mesh_external_bridge`，网络照常运行但不带 `external_bridge`）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。
 
 - 运行外部网络桥接的网络带 `externalBridge`（`{allowDigest, routesDigest, allowCount, appliedAt}`）：内核 `GET /v1/mesh` 中该网络
   已生效桥接配置的摘要，Agent 原样转述，不改写、不校验；面板对自己下发的名单按同一算法计算，相等即视为已应用。三种状态：摘要；

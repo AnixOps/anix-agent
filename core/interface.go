@@ -88,6 +88,9 @@ type MeshApplier interface {
 	// MeshNativeKeysSupported tells whether it takes native_keys, without
 	// which it cannot hold a managed network to the operator's own nodes.
 	MeshNativeKeysSupported() bool
+	// MeshExternalBridgeSupported tells whether it takes a network's
+	// external_bridge.
+	MeshExternalBridgeSupported() bool
 	// ApplyMesh replaces the networks the kernel runs; none stops them.
 	ApplyMesh(networks []panel.MeshNetwork) error
 	// MeshStatus answers the kernel's instance id, each network as the

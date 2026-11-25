@@ -22,12 +22,14 @@ import (
 type fakeMesh struct {
 	supported    bool
 	noNativeKeys bool
-	applied      [][]panel.MeshNetwork
-	instanceID   string
-	requests     []panel.MeshRegionRequest
-	keys         map[string]string
-	failures     map[string]*panel.MeshFailure
-	statusErr    error
+	// externalBridge: the kernel takes external_bridge.
+	externalBridge bool
+	applied        [][]panel.MeshNetwork
+	instanceID     string
+	requests       []panel.MeshRegionRequest
+	keys           map[string]string
+	failures       map[string]*panel.MeshFailure
+	statusErr      error
 	// bridges are the networks' externalBridge (by id), raw.
 	bridges map[string]json.RawMessage
 	done    []string
@@ -36,6 +38,8 @@ type fakeMesh struct {
 func (f *fakeMesh) MeshSupported() bool { return f.supported }
 
 func (f *fakeMesh) MeshNativeKeysSupported() bool { return f.supported && !f.noNativeKeys }
+
+func (f *fakeMesh) MeshExternalBridgeSupported() bool { return f.supported && f.externalBridge }
 
 func (f *fakeMesh) ApplyMesh(networks []panel.MeshNetwork) error {
 	if len(networks) > 0 && !f.supported {
@@ -434,5 +438,29 @@ func TestMeshExternalBridgeOnlyWhenKnown(t *testing.T) {
 	c.mu.Unlock()
 	if got := strings.Join(bridges(), " "); got != "- - -" {
 		t.Fatalf("apply failed: bridges = %s", got)
+	}
+}
+
+// A network with a bridge on a kernel that does not take external_bridge
+// runs without it and reports external_bridge_unsupported; once the
+// kernel takes it, the alert goes.
+func TestMeshAlertsAnExternalBridgeTheKernelDoesNotTake(t *testing.T) {
+	kernel := &fakeMesh{supported: true}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
+		`"external_bridge":{"interface":"ext0","routes":["100.100.1.2/32"],"allow":[]}},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _ := c.status(context.Background())
+	if !status.Networks[0].Running || !hasAlert(status.Networks[0].Alerts, panel.MeshAlertExternalBridgeUnsupported) ||
+		len(status.Networks[1].Alerts) != 0 {
+		t.Fatalf("status = %+v", status)
+	}
+	kernel.externalBridge = true
+	if status, _, _ := c.status(context.Background()); len(status.Networks[0].Alerts) != 0 {
+		t.Fatalf("status = %+v", status)
 	}
 }

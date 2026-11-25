@@ -12,7 +12,9 @@
   `mesh.status` as the kernel gives it. An explicit `null` (no bridge
   runs) is reported as `null`; while the Agent does not know the kernel's
   bridge (network held, apply failed, takeover pending, kernel unreadable)
-  the key is left out, which Control must not read as no bridge.
+  the key is left out, which Control must not read as no bridge. A
+  network whose bridge the kernel does not take runs without it and
+  reports the alert `external_bridge_unsupported`.
 - Intranet mesh: `dns.resolver_address` (the fixed resolver address) goes
   to the kernel only when it lists `mesh_resolver_address`; otherwise only that
   field is dropped from `dns`, since an older kernel rejects unknown fields

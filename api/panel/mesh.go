@@ -221,7 +221,8 @@ type MeshPeerStatus struct {
 // Mesh alert codes. The core raises the address ones (requirement R29)
 // and start_refused (R12), and the code of a network it holds back
 // (failure, such as native_keys_pending); the Agent raises unsupported,
-// takeover_pending, native_keys_unsupported and invalid_kind.
+// takeover_pending, native_keys_unsupported, invalid_kind and
+// external_bridge_unsupported.
 const (
 	MeshAlertTakeoverPending  = "takeover_pending"
 	MeshAlertAddressConflict  = "address_conflict"
@@ -234,6 +235,9 @@ const (
 	// MeshAlertInvalidKind: the network's kind is neither managed nor
 	// legacy, so the Agent holds it back.
 	MeshAlertInvalidKind = "invalid_kind"
+	// MeshAlertExternalBridgeUnsupported: the kernel does not take
+	// external_bridge, so the network runs without its bridge.
+	MeshAlertExternalBridgeUnsupported = "external_bridge_unsupported"
 )
 
 // MeshAlert is one alert of a network.

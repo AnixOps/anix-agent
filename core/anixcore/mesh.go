@@ -47,6 +47,13 @@ func (c *Core) MeshNativeKeysSupported() bool {
 	return c.client != nil && c.client.meshNativeKeys.Load()
 }
 
+// MeshExternalBridgeSupported implements vCore.MeshApplier.
+func (c *Core) MeshExternalBridgeSupported() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client != nil && c.client.meshExternalBridge.Load()
+}
+
 // MeshSupported implements vCore.MeshApplier.
 func (c *Core) MeshSupported() bool {
 	c.mu.Lock()
