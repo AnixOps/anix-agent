@@ -73,3 +73,10 @@ type NetworkApplier interface {
 	ApplyNetwork(plan *networkv1.NetworkPlan) (*networkv1.NetworkStatus, error)
 	NetworkStatus() (*networkv1.NetworkStatus, error)
 }
+
+// TemporaryProxyApplier runs the node's temporary internal proxies (the
+// member "temporary_proxies"): it replaces the set it runs with proxies,
+// skipping the expired ones.
+type TemporaryProxyApplier interface {
+	ApplyTemporaryProxies(proxies []panel.TemporaryProxy) error
+}
