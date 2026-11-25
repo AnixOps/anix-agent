@@ -122,7 +122,7 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 
 	// Phase 2: one control stream per node, which brings its controllers
 	// up from Control's snapshot (or from the stored one).
-	networkClaimed := false
+	networkClaimed, meshClaimed := false, false
 	for _, nodeID := range agentNodeOrder {
 		candidate := agentNodes[nodeID]
 		if candidate.supervisor == nil {
@@ -143,6 +143,12 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 			// The core runs one plan: the first node drives it.
 			dataPlane.network = newNetworkComponent(nodeID, core)
 			networkClaimed = dataPlane.network != nil
+		}
+		if !meshClaimed {
+			// The kernel runs one set of mesh networks: the first node
+			// drives it.
+			dataPlane.mesh = newMeshComponent(core)
+			meshClaimed = dataPlane.mesh != nil
 		}
 		agentClient, err := newAgentControlClientForSupervisor(&candidate.apiConfig, candidate.controller, core, candidate.supervisor, dataPlane)
 		if err != nil {

@@ -87,6 +87,8 @@ type client struct {
 	// temporaryProxies is whether the kernel runs socks inbounds and ends
 	// inbounds at their expires_at_ms (inbound_expiry).
 	temporaryProxies atomic.Bool
+	// mesh is whether the kernel runs intranet mesh networks (/v1/mesh).
+	mesh atomic.Bool
 }
 
 func newClient(address, token string) *client {
@@ -155,6 +157,7 @@ func (c *client) status(ctx context.Context) error {
 	c.destinationStats.Store(slices.Contains(status.Features, destinationsFeature))
 	c.blockCIDRs.Store(slices.Contains(status.Features, blockCIDRsFeature))
 	c.temporaryProxies.Store(slices.Contains(status.Features, inboundExpiryFeature) && slices.Contains(status.Types, socksType))
+	c.mesh.Store(slices.Contains(status.Features, meshFeature))
 	return nil
 }
 

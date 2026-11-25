@@ -24,6 +24,7 @@ type fakeAPI struct {
 	network  []map[string]any
 	rules    []rulesConfig
 	qos      []string
+	mesh     []map[string]any
 	features []string
 	types    []string
 }
@@ -79,6 +80,16 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			plan = f.network[len(f.network)-1]
 		}
 		reply(200, fakeNetworkStatus(plan))
+	case r.Method == "PUT" && r.URL.Path == "/v1/mesh":
+		var mesh map[string]any
+		_ = json.Unmarshal(body, &mesh)
+		f.mesh = append(f.mesh, mesh)
+		reply(200, map[string]any{"networks": []any{}})
+	case r.Method == "GET" && r.URL.Path == "/v1/mesh":
+		reply(200, map[string]any{"networks": []any{map[string]any{
+			"tag": "mesh-cn", "running": true, "address": "10.150.0.5/16", "forward_secrecy": true,
+			"peers": []any{map[string]any{"address": "10.150.0.1", "hops": 1, "via": []string{"10.150.0.3"}, "latency_ms": 12, "forward_secrecy": true}},
+		}}})
 	case r.Method == "POST" && r.URL.Path == "/v1/inbounds":
 		var inbound map[string]any
 		_ = json.Unmarshal(body, &inbound)

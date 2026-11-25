@@ -127,6 +127,9 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	if dataPlane.network != nil {
 		dataPlane.network.attach(client)
 	}
+	if dataPlane.mesh != nil {
+		dataPlane.mesh.attach(client)
+	}
 	controller.agentClient = client
 	return client, nil
 }
@@ -212,6 +215,11 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 	if dataPlane.network != nil {
 		// The stream carries the device's network plan (network.v1).
 		config.Network = dataPlane.network
+	}
+	if dataPlane.mesh != nil {
+		// The stream carries the mesh status; the networks ride in
+		// config.v1.
+		config.Mesh = dataPlane.mesh
 	}
 	if supervisor := dataPlane.supervisor(); supervisor != nil {
 		// The plugin supervisor's maintenance outbox (maintenance.v1) and

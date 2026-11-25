@@ -10,6 +10,8 @@
 set -euo pipefail
 
 # Module path prefixes that must not appear. Keep in sync with AGENTS.md.
+# LGPL, GPL and AGPL modules of any name are refused by go-licenses
+# (restricted) in the same CI step.
 FORBIDDEN=(
   "github.com/sagernet/"        # sing-box and its sing-* modules (GPL-3.0)
   "github.com/metacubex/"       # mihomo / Clash.Meta forks of sing-*
@@ -17,7 +19,6 @@ FORBIDDEN=(
   "github.com/v2fly/"           # v2ray-core
   "github.com/apernet/"         # Hysteria
   "github.com/enfein/mieru"     # Mieru (GPL-3.0)
-  "github.com/easytier/"        # EasyTier
   "github.com/go-gost/"         # gost
   "github.com/ginuerzh/gost"    # gost v2
 )

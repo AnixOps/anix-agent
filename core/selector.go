@@ -22,6 +22,9 @@ var (
 	// ErrTemporaryProxyUnsupported answers temporary proxies for an Agent
 	// without the anixcore core.
 	ErrTemporaryProxyUnsupported = errors.New("no core of this Agent runs temporary proxies (they need the anixcore core)")
+	// ErrMeshUnsupported answers mesh networks for a kernel without the
+	// mesh.
+	ErrMeshUnsupported = errors.New("the kernel of this Agent has no intranet mesh; update it")
 )
 
 // namedCore is a configured core and its name (Name, else Type).
@@ -287,6 +290,28 @@ func (s *Selector) ApplyTemporaryProxies(proxies []panel.TemporaryProxy) error {
 		return nil
 	}
 	return ErrTemporaryProxyUnsupported
+}
+
+func (s *Selector) MeshSupported() bool {
+	a, ok := first[MeshApplier](s)
+	return ok && a.MeshSupported()
+}
+
+func (s *Selector) ApplyMesh(networks []panel.MeshNetwork) error {
+	if a, ok := first[MeshApplier](s); ok {
+		return a.ApplyMesh(networks)
+	}
+	if len(networks) == 0 {
+		return nil
+	}
+	return ErrMeshUnsupported
+}
+
+func (s *Selector) MeshStatus(ctx context.Context) ([]panel.MeshNetworkStatus, error) {
+	if a, ok := first[MeshApplier](s); ok {
+		return a.MeshStatus(ctx)
+	}
+	return nil, ErrMeshUnsupported
 }
 
 func (s *Selector) MainlandBlocked(ctx context.Context) (uint64, error) {
