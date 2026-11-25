@@ -45,7 +45,16 @@
   legacy network goes without `native_keys`. Why the kernel holds a
   network (`failure`, such as `native_keys_pending`) is reported as an
   alert. Network names in the member must be unique. A region request's
-  `network` is kept as the kernel gives it (the network name).
+  `network` is kept as the kernel gives it (the network name). The same
+  check applies when the Agent resends the networks to a restarted
+  kernel: one that no longer lists `mesh_native_keys` (a downgrade) does
+  not get the managed networks again, and they report
+  `native_keys_unsupported`. A network whose `kind` is neither `managed`
+  nor `legacy` is held back with the alert `invalid_kind`; the others
+  run.
+- **Release order:** release this Agent only after a kernel that lists
+  `mesh_native_keys` is out. With an older kernel every managed (region)
+  network is held back.
 - Intranet mesh: an instance id or region request id must start with a
   letter or digit (`^[0-9A-Za-z][0-9A-Za-z-]{0,63}$`); others are left out.
 - Intranet mesh: the network sections `dns` and `host_groups` reach the

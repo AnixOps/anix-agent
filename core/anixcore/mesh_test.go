@@ -30,7 +30,7 @@ func testMeshNetwork() panel.MeshNetwork {
 
 func TestMeshNetworksGoToTheKernelLayered(t *testing.T) {
 	api, server := newFakeAPI(t)
-	api.features = []string{meshFeature}
+	api.features = []string{meshFeature, meshNativeKeysFeature}
 	core := externalCore(t, server)
 	t.Cleanup(func() { _ = core.Close() })
 	if !core.MeshSupported() {
@@ -94,9 +94,9 @@ func TestMeshSectionsGoOnlyToAKernelThatTakesThem(t *testing.T) {
 		features        []string
 		dns, hostGroups bool
 	}{
-		{[]string{meshFeature}, false, false},
-		{[]string{meshFeature, meshDNSFeature}, true, false},
-		{[]string{meshFeature, meshDNSFeature, meshHostGroupsFeature}, true, true},
+		{[]string{meshFeature, meshNativeKeysFeature}, false, false},
+		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature}, true, false},
+		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature, meshHostGroupsFeature}, true, true},
 		// The sections need the mesh itself.
 		{[]string{meshDNSFeature, meshHostGroupsFeature}, false, false},
 	} {
@@ -136,14 +136,14 @@ func TestMeshSectionsGoOnlyToAKernelThatTakesThem(t *testing.T) {
 
 func TestMeshReplayFollowsTheKernelFeatures(t *testing.T) {
 	api, server := newFakeAPI(t)
-	api.features = []string{meshFeature}
+	api.features = []string{meshFeature, meshNativeKeysFeature}
 	core := externalCore(t, server)
 	t.Cleanup(func() { _ = core.Close() })
 	if err := core.ApplyMesh([]panel.MeshNetwork{testMeshNetworkWithSections()}); err != nil {
 		t.Fatal(err)
 	}
 	// An updated, restarted kernel gets the sections it now takes.
-	api.features = []string{meshFeature, meshDNSFeature, meshHostGroupsFeature}
+	api.features = []string{meshFeature, meshNativeKeysFeature, meshDNSFeature, meshHostGroupsFeature}
 	if err := core.client.status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -269,5 +269,44 @@ func TestMeshNativeKeysNeedTheKernelFeature(t *testing.T) {
 	layer := api.mesh[0]["networks"].([]any)[0].(map[string]any)["network"].(map[string]any)
 	if _, ok := layer["native_keys"]; ok || layer["kind"] != "legacy" {
 		t.Fatalf("network layer = %v", layer)
+	}
+}
+
+// A restarted kernel without mesh_native_keys (a downgrade) never gets a
+// managed network on replay; nor does any kernel get one of an unknown
+// kind.
+func TestMeshReplayLeavesOutWhatTheKernelMayNotRun(t *testing.T) {
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	managed := testMeshNetwork()
+	managed.NativeKeys = json.RawMessage(`["AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="]`)
+	legacy := testMeshNetwork()
+	legacy.ID, legacy.Name, legacy.Kind = "old", "old", panel.MeshKindLegacy
+	unknown := testMeshNetwork()
+	unknown.ID, unknown.Name, unknown.Kind = "odd", "odd", "open"
+	if err := core.ApplyMesh([]panel.MeshNetwork{managed, legacy, unknown}); err != nil {
+		t.Fatal(err)
+	}
+	names := func() []string {
+		var out []string
+		for _, n := range api.mesh[len(api.mesh)-1]["networks"].([]any) {
+			out = append(out, n.(map[string]any)["network"].(map[string]any)["name"].(string))
+		}
+		return out
+	}
+	if got := names(); len(got) != 2 || got[0] != managed.Name || got[1] != "old" {
+		t.Fatalf("applied = %v", got)
+	}
+	api.features = []string{meshFeature}
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if got := names(); len(got) != 1 || got[0] != "old" {
+		t.Fatalf("replayed = %v", got)
 	}
 }

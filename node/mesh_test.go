@@ -334,3 +334,55 @@ func TestMeshHoldsManagedNetworksFromAKernelWithoutNativeKeys(t *testing.T) {
 		t.Fatalf("status = %+v", status)
 	}
 }
+
+// A kernel restarted without native_keys (a downgrade) is not given the
+// managed network again on replay: the report says so, and the Agent does
+// not reapply every minute.
+func TestMeshReportsAManagedNetworkAKernelDowngradeDropped(t *testing.T) {
+	kernel := &fakeMesh{supported: true}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]},` +
+		`{"id":"old","name":"old","kind":"legacy","secret":"s","address":"10.99.0.5/24"}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	if len(kernel.applied) != 1 || len(kernel.applied[0]) != 2 {
+		t.Fatalf("applied = %+v", kernel.applied)
+	}
+	// The older kernel restarts; replay gives it only the legacy network.
+	kernel.noNativeKeys = true
+	kernel.applied = append(kernel.applied, kernel.applied[0][1:])
+	status, _, _ := c.status(context.Background())
+	if status.Networks[0].Running || len(status.Networks[0].Alerts) != 1 || status.Networks[0].Alerts[0].Code != panel.MeshAlertNativeKeysUnsupported || !status.Networks[1].Running {
+		t.Fatalf("status = %+v", status)
+	}
+	c.retry()
+	if len(kernel.applied) != 2 {
+		t.Fatalf("applied = %+v", kernel.applied)
+	}
+}
+
+// A network of an unknown kind is held back with invalid_kind, the others
+// run, and retry does not reapply for it.
+func TestMeshHoldsANetworkOfAnUnknownKind(t *testing.T) {
+	kernel := &fakeMesh{supported: true}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]},` +
+		`{"id":"odd","name":"odd","kind":"open","secret":"s","address":"10.98.0.5/24"}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	if len(kernel.applied) != 1 || len(kernel.applied[0]) != 1 || kernel.applied[0][0].ID != "cn" {
+		t.Fatalf("applied = %+v", kernel.applied)
+	}
+	status, _, _ := c.status(context.Background())
+	if !status.Networks[0].Running || status.Networks[1].Running || len(status.Networks[1].Alerts) != 1 || status.Networks[1].Alerts[0].Code != panel.MeshAlertInvalidKind {
+		t.Fatalf("status = %+v", status)
+	}
+	c.retry()
+	if len(kernel.applied) != 1 {
+		t.Fatalf("applied = %+v", kernel.applied)
+	}
+}

@@ -39,7 +39,11 @@
   本节点全部网络都带该错误。
 - 内核 `features` 没有 `mesh_native_keys` 时它不认识 `native_keys`，也就无法只接纳我方节点：Agent 不把 `managed` 网络交给它，
   该网络上报告警 `native_keys_unsupported`；`legacy` 网络照常下发，去掉 `native_keys`（只影响成员实现的判定）。内核升级后，
-  Agent 在下一分钟自动补发。
+  Agent 在下一分钟自动补发。内核重启后的重发与首次下发走同一检查：重启后的内核（例如降级）没有 `mesh_native_keys` 时，
+  `managed` 网络不再重发，同样上报 `native_keys_unsupported`。
+- `kind` 既不是 `managed` 也不是 `legacy`（含大小写不同的写法）时，Agent 不把该网络交给内核（旧内核会拒绝整份配置），
+  上报告警 `invalid_kind`，其他网络照常运行；该网络等面板改正后的配置。
+- **发布顺序：** 带上述检查的 Agent 必须在内核列出 `mesh_native_keys` 之后发布，否则节点上全部 `managed`（地区）网络都会被扣下。
 - `dns`（内网域名，R28）与 `host_groups`（宿主组，R21、R25；网关以实例 ID 指定）由面板始终下发。内核拒绝未知字段，
   所以 Agent 只把本机内核支持的节交给内核：`features` 有 `mesh_dns`（内核 0.3 起）才带 `dns`，有 `mesh_host_groups`
   （内核 0.4 起）才带 `host_groups`；值为 `null` 视同未下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
@@ -101,7 +105,7 @@ Agent 把它转成同码的告警上报，不上报 `failure` 本身。
 ```
 
 Agent 自己给出的告警码：`unsupported`（内核没有组网）、`takeover_pending`（现有组网程序仍在运行，网络暂缓启动）、
-`native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。
+`native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）、`invalid_kind`（网络 `kind` 未知，暂不下发）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。
 
 - 每个网络带 `static_key`：本机在该网络的静态公钥，按网络名取自内核 `GET /v1/mesh` 的 `static_keys`；面板只采信 Agent 通道的值，
   汇总为各网络的 `native_keys`。旧模式网络、内核读取失败时没有该字段，面板不应把缺省当作移除。

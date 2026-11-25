@@ -172,9 +172,22 @@ type MeshFailure struct {
 }
 
 // Managed tells whether the network is managed (the default kind):
-// a region network that admits only the native_keys.
+// a region network that admits only the native_keys. Any kind but legacy
+// counts as managed, so an unknown one is never run open.
 func (n MeshNetwork) Managed() bool {
-	return n.Kind == "" || n.Kind == MeshKindManaged
+	return n.Kind != MeshKindLegacy
+}
+
+// MeshHold is why a network is not given to the kernel: an alert code
+// and its detail, or "" to give it.
+func (n MeshNetwork) MeshHold(nativeKeys bool) (code, detail string) {
+	switch {
+	case n.Kind != "" && n.Kind != MeshKindManaged && n.Kind != MeshKindLegacy:
+		return MeshAlertInvalidKind, fmt.Sprintf("network kind %q is neither managed nor legacy", n.Kind)
+	case n.Managed() && !nativeKeys:
+		return MeshAlertNativeKeysUnsupported, "the kernel does not take native_keys, so it cannot keep this managed network to the operator's own nodes; update it"
+	}
+	return "", ""
 }
 
 // The network kinds.
@@ -196,7 +209,7 @@ type MeshPeerStatus struct {
 // Mesh alert codes. The core raises the address ones (requirement R29)
 // and start_refused (R12), and the code of a network it holds back
 // (failure, such as native_keys_pending); the Agent raises unsupported,
-// takeover_pending and native_keys_unsupported.
+// takeover_pending, native_keys_unsupported and invalid_kind.
 const (
 	MeshAlertTakeoverPending  = "takeover_pending"
 	MeshAlertAddressConflict  = "address_conflict"
@@ -206,6 +219,9 @@ const (
 	// MeshAlertNativeKeysUnsupported: the kernel does not take
 	// native_keys, so the Agent holds the managed network back.
 	MeshAlertNativeKeysUnsupported = "native_keys_unsupported"
+	// MeshAlertInvalidKind: the network's kind is neither managed nor
+	// legacy, so the Agent holds it back.
+	MeshAlertInvalidKind = "invalid_kind"
 )
 
 // MeshAlert is one alert of a network.
@@ -252,7 +268,8 @@ func MeshInstanceID(id string) bool {
 }
 
 // MeshRegionRequest is one region request the kernel holds: ID names it to
-// the kernel, Network is the kernel tag of the network it was made on.
+// the kernel, Network is the name (network.name) of the network it was
+// made on.
 type MeshRegionRequest struct {
 	ID      string `json:"id"`
 	Network string `json:"network,omitempty"`

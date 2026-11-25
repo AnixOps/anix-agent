@@ -89,4 +89,30 @@ func TestMeshNetworkManaged(t *testing.T) {
 	if !(MeshNetwork{}).Managed() || !(MeshNetwork{Kind: MeshKindManaged}).Managed() || (MeshNetwork{Kind: MeshKindLegacy}).Managed() {
 		t.Fatal("kind")
 	}
+	// An unknown kind is never run open.
+	if !(MeshNetwork{Kind: "open"}).Managed() {
+		t.Fatal("unknown kind")
+	}
+}
+
+func TestMeshHold(t *testing.T) {
+	for _, tc := range []struct {
+		kind       string
+		nativeKeys bool
+		want       string
+	}{
+		{"", true, ""},
+		{MeshKindManaged, true, ""},
+		{MeshKindLegacy, true, ""},
+		{MeshKindLegacy, false, ""},
+		{"", false, MeshAlertNativeKeysUnsupported},
+		{MeshKindManaged, false, MeshAlertNativeKeysUnsupported},
+		{"open", true, MeshAlertInvalidKind},
+		{"open", false, MeshAlertInvalidKind},
+	} {
+		code, detail := MeshNetwork{Kind: tc.kind}.MeshHold(tc.nativeKeys)
+		if code != tc.want || (code != "") != (detail != "") {
+			t.Fatalf("kind %q, native_keys %v: %q %q", tc.kind, tc.nativeKeys, code, detail)
+		}
+	}
 }
