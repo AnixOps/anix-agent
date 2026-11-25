@@ -71,3 +71,25 @@ func TestProductionTemplateRequiresOperatorValues(t *testing.T) {
 	cfg := New()
 	require.Error(t, cfg.LoadFromPath("../example/config.production.json"))
 }
+
+// Region relays (GRPCRelays) and their release caches (ReleaseCaches).
+func TestProductionValidationChecksRelays(t *testing.T) {
+	cfg := readyProductionAgentConfig()
+	cfg.NodeConfig[0].ApiConfig.GRPCRelays = []string{"relay-1.company.net:50051", "203.0.113.10:50051"}
+	cfg.NodeConfig[0].ApiConfig.ReleaseCaches = []string{"https://relay-1.company.net:8443"}
+	require.NoError(t, cfg.ValidateForProduction())
+
+	cfg.NodeConfig[0].ApiConfig.GRPCRelays = []string{"relay-1.company.net"}
+	require.ErrorContains(t, cfg.ValidateForProduction(), "GRPCRelays")
+
+	cfg = readyProductionAgentConfig()
+	cfg.NodeConfig[0].ApiConfig.ReleaseCaches = []string{"http://relay-1.company.net:8443"}
+	require.ErrorContains(t, cfg.ValidateForProduction(), "ReleaseCaches")
+}
+
+func TestNodeConfigDecodesRelays(t *testing.T) {
+	var node NodeConfig
+	require.NoError(t, node.UnmarshalJSON([]byte(`{"GRPCRelays":["relay-1.company.net:50051"],"ReleaseCaches":["https://relay-1.company.net:8443"]}`)))
+	require.Equal(t, []string{"relay-1.company.net:50051"}, node.ApiConfig.GRPCRelays)
+	require.Equal(t, []string{"https://relay-1.company.net:8443"}, node.ApiConfig.ReleaseCaches)
+}

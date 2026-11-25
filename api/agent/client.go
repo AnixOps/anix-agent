@@ -98,7 +98,11 @@ type Config struct {
 	PluginObservationsProvider func(context.Context) ([]*agentv1pb.PluginObservedState, error)
 	DialContext                DialContextFunc
 	DialOptions                []grpc.DialOption
-	Rand                       *mathrand.Rand
+	// Relays, when set, carries every connection to Control (the stream
+	// and AgentEnrollment) through the region relays (relays.go): the TCP
+	// connection goes to a relay, Target and ServerName stay Control's.
+	Relays *Relays
+	Rand   *mathrand.Rand
 	// Identity is the Agent's enrollment and mTLS client certificate
 	// (AG-2), the only credential of the stream. It needs UseTLS.
 	Identity *IdentityConfig
@@ -207,6 +211,9 @@ func NewClient(config Config) (*Client, error) {
 	}
 	if config.DialContext == nil {
 		config.DialContext = grpc.DialContext
+	}
+	if config.Relays != nil {
+		config.DialContext = config.Relays.DialContext(config.DialContext)
 	}
 	if config.Rand == nil {
 		config.Rand = mathrand.New(mathrand.NewSource(time.Now().UnixNano()))

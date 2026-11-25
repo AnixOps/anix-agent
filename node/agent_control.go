@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
@@ -56,6 +57,10 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		// credential, then the enrolled identity), and it needs TLS.
 		return nil, fmt.Errorf("agent control needs TLS (GRPCUseTLS or an https ApiHost): the agent identity is the node's only credential")
 	}
+	relays, err := agentControlRelays(apiConfig)
+	if err != nil {
+		return nil, err
+	}
 	identity, err := agentControlIdentity(apiConfig)
 	if err != nil {
 		return nil, err
@@ -72,6 +77,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	// privileged updater is installed.
 	controller.upgrader = agentUpgrader()
 	if controller.upgrader != nil {
+		controller.upgrader.SetCaches(apiConfig.ReleaseCaches)
 		dataPlaneConfig.Upgrade = controller.upgrader.Available(context.Background())
 	}
 
@@ -90,6 +96,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		NodeID:        nodeID,
 		UseTLS:        useTLS,
 		ServerName:    serverName,
+		Relays:        relays,
 		Identity:      identity,
 		AgentVersion:  panel.Version,
 		InstanceID:    agentapi.InstanceID(hostname, strconv.Itoa(nodeID)),
@@ -217,6 +224,33 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 	}
 	return config, nil
 }
+
+// agentControlRelays answers the region relays of apiConfig (GRPCRelays,
+// anix-control docs/design/region-relay), nil without any. Every node
+// identity of the process with the same list shares one dialer, so the
+// relays are measured once and a failed relay is passed over by all.
+func agentControlRelays(apiConfig *conf.ApiConfig) (*agentapi.Relays, error) {
+	key := strings.Join(apiConfig.GRPCRelays, ",")
+	if strings.TrimSpace(key) == "" {
+		return nil, nil
+	}
+	relaysMu.Lock()
+	defer relaysMu.Unlock()
+	if relays, ok := relaysByList[key]; ok {
+		return relays, nil
+	}
+	relays, err := agentapi.NewRelays(apiConfig.GRPCRelays)
+	if err != nil {
+		return nil, fmt.Errorf("GRPCRelays: %w", err)
+	}
+	relaysByList[key] = relays
+	return relays, nil
+}
+
+var (
+	relaysMu     sync.Mutex
+	relaysByList = map[string]*agentapi.Relays{}
+)
 
 // agentUpgrader answers the process's agent.upgrade handler (tests
 // replace it; nil turns upgrades off).

@@ -101,6 +101,7 @@ func validateProductionNode(index int, api ApiConfig, options Options) error {
 	require(strings.TrimSpace(api.GRPCServerName) == "" || nonPlaceholder(api.GRPCServerName),
 		"GRPCServerName must not be a placeholder")
 	require(api.GRPCKeepalive > 0 && api.GRPCKeepalive <= 300, "GRPCKeepalive must be between 1 and 300 seconds")
+	requireRelays(api, require)
 	require(strings.TrimSpace(options.Core) == "" || nonPlaceholder(options.Core), "Core must not be a placeholder")
 	require(api.NodeID > 0, "NodeID must be positive")
 
@@ -122,6 +123,17 @@ func validateProductionNode(index int, api ApiConfig, options Options) error {
 		return fmt.Errorf("production node %d configuration is not ready: %s", index, strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// requireRelays checks the region relays and their release caches
+// (GRPCRelays, ReleaseCaches): real host:port relays and https caches.
+func requireRelays(api ApiConfig, require func(bool, string)) {
+	for _, relay := range api.GRPCRelays {
+		require(validProductionHostPort(relay), "GRPCRelays entries must be non-placeholder host:port")
+	}
+	for _, cache := range api.ReleaseCaches {
+		require(validProductionHTTPSURL(cache), "ReleaseCaches entries must be non-placeholder HTTPS URLs")
+	}
 }
 
 func validProductionHTTPSURL(raw string) bool {
@@ -180,6 +192,7 @@ func validateProductionForwardNode(api ApiConfig) error {
 	// installer's configuration), checked above.
 	require(strings.TrimSpace(api.GRPCServerName) == "" || nonPlaceholder(api.GRPCServerName), "GRPCServerName must not be a placeholder")
 	require(api.NodeID > 0, "NodeID must be positive")
+	requireRelays(api, require)
 	if len(problems) > 0 {
 		return fmt.Errorf("production forward node configuration is not ready: %s", strings.Join(problems, "; "))
 	}

@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +62,38 @@ type Agent struct {
 	mu sync.Mutex
 	// flight is the upgrade running here, until its hand-off settled.
 	flight *flight
+	// caches are the region relays' release caches (SetCaches).
+	caches []string
+}
+
+// SetCaches sets the region relays' release file caches (https base URLs,
+// anix-control docs/design/region-relay): a release is asked there first,
+// by its SHA-256. What a cache serves is verified like any download (size,
+// SHA-256 and signature), so a cache cannot change a release. URLs that are
+// not https are left out.
+func (a *Agent) SetCaches(caches []string) {
+	var kept []string
+	for _, raw := range caches {
+		raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+		if raw == "" {
+			continue
+		}
+		parsed, err := neturl.Parse(raw)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" {
+			log.WithField("cache", raw).Warn("Ignoring a release cache that is not an https URL")
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	a.mu.Lock()
+	a.caches = kept
+	a.mu.Unlock()
+}
+
+func (a *Agent) releaseCaches() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.caches...)
 }
 
 // flight is one running upgrade.
@@ -411,7 +447,7 @@ func (a *Agent) stageKernel(ctx context.Context, kernel agentcontrol.UpgradeKern
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "cannot create %s: %v", dir, err)
 	}
 	progress(ctx, agentcontrol.UpgradePhaseDownloading, a.Version)
-	temp, err := a.download(ctx, agentcontrol.ReleaseKindKernel, kernel.Version, kernel.URL, kernel.Asset, kernel.Size)
+	temp, err := a.download(ctx, agentcontrol.ReleaseKindKernel, kernel.Version, kernel.URL, kernel.Asset, kernel.SHA256, kernel.Size)
 	if err != nil {
 		return "", err
 	}
@@ -445,7 +481,7 @@ func (a *Agent) stage(ctx context.Context, version string, artifact agentcontrol
 		return "", codeError(agentcontrol.UpgradeErrorDownload, "cannot create %s: %v", dir, err)
 	}
 	progress(ctx, agentcontrol.UpgradePhaseDownloading, a.Version)
-	temp, err := a.download(ctx, agentcontrol.ReleaseKindAgent, version, artifact.URL, artifact.Asset, artifact.Size)
+	temp, err := a.download(ctx, agentcontrol.ReleaseKindAgent, version, artifact.URL, artifact.Asset, artifact.SHA256, artifact.Size)
 	if err != nil {
 		return "", err
 	}
@@ -482,10 +518,14 @@ func WithFetch(ctx context.Context, fetch Fetch) context.Context {
 
 // download fetches a release file into a temporary file of the staging
 // directory, at most size bytes: more is a size mismatch
-// (upgrade_digest_mismatch). The control connection goes first (WithFetch)
-// with half the time left, then url, so a stalled stream leaves the https
-// fallback time to run.
-func (a *Agent) download(ctx context.Context, kind, version, url, asset string, size int64) (string, error) {
+// (upgrade_digest_mismatch). The region relays' caches go first (SetCaches,
+// by sum, a third of the time left), then the control connection
+// (WithFetch) with half the time left, then url, so a stalled source leaves
+// the next one time to run. The caller verifies the file whatever served it.
+func (a *Agent) download(ctx context.Context, kind, version, url, asset, sum string, size int64) (string, error) {
+	if temp, ok := a.downloadFromCaches(ctx, url, asset, sum, size); ok {
+		return temp, nil
+	}
 	if fetch, ok := ctx.Value(fetchKey{}).(Fetch); ok {
 		fetchCtx, cancel := ctx, context.CancelFunc(func() {})
 		if deadline, ok := ctx.Deadline(); ok {
@@ -518,6 +558,81 @@ func (a *Agent) download(ctx context.Context, kind, version, url, asset string, 
 		return "", codeError(agentcontrol.UpgradeErrorDigest, "%s is %d bytes, not %d", asset, response.ContentLength, size)
 	}
 	return a.saveTemp(asset, size, response.Body)
+}
+
+// downloadFromCaches asks each release cache for the file by sum, passing
+// url as the source the cache may download it from. It answers false when
+// no cache served a file of the right SHA-256.
+func (a *Agent) downloadFromCaches(ctx context.Context, source, asset, sum string, size int64) (string, bool) {
+	caches := a.releaseCaches()
+	sum = strings.ToLower(strings.TrimSpace(sum))
+	if len(caches) == 0 || !sha256Pattern.MatchString(sum) {
+		return "", false
+	}
+	client := a.HTTPClient
+	if client == nil {
+		client = &http.Client{Transport: &http.Transport{ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second}}
+	}
+	for _, cache := range caches {
+		cacheCtx, cancel := ctx, context.CancelFunc(func() {})
+		if deadline, ok := ctx.Deadline(); ok {
+			cacheCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/3)
+		}
+		temp, err := a.downloadFromCache(cacheCtx, client, cache, source, asset, sum, size)
+		cancel()
+		if err == nil {
+			log.WithField("asset", asset).WithField("cache", cache).Info("The release was downloaded from the region relay's cache")
+			return temp, true
+		}
+		log.WithError(err).WithField("asset", asset).WithField("cache", cache).Warn("The release could not be downloaded from the region relay's cache")
+	}
+	return "", false
+}
+
+func (a *Agent) downloadFromCache(ctx context.Context, client *http.Client, cache, source, asset, sum string, size int64) (string, error) {
+	target := cache + "/v1/sha256/" + sum + "?src=" + neturl.QueryEscape(source)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "", err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("the cache answered %s", response.Status)
+	}
+	if response.ContentLength > size {
+		return "", fmt.Errorf("the cache serves %d bytes, not %d", response.ContentLength, size)
+	}
+	temp, err := a.saveTemp(asset, size, response.Body)
+	if err != nil {
+		return "", err
+	}
+	// Check the hash here too, so that a bad copy falls through to the
+	// next source instead of failing the upgrade.
+	if err := fileHasSHA256(temp, sum); err != nil {
+		_ = os.Remove(temp)
+		return "", err
+	}
+	return temp, nil
+}
+
+func fileHasSHA256(path, sum string) error {
+	file, err := os.Open(path) // #nosec G304 -- a temporary file of the staging directory, created by saveTemp.
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return err
+	}
+	if got := hex.EncodeToString(hash.Sum(nil)); got != sum {
+		return fmt.Errorf("the cached file's SHA-256 is %s, not %s", got, sum)
+	}
+	return nil
 }
 
 // saveTemp writes body into a temporary file of the staging directory, at
