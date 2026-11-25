@@ -38,6 +38,9 @@ const (
 	defaultReconnectMax     = 30 * time.Second
 	defaultDialTimeout      = 10 * time.Second
 	defaultHandshakeTimeout = 10 * time.Second
+	// controlKeepaliveTimeout is the stream's keepalive timeout, also the
+	// TCP_USER_TIMEOUT of a relay connection (relays.go).
+	controlKeepaliveTimeout = 10 * time.Second
 	operationQueueSize      = 32
 	completedCacheSize      = 256
 	metricsProviderTimeout  = 2 * time.Second
@@ -826,7 +829,7 @@ func (c *Client) dialOptions(session *sessionCredentials) []grpc.DialOption {
 		receiveLimit,
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                c.config.KeepaliveTime,
-			Timeout:             10 * time.Second,
+			Timeout:             controlKeepaliveTimeout,
 			PermitWithoutStream: true,
 		}),
 	}

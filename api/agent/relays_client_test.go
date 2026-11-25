@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -18,6 +19,11 @@ func (f *fakeControl) relayedClient(t *testing.T, target string, identity *Ident
 	t.Helper()
 	dialer, err := NewRelays(relays)
 	require.NoError(t, err)
+	return f.relayedClientWith(t, target, identity, dialer)
+}
+
+func (f *fakeControl) relayedClientWith(t *testing.T, target string, identity *IdentityConfig, dialer *Relays) *Client {
+	t.Helper()
 	client, err := NewClient(Config{
 		Target: target, NodeID: int(f.nodeID), UseTLS: true, ServerName: "control.test",
 		RootCAs: f.serverCA, AgentVersion: "test-agent", InstanceID: "instance-1",
@@ -103,14 +109,25 @@ func TestClientNeverDialsControlWhenEveryRelayFails(t *testing.T) {
 }
 
 // A relay that accepts but cannot reach Control is passed over: the other
-// relay carries the stream.
+// relay carries the stream. The broken relay connects faster, so it wins
+// the first dial and the client must move off it; a selector that trusted
+// the TCP connect would stay on it.
 func TestClientMovesOffARelayThatCannotReachControl(t *testing.T) {
 	shortenIdentityRetries(t)
 	fake := newFakeControl(t, fakeModeRequired, true)
 	broken := agenttest.StartRelay(t, fake.address)
 	broken.SetBroken(true)
 	working := agenttest.StartRelay(t, fake.address)
-	client := fake.relayedClient(t, "control.invalid:50051", fake.withCredential(t, t.TempDir(), "anixagt_failover"), broken.Address, working.Address)
+	dialer, err := NewRelays([]string{broken.Address, working.Address})
+	require.NoError(t, err)
+	connect := dialer.connect
+	dialer.connect = func(ctx context.Context, address string) (net.Conn, time.Duration, error) {
+		if address == working.Address {
+			time.Sleep(200 * time.Millisecond)
+		}
+		return connect(ctx, address)
+	}
+	client := fake.relayedClientWith(t, "control.invalid:50051", fake.withCredential(t, t.TempDir(), "anixagt_failover"), dialer)
 	startClient(t, client)
 
 	select {
@@ -118,6 +135,10 @@ func TestClientMovesOffARelayThatCannotReachControl(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the client did not move to the working relay")
 	}
-	assert.Positive(t, broken.Accepted(), "the broken relay was never tried")
+	dialer.mu.Lock()
+	brokenState := dialer.state[0]
+	dialer.mu.Unlock()
+	assert.Positive(t, brokenState.failures, "the broken relay, which won the first dial, was not counted as failed")
+	assert.Positive(t, broken.Accepted())
 	assert.Positive(t, working.Carried())
 }

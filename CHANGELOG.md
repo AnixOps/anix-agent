@@ -40,7 +40,10 @@
   failure. Release caches of every node identity of the process are used
   together instead of the last one replacing the others; each cache gets at
   most 5 minutes; a node behind relays does not download a release from
-  Control's own host directly.
+  Control's own host directly. A relay that accepts and stays silent is
+  given up after 5 seconds; relay connections get TCP_USER_TIMEOUT as gRPC
+  sets it on direct ones; a stopped node identity's relay list and caches
+  are dropped.
 
 ## 5.0.11 - 2026-11-24
 

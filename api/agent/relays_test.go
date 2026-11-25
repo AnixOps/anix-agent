@@ -21,6 +21,8 @@ const (
 	// relayBroken accepts the TCP connection, then closes it without an
 	// answer, as a relay whose way to Control is down.
 	relayBroken
+	// relayHangs accepts the TCP connection and never answers.
+	relayHangs
 )
 
 // fakeRelays is a Relays over a fake network: each address takes cost to
@@ -59,8 +61,12 @@ func newFakeRelays(t *testing.T, addresses ...string) *fakeRelays {
 		}
 		client, server := net.Pipe()
 		go func() {
-			if mode == relayWorks {
+			switch mode {
+			case relayWorks:
 				_, _ = server.Write([]byte{1})
+			case relayHangs:
+				// Answers nothing until the client side closes.
+				_, _ = io.Copy(io.Discard, server)
 			}
 			_ = server.Close()
 		}()
@@ -199,6 +205,37 @@ func TestRelaysPassOverARelayThatAcceptsButDoesNotReachControl(t *testing.T) {
 	}
 	if state := f.relayState(1); state.failures != 0 {
 		t.Fatalf("b carried Control's answer but has failures: %+v", state)
+	}
+}
+
+// A relay that accepts and then stays silent is given up after
+// relayAnswerTimeout, before the caller's own dial timeout.
+func TestRelaysGiveUpAHangingRelay(t *testing.T) {
+	saved := relayAnswerTimeout
+	relayAnswerTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { relayAnswerTimeout = saved })
+	f := newFakeRelays(t, "a:1")
+	f.set("a:1", time.Millisecond, relayHangs)
+	conn, err := f.Dial(context.Background(), "panel.example.com:50051")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	done := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(make([]byte, 1))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("read from a relay that never answers")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hanging relay was not given up")
+	}
+	if state := f.relayState(0); state.failures != 1 {
+		t.Fatalf("the hanging relay's state is %+v, want one failure", state)
 	}
 }
 

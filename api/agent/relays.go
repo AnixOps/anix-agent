@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -41,6 +42,10 @@ var (
 	// failed is passed over.
 	relayBackoffMin = 5 * time.Second
 	relayBackoffMax = 5 * time.Minute
+	// relayAnswerTimeout is how long Control may take to answer through a
+	// relay (its first bytes after the TCP connect) before the relay is
+	// given up as hanging, ahead of the caller's longer dial timeout.
+	relayAnswerTimeout = 5 * time.Second
 )
 
 // relaySwitchRatio is how much faster another relay must be before new
@@ -277,7 +282,10 @@ func (r *Relays) connected(index int, rtt time.Duration, conn net.Conn) net.Conn
 	r.mu.Lock()
 	r.setCurrent(index)
 	r.mu.Unlock()
-	return &relayConn{Conn: conn, relays: r, index: index}
+	setRelayUserTimeout(conn, controlKeepaliveTimeout)
+	wrapped := &relayConn{Conn: conn, relays: r, index: index, answered: make(chan struct{})}
+	go wrapped.awaitAnswer(relayAnswerTimeout)
+	return wrapped
 }
 
 // measured records a connect time of relay index.
@@ -397,13 +405,31 @@ func (r *Relays) probe() {
 }
 
 // relayConn is a connection through relay index. Its first read settles
-// the relay's health: bytes from Control mean the relay works; an error or
-// a close before any byte means it did not carry the connection.
+// the relay's health: bytes from Control mean the relay works; an error, a
+// close, or relayAnswerTimeout passing before any byte means it did not
+// carry the connection. It hides the *net.TCPConn from gRPC, which then
+// cannot set TCP_USER_TIMEOUT; connected sets it.
 type relayConn struct {
 	net.Conn
-	relays  *Relays
-	index   int
-	settled sync.Once
+	relays   *Relays
+	index    int
+	settled  atomic.Bool
+	answered chan struct{}
+}
+
+// awaitAnswer gives up the relay as hanging when Control has not answered
+// through it within timeout.
+func (c *relayConn) awaitAnswer(timeout time.Duration) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-c.answered:
+	case <-timer.C:
+		if c.settle(false) {
+			log.WithField("relay", c.relays.addresses[c.index]).Warn("Control did not answer through the region relay in time; closing the connection")
+			_ = c.Conn.Close()
+		}
+	}
 }
 
 func (c *relayConn) Read(p []byte) (int, error) {
@@ -422,12 +448,17 @@ func (c *relayConn) Close() error {
 	return c.Conn.Close()
 }
 
-func (c *relayConn) settle(working bool) {
-	c.settled.Do(func() {
-		if working {
-			c.relays.working(c.index)
-		} else {
-			c.relays.failed(c.index)
-		}
-	})
+// settle records the relay's health once, and reports whether this call
+// did.
+func (c *relayConn) settle(working bool) bool {
+	if !c.settled.CompareAndSwap(false, true) {
+		return false
+	}
+	close(c.answered)
+	if working {
+		c.relays.working(c.index)
+	} else {
+		c.relays.failed(c.index)
+	}
+	return true
 }
