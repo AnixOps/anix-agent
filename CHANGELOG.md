@@ -16,6 +16,8 @@
 
 ### Changed
 
+- Intranet mesh: an instance id or region request id must start with a
+  letter or digit (`^[0-9A-Za-z][0-9A-Za-z-]{0,63}$`); others are left out.
 - Intranet mesh: the network sections `dns` and `host_groups` reach the
   kernel only when it lists `mesh_dns` and `mesh_host_groups`, since it
   rejects unknown fields; a restarted, updated kernel gets them. A node in

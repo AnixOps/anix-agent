@@ -46,6 +46,7 @@ func TestMeshInstanceID(t *testing.T) {
 	for id, ok := range map[string]bool{
 		"2f6d7c1e-0b8a-4c55-9e0e-6a1f3b9d2c10": true, "Node-1": true, strings.Repeat("a", 64): true,
 		"": false, strings.Repeat("a", 65): false, "a b": false, "../x": false, "节点": false,
+		"-node": false, "--help": false, "-": false, "node-": true, "0": true,
 	} {
 		if MeshInstanceID(id) != ok {
 			t.Errorf("%q: %v", id, !ok)
