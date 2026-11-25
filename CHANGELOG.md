@@ -5,13 +5,17 @@
 ### Added
 
 - Intranet mesh, external network bridge: after a downgrade to a kernel
-  without `mesh_external_bridge`, each network this node bridged on the
-  newer kernel reports the alert `external_bridge_downgrade_residue`,
-  because the older kernel leaves the newer kernel's bridge rules in place.
-  The networks are recorded in `bridged.json` next to the takeover record,
-  so the alert also shows after the Agent restarts and after the bridge is
-  deleted. The record is cleared when a kernel with the capability runs
-  again, or when the operator removes the file after clearing the rules.
+  without `mesh_external_bridge`, each network whose bridge the newer
+  kernel reported as applied (an `externalBridge` object) reports the alert
+  `external_bridge_downgrade_residue`, because the older kernel leaves the
+  newer kernel's bridge rules in place. Such a network reports neither
+  `external_bridge_unsupported` nor `"externalBridge": null`; the key is
+  left out (unknown), so Control keeps what it holds for the bridge. The
+  networks are recorded in `/var/lib/anixops-agent/mesh/bridged.json` (the
+  Agent's own state directory, written atomically), so the alert also
+  shows after the Agent restarts and after the bridge is deleted. A capable
+  kernel reporting `null` for the network, or the operator removing the
+  file after clearing the rules, clears it. Linux only.
 - Intranet mesh, external network bridge (R36): a network's
   `external_bridge` goes to the kernel only when it lists
   `mesh_external_bridge` (on replay too), and the digest of the bridge

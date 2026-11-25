@@ -11,6 +11,7 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v5/api/agent"
 	"github.com/AnixOps/anix-agent/v5/api/panel"
+	"github.com/AnixOps/anix-agent/v5/common/layout"
 	vCore "github.com/AnixOps/anix-agent/v5/core"
 	"github.com/AnixOps/anix-agent/v5/mesh"
 	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
@@ -546,47 +547,72 @@ func TestMeshLeavesOutABridgeTheKernelDoesNotReport(t *testing.T) {
 	}
 }
 
-// A node that bridged a network on a kernel that takes external_bridge
-// and then runs one that does not warns that the newer kernel's rules may
+// A node whose kernel applied a network's bridge and that then runs a
+// kernel without external_bridge warns that the newer kernel's rules may
 // remain (§15.12 item 9), also after the Agent restarts and once the
-// bridge is deleted; a capable kernel or removing the record clears it.
+// bridge is deleted. Such a network reports neither null nor
+// external_bridge_unsupported. A capable kernel reporting null, or
+// removing the record, clears it.
 func TestMeshWarnsOfBridgeRulesLeftByADowngrade(t *testing.T) {
-	kernel := &fakeMesh{supported: true, externalBridge: true}
+	if !bridgeTracking {
+		t.Skip("bridge rules exist on Linux only")
+	}
+	applied := json.RawMessage(`{"allowCount":0,"allowDigest":"d","appliedAt":"2026-11-25T21:00:00Z","routesDigest":"r"}`)
+	kernel := &fakeMesh{supported: true, externalBridge: true, bridges: map[string]json.RawMessage{"cn": applied}}
 	c := testMeshComponent(t, kernel, nil)
 	withBridge := `,"mesh":{"networks":[` +
 		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
 		`"external_bridge":{"interface":"ext0","routes":["100.100.1.2/32"],"allow":[]}},` +
-		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[],` +
+		`"external_bridge":{"interface":"ext1","routes":["100.100.2.2/32"],"allow":[]}}]}`
 	deleted := `,"mesh":{"networks":[` +
 		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]},` +
 		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
-	residue := func(c *meshComponent) string {
+	// check answers, per network, the residue alert (R), the unsupported
+	// alert (U) and the externalBridge key ("-" left out).
+	check := func(c *meshComponent) string {
 		t.Helper()
 		status, _, _ := c.status(context.Background())
 		var out []string
 		for _, network := range status.Networks {
+			mark := network.ID + ":"
 			if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeDowngradeResidue) {
-				out = append(out, network.ID)
+				mark += "R"
 			}
+			if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeUnsupported) {
+				mark += "U"
+			}
+			entry, err := json.Marshal(network)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, after, found := strings.Cut(string(entry), `"externalBridge":`); found {
+				mark += ":" + after[:4]
+			} else {
+				mark += ":-"
+			}
+			out = append(out, mark)
 		}
 		return strings.Join(out, " ")
 	}
 	if err := c.apply(meshSnapshot(withBridge)); err != nil {
 		t.Fatal(err)
 	}
-	if got := residue(c); got != "" {
-		t.Fatalf("capable kernel: residue = %q", got)
+	// eu was sent a bridge the kernel does not report as applied.
+	if got := check(c); got != `cn::{"al eu::-` {
+		t.Fatalf("capable kernel: %s", got)
 	}
 	// The kernel cannot be read: nothing changes.
 	kernel.statusErr = errors.New("down")
-	if got := residue(c); got != "" {
-		t.Fatalf("kernel unreadable: residue = %q", got)
+	if got := check(c); got != "cn::- eu::-" {
+		t.Fatalf("kernel unreadable: %s", got)
 	}
 	kernel.statusErr = nil
-	// Downgraded: only the network that bridged warns.
-	kernel.externalBridge = false
-	if got := residue(c); got != "cn" {
-		t.Fatalf("downgraded: residue = %q", got)
+	// Downgraded: only the network whose bridge was applied warns, and its
+	// bridge state stays unknown.
+	kernel.externalBridge, kernel.bridges = false, nil
+	if got := check(c); got != "cn:R:- eu:U:null" {
+		t.Fatalf("downgraded: %s", got)
 	}
 	// The Agent restarts with the older kernel and the bridge is deleted.
 	restarted := testMeshComponent(t, kernel, nil)
@@ -594,35 +620,73 @@ func TestMeshWarnsOfBridgeRulesLeftByADowngrade(t *testing.T) {
 	if err := restarted.apply(meshSnapshot(deleted)); err != nil {
 		t.Fatal(err)
 	}
-	if got := residue(restarted); got != "cn" {
-		t.Fatalf("restarted, bridge deleted: residue = %q", got)
+	if got := check(restarted); got != "cn:R:- eu::null" {
+		t.Fatalf("restarted, bridge deleted: %s", got)
 	}
 	// The operator cleared the rules and removed the record.
 	if err := os.Remove(c.bridgedPath); err != nil {
 		t.Fatal(err)
 	}
-	if got := residue(restarted); got != "" {
-		t.Fatalf("record removed: residue = %q", got)
+	if got := check(restarted); got != "cn::null eu::null" {
+		t.Fatalf("record removed: %s", got)
 	}
-	// A capable kernel again, then a downgrade with no bridge configured.
-	kernel.externalBridge = true
+	// A capable kernel applies the bridge again; one that leaves the key
+	// out keeps the record, one that reports null clears it.
+	kernel.externalBridge, kernel.bridges = true, map[string]json.RawMessage{"cn": applied}
 	if err := c.apply(meshSnapshot(withBridge)); err != nil {
 		t.Fatal(err)
 	}
-	if got := residue(c); got != "" {
-		t.Fatalf("upgraded: residue = %q", got)
-	}
+	check(c)
+	kernel.bridges = nil
 	if err := c.apply(meshSnapshot(deleted)); err != nil {
 		t.Fatal(err)
 	}
-	if got := residue(c); got != "" {
-		t.Fatalf("bridge deleted on a capable kernel: residue = %q", got)
+	check(c)
+	if _, err := os.Stat(c.bridgedPath); err != nil {
+		t.Fatalf("record dropped while the kernel did not report the bridge: %v", err)
 	}
+	kernel.bridges = map[string]json.RawMessage{"cn": json.RawMessage("null")}
+	check(c)
 	if _, err := os.Stat(c.bridgedPath); !os.IsNotExist(err) {
-		t.Fatalf("record kept after the bridge was deleted: %v", err)
+		t.Fatalf("record kept after the kernel reported no bridge: %v", err)
 	}
-	kernel.externalBridge = false
-	if got := residue(c); got != "" {
-		t.Fatalf("downgraded without a bridge: residue = %q", got)
+	kernel.externalBridge, kernel.bridges = false, nil
+	if got := check(c); got != "cn::null eu::null" {
+		t.Fatalf("downgraded without a bridge: %s", got)
+	}
+}
+
+// The record lives in the Agent's own state directory, which the Agent's
+// user may write under the unit's sandbox, not in root's takeover
+// directory; the write leaves no temporary file behind.
+func TestMeshBridgedRecordIsTheAgentsOwn(t *testing.T) {
+	path := defaultBridgedPath()
+	if !strings.HasPrefix(path, layout.StateDir+string(filepath.Separator)) {
+		t.Fatalf("record %s is outside %s", path, layout.StateDir)
+	}
+	if filepath.Dir(path) == filepath.Dir(mesh.DefaultStatePath) {
+		t.Fatalf("record %s is in the takeover's directory", path)
+	}
+	dir := filepath.Join(t.TempDir(), "mesh")
+	file := filepath.Join(dir, "bridged.json")
+	if err := writeBridged(file, map[string]bool{"eu": true, "cn": true}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil || string(data) != `{"networks":["cn","eu"]}` {
+		t.Fatalf("record = %s, %v", data, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("directory holds %v, %v", entries, err)
+	}
+	if got := readBridged(file); !got["cn"] || !got["eu"] || len(got) != 2 {
+		t.Fatalf("read back %v", got)
+	}
+	if err := writeBridged(file, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("empty record kept: %v", err)
 	}
 }
