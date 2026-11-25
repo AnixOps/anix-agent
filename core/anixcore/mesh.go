@@ -18,8 +18,9 @@ import (
 // "type": "mesh" configuration (config_version 1) tagged meshTagPrefix +
 // id, and answers their state on GET /v1/mesh. {"networks": []} stops
 // them. The sections dns and host_groups go only to a kernel that lists
-// meshDNSFeature and meshHostGroupsFeature: the kernel rejects unknown
-// fields. A kernel that lists meshRegionRequestsFeature holds the node
+// meshDNSFeature and meshHostGroupsFeature, and the network fields kind
+// and native_keys only to one that lists meshNativeKeysFeature: the kernel
+// rejects unknown fields. A kernel that lists meshRegionRequestsFeature holds the node
 // owner's region requests in the GET answer until
 // DELETE /v1/mesh/region_requests/{id}.
 
@@ -29,6 +30,7 @@ const (
 	meshDNSFeature            = "mesh_dns"
 	meshHostGroupsFeature     = "mesh_host_groups"
 	meshRegionRequestsFeature = "mesh_region_requests"
+	meshNativeKeysFeature     = "mesh_native_keys"
 )
 
 // meshTagPrefix starts the kernel tag of a mesh network.
@@ -66,7 +68,9 @@ func (c *Core) ApplyMesh(networks []panel.MeshNetwork) error {
 func (c *Core) putMesh() error {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	body := meshBody(c.mesh, c.client.meshDNS.Load(), c.client.meshHostGroups.Load())
+	body := meshBody(c.mesh, meshSections{
+		dns: c.client.meshDNS.Load(), hostGroups: c.client.meshHostGroups.Load(), nativeKeys: c.client.meshNativeKeys.Load(),
+	})
 	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
 		return fmt.Errorf("anixcore mesh: %w", err)
 	}
@@ -160,20 +164,23 @@ func (c *Core) DoneMeshRegionRequest(ctx context.Context, id string) error {
 	return nil
 }
 
+// meshSections are the optional parts of a network the kernel takes.
+type meshSections struct{ dns, hostGroups, nativeKeys bool }
+
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
-// panel in the kernel's layered configuration, with dns and host_groups
-// only when the kernel takes them.
-func meshBody(networks []panel.MeshNetwork, dns, hostGroups bool) map[string]any {
+// panel in the kernel's layered configuration, with dns, host_groups, kind
+// and native_keys only when the kernel takes them.
+func meshBody(networks []panel.MeshNetwork, sections meshSections) map[string]any {
 	out := make([]map[string]any, 0, len(networks))
 	for _, n := range networks {
 		network := map[string]any{"name": n.Name, "secret": n.Secret, "secure_mode": n.SecureMode}
 		if n.Cipher != "" {
 			network["cipher"] = n.Cipher
 		}
-		if n.Kind != "" {
+		if sections.nativeKeys && n.Kind != "" {
 			network["kind"] = n.Kind
 		}
-		if present(n.NativeKeys) {
+		if sections.nativeKeys && present(n.NativeKeys) {
 			network["native_keys"] = n.NativeKeys
 		}
 		node := map[string]any{"address": n.Address}
@@ -199,10 +206,10 @@ func meshBody(networks []panel.MeshNetwork, dns, hostGroups bool) map[string]any
 		if len(n.Routing) > 0 {
 			config["routing"] = n.Routing
 		}
-		if dns && present(n.DNS) {
+		if sections.dns && present(n.DNS) {
 			config["dns"] = n.DNS
 		}
-		if hostGroups && present(n.HostGroups) {
+		if sections.hostGroups && present(n.HostGroups) {
 			config["host_groups"] = n.HostGroups
 		}
 		out = append(out, config)

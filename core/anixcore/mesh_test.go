@@ -125,7 +125,7 @@ func TestMeshSectionsGoOnlyToAKernelThatTakesThem(t *testing.T) {
 	// A null section is no section.
 	network := testMeshNetwork()
 	network.DNS, network.HostGroups = json.RawMessage(`null`), json.RawMessage(`null`)
-	body := meshBody([]panel.MeshNetwork{network}, true, true)["networks"].([]map[string]any)[0]
+	body := meshBody([]panel.MeshNetwork{network}, meshSections{dns: true, hostGroups: true})["networks"].([]map[string]any)[0]
 	if _, ok := body["dns"]; ok {
 		t.Fatalf("null dns sent: %v", body)
 	}
@@ -211,8 +211,8 @@ func TestMeshManagedNetworksAndStaticKeys(t *testing.T) {
 	core := externalCore(t, server)
 	t.Cleanup(func() { _ = core.Close() })
 
-	// kind and native_keys go to the kernel's network section; an empty
-	// list is still sent.
+	// A kernel without the feature gets neither field (it rejects unknown
+	// fields).
 	managed := testMeshNetwork()
 	managed.Kind = "managed"
 	managed.NativeKeys = json.RawMessage(`[]`)
@@ -220,6 +220,20 @@ func TestMeshManagedNetworksAndStaticKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := json.Marshal(api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)["network"])
+	if want := `{"cipher":"aes-gcm","name":"region-cn","secret":"s3cret","secure_mode":true}`; string(got) != want {
+		t.Fatalf("network section without the feature\n got %s\nwant %s", got, want)
+	}
+
+	// With it, kind and native_keys go to the kernel's network section; an
+	// empty list is still sent.
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.ApplyMesh([]panel.MeshNetwork{managed}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = json.Marshal(api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)["network"])
 	if want := `{"cipher":"aes-gcm","kind":"managed","name":"region-cn","native_keys":[],"secret":"s3cret","secure_mode":true}`; string(got) != want {
 		t.Fatalf("network section\n got %s\nwant %s", got, want)
 	}

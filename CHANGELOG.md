@@ -5,8 +5,8 @@
 ### Added
 
 - Mesh managed networks: the member `mesh` network fields `kind` and
-  `native_keys` go to the kernel's `network` section (`native_keys` also
-  when empty). `mesh.status` carries each network's `static_key`, taken by
+  `native_keys` go to the kernel's `network` section when the kernel lists
+  the feature `mesh_native_keys` (`native_keys` also when empty). `mesh.status` carries each network's `static_key`, taken by
   network name from `static_keys` of the kernel's `GET /v1/mesh` (also for
   a network the kernel holds back; malformed keys are dropped), and the
   kernel's `failure`. A failure `peer_not_native` adds the alert

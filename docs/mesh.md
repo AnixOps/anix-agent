@@ -37,8 +37,8 @@
   所以 Agent 只把本机内核支持的节交给内核：`features` 有 `mesh_dns`（内核 0.3 起）才带 `dns`，有 `mesh_host_groups`
   （内核 0.4 起）才带 `host_groups`；值为 `null` 视同未下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
 - `kind`（`managed` 为地区网络，`legacy` 为迁移中的现有网络）与 `native_keys`（`managed` 网络接受的成员静态公钥）
-  放进内核配置的 `network` 节，原样交给内核：`kind` 为空时不发送；`native_keys` 只要下发就发送，空列表也照发
-  （内核据此暂缓该网络，但仍生成并给出本机公钥）。
+  放进内核配置的 `network` 节，原样交给内核，只在 `features` 有 `mesh_native_keys` 时发送：`kind` 为空时不发送；
+  `native_keys` 只要下发就发送，空列表也照发（内核据此暂缓该网络，但仍生成并给出本机公钥）。
 - 一个 Agent 进程里由第一个带内核的节点驱动组网（内核只运行一套网络）。
 
 ## 内核接口（需内核提供）
@@ -64,6 +64,7 @@
 | `mesh_dns` | 网络配置接受 `dns` | 0.3 |
 | `mesh_host_groups` | 网络配置接受 `host_groups` | 0.4 |
 | `mesh_region_requests` | `GET /v1/mesh` 带 `region_requests`，并有 `DELETE /v1/mesh/region_requests/{id}` | 0.4 |
+| `mesh_native_keys` | 网络配置的 `network` 节接受 `kind` 与 `native_keys`；`GET /v1/mesh` 带 `static_keys` 与各网络的 `failure` | 0.3 |
 
 `instance_id` 是本机的组网实例 ID，即组网状态快照的 `self.id`（首次启动生成，重启与升级不变），1–64 位字母、数字或 `-`，首字符须为字母或数字；
 不合规时 Agent 按未给出处理。网络暂缓启动（`takeover_pending`）时内核也应给出。
