@@ -169,8 +169,11 @@ type MeshNetworkStatus struct {
 	Alerts    []MeshAlert `json:"alerts,omitempty"`
 	// ExternalBridge is the digest of the bridge the kernel applies now
 	// (externalBridge: allowDigest, routesDigest, allowCount, appliedAt),
-	// passed on as the kernel gives it; absent for a network that runs no
-	// bridge. Control confirms its allow list by it.
+	// passed on as the kernel gives it, an explicit null (no bridge runs)
+	// included. Control confirms its allow list by it. Left out (nil)
+	// whenever the Agent does not know the kernel's bridge: the network
+	// is held, the apply failed or the kernel could not be read; Control
+	// never takes that as no bridge.
 	ExternalBridge json.RawMessage `json:"externalBridge,omitempty"`
 }
 

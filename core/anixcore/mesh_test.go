@@ -426,22 +426,28 @@ func TestMeshExternalBridge(t *testing.T) {
 		t.Fatalf("external_bridge = %v", config["external_bridge"])
 	}
 
-	// No bridge, or null: none in the state.
-	for _, absent := range []any{nil, json.RawMessage(`null`)} {
-		api.meshBridge = absent
-		state, err := core.MeshStatus(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if state.Networks[0].ExternalBridge != nil {
-			t.Fatalf("externalBridge = %s", state.Networks[0].ExternalBridge)
-		}
+	// No key: unknown, left out of the report.
+	state, err := core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report, _ := json.Marshal(state.Networks[0]); state.Networks[0].ExternalBridge != nil || strings.Contains(string(report), "externalBridge") {
+		t.Fatalf("report = %s", report)
+	}
+	// An explicit null (no bridge runs) goes on as null.
+	api.meshBridge = json.RawMessage(`null`)
+	state, err = core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report, _ := json.Marshal(state.Networks[0]); !strings.Contains(string(report), `"externalBridge":null`) {
+		t.Fatalf("report = %s", report)
 	}
 	// The kernel's digest goes on as it gives it, an empty list's too.
 	digest := `{"allowCount":0,"allowDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",` +
 		`"appliedAt":"2026-11-25T21:00:00Z","routesDigest":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}`
 	api.meshBridge = json.RawMessage(digest)
-	state, err := core.MeshStatus(context.Background())
+	state, err = core.MeshStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

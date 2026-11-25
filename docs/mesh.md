@@ -110,7 +110,9 @@ Agent 自己给出的告警码：`unsupported`（内核没有组网）、`takeov
 `native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）、`invalid_kind`（网络 `kind` 未知，暂不下发）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。
 
 - 运行外部网络桥接的网络带 `externalBridge`（`{allowDigest, routesDigest, allowCount, appliedAt}`）：内核 `GET /v1/mesh` 中该网络
-  已生效桥接配置的摘要，Agent 原样转述，不改写、不校验；面板对自己下发的名单按同一算法计算，相等即视为已应用。内核未给出或为 `null` 时不带该项。
+  已生效桥接配置的摘要，Agent 原样转述，不改写、不校验；面板对自己下发的名单按同一算法计算，相等即视为已应用。三种状态：摘要；
+  内核明确给出 `null`（该网络没有运行桥接）时原样上报 `null`；Agent 不知道内核当前桥接时（网络被扣下、下发失败、等待接管、读不到内核、
+  内核未给出该键）不带该键。面板只把显式 `null` 当作「无桥接」，缺省不能据此释放地址。
 - 每个网络带 `static_key`：本机在该网络的静态公钥，按网络名取自内核 `GET /v1/mesh` 的 `static_keys`；面板只采信 Agent 通道的值，
   汇总为各网络的 `native_keys`。旧模式网络、内核读取失败时没有该字段，面板不应把缺省当作移除。
 - 公钥由内核在收到网络配置时生成，所以首次接管时（现有组网程序仍在运行，网络从未交给内核）还没有公钥。顺序是：接管完成后 Agent
