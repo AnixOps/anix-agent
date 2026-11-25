@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,9 +99,10 @@ func testMeshComponent(t *testing.T, kernel *fakeMesh, active map[string]bool) *
 		return context.Canceled
 	}
 	return &meshComponent{
-		core:     kernel,
-		takeover: &mesh.Takeover{StatePath: filepath.Join(t.TempDir(), "takeover.json"), Proc: t.TempDir(), Run: run},
-		wake:     make(chan struct{}, 1),
+		core:        kernel,
+		takeover:    &mesh.Takeover{StatePath: filepath.Join(t.TempDir(), "takeover.json"), Proc: t.TempDir(), Run: run},
+		bridgedPath: filepath.Join(t.TempDir(), "bridged.json"),
+		wake:        make(chan struct{}, 1),
 	}
 }
 
@@ -541,5 +543,86 @@ func TestMeshLeavesOutABridgeTheKernelDoesNotReport(t *testing.T) {
 		if strings.Contains(string(entry), `"externalBridge"`) {
 			t.Fatalf("%s: externalBridge reported: %s", network.ID, entry)
 		}
+	}
+}
+
+// A node that bridged a network on a kernel that takes external_bridge
+// and then runs one that does not warns that the newer kernel's rules may
+// remain (§15.12 item 9), also after the Agent restarts and once the
+// bridge is deleted; a capable kernel or removing the record clears it.
+func TestMeshWarnsOfBridgeRulesLeftByADowngrade(t *testing.T) {
+	kernel := &fakeMesh{supported: true, externalBridge: true}
+	c := testMeshComponent(t, kernel, nil)
+	withBridge := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
+		`"external_bridge":{"interface":"ext0","routes":["100.100.1.2/32"],"allow":[]}},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
+	deleted := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[]}]}`
+	residue := func(c *meshComponent) string {
+		t.Helper()
+		status, _, _ := c.status(context.Background())
+		var out []string
+		for _, network := range status.Networks {
+			if hasAlert(network.Alerts, panel.MeshAlertExternalBridgeDowngradeResidue) {
+				out = append(out, network.ID)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	if err := c.apply(meshSnapshot(withBridge)); err != nil {
+		t.Fatal(err)
+	}
+	if got := residue(c); got != "" {
+		t.Fatalf("capable kernel: residue = %q", got)
+	}
+	// The kernel cannot be read: nothing changes.
+	kernel.statusErr = errors.New("down")
+	if got := residue(c); got != "" {
+		t.Fatalf("kernel unreadable: residue = %q", got)
+	}
+	kernel.statusErr = nil
+	// Downgraded: only the network that bridged warns.
+	kernel.externalBridge = false
+	if got := residue(c); got != "cn" {
+		t.Fatalf("downgraded: residue = %q", got)
+	}
+	// The Agent restarts with the older kernel and the bridge is deleted.
+	restarted := testMeshComponent(t, kernel, nil)
+	restarted.bridgedPath = c.bridgedPath
+	if err := restarted.apply(meshSnapshot(deleted)); err != nil {
+		t.Fatal(err)
+	}
+	if got := residue(restarted); got != "cn" {
+		t.Fatalf("restarted, bridge deleted: residue = %q", got)
+	}
+	// The operator cleared the rules and removed the record.
+	if err := os.Remove(c.bridgedPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := residue(restarted); got != "" {
+		t.Fatalf("record removed: residue = %q", got)
+	}
+	// A capable kernel again, then a downgrade with no bridge configured.
+	kernel.externalBridge = true
+	if err := c.apply(meshSnapshot(withBridge)); err != nil {
+		t.Fatal(err)
+	}
+	if got := residue(c); got != "" {
+		t.Fatalf("upgraded: residue = %q", got)
+	}
+	if err := c.apply(meshSnapshot(deleted)); err != nil {
+		t.Fatal(err)
+	}
+	if got := residue(c); got != "" {
+		t.Fatalf("bridge deleted on a capable kernel: residue = %q", got)
+	}
+	if _, err := os.Stat(c.bridgedPath); !os.IsNotExist(err) {
+		t.Fatalf("record kept after the bridge was deleted: %v", err)
+	}
+	kernel.externalBridge = false
+	if got := residue(c); got != "" {
+		t.Fatalf("downgraded without a bridge: residue = %q", got)
 	}
 }

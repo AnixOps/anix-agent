@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -47,6 +50,10 @@ type meshComponent struct {
 	took *panel.MeshTakeoverResult
 	// held are the networks held back from the kernel (MeshHold), by id.
 	held map[string]bool
+	// bridgedPath records the networks that ran an external bridge on a
+	// kernel that takes external_bridge; empty is defaultBridgedPath.
+	bridgedPath string
+	bridgedMu   sync.Mutex
 	// sendReport sends a mesh PackageReport; nil sends it on client's
 	// data plane (tests set it).
 	sendReport func(*agentv1pb.PackageReport) error
@@ -259,6 +266,14 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 	}
 	status.InstanceID = state.InstanceID
 	nativeKeys := c.core.MeshNativeKeysSupported()
+	// residue: networks that ran a bridge on a kernel that took
+	// external_bridge, now read on one that does not (a downgrade). The
+	// newer kernel clears its rules when it exits; the older one does not
+	// know them (docs/protocols/intranet-mesh.md §15.12 item 9).
+	var residue map[string]bool
+	if readErr == nil && c.core.MeshSupported() {
+		residue = c.trackBridges(member.Networks, state.Networks, c.core.MeshExternalBridgeSupported())
+	}
 	// bridge: the kernel was given the networks and does not take
 	// external_bridge.
 	bridge := applyErr == nil && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
@@ -322,6 +337,14 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 			entry.Alerts = append(entry.Alerts, panel.MeshAlert{
 				Code:   panel.MeshAlertExternalBridgeUnsupported,
 				Detail: "the kernel does not take external_bridge, so it runs this network without the bridge; update it",
+			})
+		}
+		if residue[network.ID] && !hasAlert(entry.Alerts, panel.MeshAlertExternalBridgeDowngradeResidue) {
+			entry.Alerts = append(entry.Alerts, panel.MeshAlert{
+				Code: panel.MeshAlertExternalBridgeDowngradeResidue,
+				Detail: "this node bridged the network on a kernel that takes external_bridge; the kernel now running does not, " +
+					"so bridge rules left by the newer kernel stay in place: clear them, or let the newer kernel exit cleanly before downgrading, " +
+					"then remove " + c.bridgedFile(),
 			})
 		}
 		if noBridge && entry.ExternalBridge == nil {
@@ -425,6 +448,101 @@ func hasAlert(alerts []panel.MeshAlert, code string) bool {
 func holdNow(network panel.MeshNetwork, nativeKeys bool) bool {
 	code, _ := network.MeshHold(nativeKeys)
 	return code != ""
+}
+
+// defaultBridgedPath records the bridged networks, next to the takeover's
+// record.
+func defaultBridgedPath() string {
+	return filepath.Join(filepath.Dir(mesh.DefaultStatePath), "bridged.json")
+}
+
+func (c *meshComponent) bridgedFile() string {
+	if c.bridgedPath != "" {
+		return c.bridgedPath
+	}
+	return defaultBridgedPath()
+}
+
+// bridgedRecord is the file bridgedFile holds.
+type bridgedRecord struct {
+	Networks []string `json:"networks"`
+}
+
+// trackBridges keeps the record of the networks that run an external
+// bridge on a kernel that takes external_bridge, read just now: capable
+// tells whether it does. On such a kernel the record becomes the networks
+// configured or reported with a bridge (the kernel removes the rules of a
+// bridge deleted since) and nothing is answered. On a kernel without it
+// the record stays as it was, so it outlives an Agent restarted with the
+// older kernel, and is answered: those networks may keep the newer
+// kernel's rules. The record is cleared once a capable kernel runs again,
+// or when the operator removes the file.
+func (c *meshComponent) trackBridges(networks []panel.MeshNetwork, running []panel.MeshNetworkStatus, capable bool) map[string]bool {
+	path := c.bridgedFile()
+	// The file is read each time, so removing it takes effect at once.
+	c.bridgedMu.Lock()
+	defer c.bridgedMu.Unlock()
+	recorded := readBridged(path)
+	if !capable {
+		return recorded
+	}
+	now := map[string]bool{}
+	for _, network := range networks {
+		if meshSent(network.ExternalBridge) {
+			now[network.ID] = true
+		}
+	}
+	for _, network := range running {
+		if meshSent(network.ExternalBridge) {
+			now[network.ID] = true
+		}
+	}
+	if !reflect.DeepEqual(now, recorded) {
+		if err := writeBridged(path, now); err != nil {
+			log.WithField("component", "agent-mesh").WithError(err).Warn("cannot record the bridged networks")
+		}
+	}
+	return nil
+}
+
+// readBridged reads the record at path; missing or unreadable is empty.
+func readBridged(path string) map[string]bool {
+	out := map[string]bool{}
+	data, err := os.ReadFile(path) // #nosec G304 -- the Agent's own state file.
+	if err != nil {
+		return out
+	}
+	var record bridgedRecord
+	if json.Unmarshal(data, &record) != nil {
+		return out
+	}
+	for _, id := range record.Networks {
+		out[id] = true
+	}
+	return out
+}
+
+// writeBridged writes the record, removing the file when it is empty.
+func writeBridged(path string, bridged map[string]bool) error {
+	if len(bridged) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	record := bridgedRecord{Networks: make([]string, 0, len(bridged))}
+	for id := range bridged {
+		record.Networks = append(record.Networks, id)
+	}
+	sort.Strings(record.Networks)
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { // #nosec G301 -- the Agent reads it.
+		return err
+	}
+	return os.WriteFile(path, data, 0o644) // #nosec G306 -- network ids only, no secret.
 }
 
 // meshSent tells whether the panel sent a section, not empty nor null.
