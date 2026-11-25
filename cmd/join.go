@@ -81,7 +81,9 @@ directory. --reset skips the check, ignores the identities on the machine
 directory of its own.
 
 Control is reached over TLS only, verified against the system roots for the
-host of --grpc. A join sends the hex SHA-256 of "anixops-join-v1\n" and the
+host of --grpc. With --relay (repeat for each region relay, host:port), every
+connection goes through the relays and never to --grpc directly; --grpc stays
+the TLS name and target. A join sends the hex SHA-256 of "anixops-join-v1\n" and the
 machine ID (/etc/machine-id, else /var/lib/dbus/machine-id; nothing without
 one). It only selects the node a reinstalled machine may rejoin, and is
 never authentication.
@@ -116,6 +118,7 @@ type joinOptions struct {
 	name      string
 	host      string
 	addresses []string
+	relays    []string
 	reset     bool
 	pkiDir    string
 	cluster   string
@@ -163,6 +166,7 @@ func newJoinCommand() *cobra.Command {
 	flags.StringVar(&options.name, "name", "", "name of a new node (default: Control uses the host name)")
 	flags.StringVar(&options.host, "host", "", "address clients connect to (default: Control uses the first --address)")
 	flags.StringArrayVar(&options.addresses, "address", nil, "this machine's public address as Control sees it; repeat for each, IPv4 first (empty values are skipped)")
+	flags.StringArrayVar(&options.relays, "relay", nil, "a region relay, host:port; repeat for each. With relays, every connection goes through them and never to --grpc directly (GRPCRelays)")
 	flags.BoolVar(&options.reset, "reset", false, "ignore identities already on this machine and ask Control for a new node, never the machine's earlier one")
 	flags.StringVar(&options.pkiDir, "pki-dir", conf.DefaultAgentIdentityCertDir, "identity root (AgentIdentity.CertDir)")
 	flags.StringVar(&options.cluster, "cluster", "", "accept only a certificate of this SPIFFE cluster (AgentIdentity.Cluster; default: Control's)")
@@ -250,6 +254,10 @@ func (o *joinOptions) joinConfig() (agentapi.JoinConfig, error) {
 		}
 		addresses = append(addresses, address)
 	}
+	relays, err := agentapi.NewRelays(o.relays)
+	if err != nil {
+		return config, fmt.Errorf("--relay: %w", err)
+	}
 	token, err := agentapi.ReadCredentialFile(o.tokenFile, agentcontrol.JoinTokenPrefix, agentcontrol.EnrollmentCredentialPrefix)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -260,13 +268,20 @@ func (o *joinOptions) joinConfig() (agentapi.JoinConfig, error) {
 		return config, fmt.Errorf("token file %s is empty", o.tokenFile)
 	}
 	hostname, _ := os.Hostname()
-	return agentapi.JoinConfig{
+	config = agentapi.JoinConfig{
 		Target: target, RootCAs: joinRootCAs, Credential: token,
 		MachineFingerprint: machineFingerprint(machineIDFiles), Hostname: hostname,
 		RequestedName: strings.TrimSpace(o.name), ConnectHost: strings.TrimSpace(o.host), PublicAddresses: addresses,
 		Arch: runtime.GOARCH, OS: runtime.GOOS, AgentVersion: version, InstanceID: agentapi.InstanceID(hostname, "join"),
 		Reset: o.reset, Cluster: o.cluster, Dir: o.pkiDir, DialTimeout: joinDialTimeout,
-	}, nil
+	}
+	if relays != nil {
+		// In a region that reaches Control only through its relays
+		// (anix-control docs/design/region-relay): --grpc stays the target
+		// and TLS name, only the TCP connection goes to a relay.
+		config.DialContext = relays.DialContext(nil)
+	}
+	return config, nil
 }
 
 // machineFingerprint is the lowercase hex SHA-256 of joinFingerprintLabel

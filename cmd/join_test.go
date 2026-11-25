@@ -586,3 +586,37 @@ func TestExitCode(t *testing.T) {
 	assert.Equal(t, 1, ExitCode(assert.AnError))
 	assert.Equal(t, 3, ExitCode(&exitError{code: 3, err: assert.AnError}))
 }
+
+// With --relay, the join goes through the relay; --grpc stays the target
+// and TLS name.
+func TestJoinGoesThroughTheRelays(t *testing.T) {
+	f := newJoinFixture(t)
+	relay := agenttest.StartRelay(t, f.control.Address)
+	run := runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--json", "--relay", relay.Address)...)
+	require.Equal(t, 0, run.status, "stderr: %s", run.stderr)
+	assert.Equal(t, testJoinedNode, decodeJoinOutput(t, run.stdout).Node)
+	assert.Positive(t, relay.Carried(), "the join did not go through the relay")
+}
+
+// With every relay down the join fails as unreachable, although --grpc is
+// listening: it never dials Control directly.
+func TestJoinNeverDialsControlAroundTheRelays(t *testing.T) {
+	f := newJoinFixture(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	closed := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	tokenFile := f.tokenFile(t, testJoinToken, 0o600)
+	run := runJoinCommand(t, f.args(tokenFile, "--relay", closed)...)
+	assert.Equal(t, joinExitUnreachable, run.status, "stderr: %s", run.stderr)
+	requireNoIdentity(t, f.pkiDir)
+	_, err = os.Stat(tokenFile)
+	assert.NoError(t, err, "the token is kept for the next try")
+}
+
+func TestJoinRefusesARelayThatIsNotHostPort(t *testing.T) {
+	f := newJoinFixture(t)
+	run := runJoinCommand(t, f.args(f.tokenFile(t, testJoinToken, 0o600), "--relay", "relay.example")...)
+	assert.Equal(t, joinExitUsage, run.status)
+	assert.Contains(t, run.stderr, "--relay")
+}

@@ -100,12 +100,13 @@ func StartForward(cfg *conf.ForwardConfig, component *forward.Component) (*forwa
 	if !useTLS {
 		return nil, fmt.Errorf("a forward node's control stream needs TLS: Control authenticates forward nodes by client certificate")
 	}
-	relays, err := agentControlRelays(&api)
+	owner := "forward-" + strconv.Itoa(api.NodeID)
+	relays, err := agentControlRelays(owner, &api)
 	if err != nil {
 		return nil, err
 	}
 	upgrader := upgrade.Shared(panel.Version)
-	upgrader.SetCaches(api.ReleaseCaches)
+	upgrader.SetRoute(owner, relayRoute(&api, relays, target, serverName))
 	settings := api.AgentIdentity
 	hostname, _ := os.Hostname()
 	return forward.StartNode(context.Background(), forward.NodeConfig{

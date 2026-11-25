@@ -72,7 +72,7 @@ token to a file private to `anixops-agent` and runs, as that user:
 
 ```bash
 anix-agent join --control https://<control> --grpc <grpc host:port> --token-file <file> \
-  [--name hk-01] [--host 203.0.113.5] [--address <IPv4>] [--address <IPv6>] [--reset] --json
+  [--name hk-01] [--host 203.0.113.5] [--address <IPv4>] [--address <IPv6>] [--relay <host:port>]... [--reset] --json
 ```
 
 - **The token decides the call.** `anixjoin_...` (a node group's join token)
@@ -92,6 +92,10 @@ anix-agent join --control https://<control> --grpc <grpc host:port> --token-file
   machine may rejoin under Control's rejoin rule.
 - **TLS only.** Control's agent listener (`--grpc`) is verified against the
   system roots for the host of `--grpc`; there is no plaintext mode.
+- **Region relays.** With `--relay` (repeat for each relay, as `GRPCRelays`;
+  `docs/region-relay.md`), every connection goes through the relays and never
+  to `--grpc` directly; `--grpc` stays the target and the TLS name. With every
+  relay down the join exits 4 (unreachable).
 - **The identity.** The certificate must name the node Control answered (and
   the cluster of `--cluster`, when given). It is stored like an enrolled one, in
   `--pki-dir/<node>` (default `/var/lib/anixops-agent/pki`: `identity.pem`,

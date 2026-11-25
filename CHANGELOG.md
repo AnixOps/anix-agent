@@ -14,6 +14,8 @@
   `ReleaseCaches` (https base URLs) are asked first for upgrade files by
   SHA-256; a wrong copy falls through to the control connection and the
   release URL, and every file is verified as before.
+- `anix-agent join --relay <host:port>` (repeatable) joins through the
+  region relays and never dials `--grpc` directly.
 - Temporary proxies: Control can ask a node to serve a SOCKS5 proxy for a
   limited time (the configuration member `temporary_proxies`, for example
   15 minutes), so devices of an internal network such as a mesh reach the
@@ -27,6 +29,18 @@
   ahead is refused. Needs an anixcore with the `inbound_expiry` feature and
   the `socks` type; an older one fails only a configuration that has
   proxies.
+
+### Fixed
+
+- Region relays: a relay counts as working only once Control answers
+  through it (the TLS ServerHello), not when its TCP connection opens, so a
+  relay that accepts but cannot reach Control is passed over and the other
+  relay takes the stream. The re-measure runs in the background, never
+  clears a relay's backoff, and a caller's own cancellation is not a relay
+  failure. Release caches of every node identity of the process are used
+  together instead of the last one replacing the others; each cache gets at
+  most 5 minutes; a node behind relays does not download a release from
+  Control's own host directly.
 
 ## 5.0.11 - 2026-11-24
 
