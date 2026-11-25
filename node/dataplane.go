@@ -58,6 +58,9 @@ type nodeDataPlane struct {
 	// (applyRelayFirewall), so a configuration without them removes it.
 	relayFirewall bool
 	client        *agentapi.Client
+	// route is the node's region relay route, which follows the member
+	// "control_route" (controlRoute); nil before the client exists.
+	route *controlRoute
 	// forward runs the forwarding state of the node's snapshots (F3b),
 	// nil when the node does not forward.
 	forward *forward.Component
@@ -174,6 +177,10 @@ func (n *nodeDataPlane) ApplyConfig(ctx context.Context, snapshot *agentv1pb.Con
 		if err := n.mesh.apply(snapshot); err != nil {
 			errs = append(errs, fmt.Errorf("mesh: %w", err))
 		}
+	}
+	// Last: a changed route ends the session once this snapshot is applied.
+	if err := n.route.apply(snapshot); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

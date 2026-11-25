@@ -105,7 +105,11 @@ type Config struct {
 	// and AgentEnrollment) through the region relays (relays.go): the TCP
 	// connection goes to a relay, Target and ServerName stay Control's.
 	Relays *Relays
-	Rand   *mathrand.Rand
+	// RelaySwitch, when set, replaces Relays: the relays (or none) it
+	// holds when a connection opens carry that connection, so Control can
+	// move the node to other relays without a restart (Reconnect).
+	RelaySwitch *RelaySwitch
+	Rand        *mathrand.Rand
 	// Identity is the Agent's enrollment and mTLS client certificate
 	// (AG-2), the only credential of the stream. It needs UseTLS.
 	Identity *IdentityConfig
@@ -215,7 +219,9 @@ func NewClient(config Config) (*Client, error) {
 	if config.DialContext == nil {
 		config.DialContext = grpc.DialContext
 	}
-	if config.Relays != nil {
+	if config.RelaySwitch != nil {
+		config.DialContext = config.RelaySwitch.DialContext(config.DialContext)
+	} else if config.Relays != nil {
 		config.DialContext = config.Relays.DialContext(config.DialContext)
 	}
 	if config.Rand == nil {
@@ -1367,6 +1373,11 @@ var wrongNodeReconnect = 5 * time.Minute
 // errSessionRestarted ends a session the data plane must start over (a
 // user delta it cannot hold), so Control resumes from the stored cursor.
 var errSessionRestarted = errors.New("agent control session restarted by the data plane")
+
+// Reconnect ends the current session, if any; the client connects again
+// as after a dropped stream (with RelaySwitch, through the relays current
+// then). It does not wait.
+func (c *Client) Reconnect() { c.recycleSession() }
 
 // recycleSession ends the current session; the client reconnects.
 func (c *Client) recycleSession() {

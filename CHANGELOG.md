@@ -4,6 +4,15 @@
 
 ### Added
 
+- Region relays (`docs/region-relay.md`): the Agent follows the member
+  `control_route` of Control's desired configuration without a reinstall.
+  New relays are stored (`<AgentStream.StateDir>/control-route-<node>.json`,
+  preferred over `GRPCRelays` after a restart) and the session reconnects
+  through them; the release caches go to upgrades. No member keeps the
+  route; empty relays keep the current ones with a warning (never direct);
+  only `"direct": true` drops them. `agentapi.RelaySwitch` and
+  `Client.Reconnect` carry the switch.
+
 - Intranet mesh (`docs/mesh.md`): `mesh.status` carries the kernel's
   `instance_id` (`GET /v1/mesh`, 1-64 letters, digits or dashes; left out
   otherwise), by which Control names host group gateways. The node

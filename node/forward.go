@@ -14,6 +14,7 @@ import (
 	"github.com/AnixOps/anix-agent/v5/forward"
 	"github.com/AnixOps/anix-agent/v5/upgrade"
 	agentcontrol "github.com/AnixOps/anix-control/sdk/agentcontrol"
+	agentv1pb "github.com/AnixOps/anix-control/sdk/api/agent/v1"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -101,20 +102,20 @@ func StartForward(cfg *conf.ForwardConfig, component *forward.Component) (*forwa
 		return nil, fmt.Errorf("a forward node's control stream needs TLS: Control authenticates forward nodes by client certificate")
 	}
 	owner := "forward-" + strconv.Itoa(api.NodeID)
-	relays, err := agentControlRelays(owner, &api)
+	route, err := newControlRoute(owner, &api, target, serverName)
 	if err != nil {
 		return nil, err
 	}
 	upgrader := upgrade.Shared(panel.Version)
-	upgrader.SetRoute(owner, relayRoute(&api, relays, target, serverName))
 	settings := api.AgentIdentity
 	hostname, _ := os.Hostname()
-	return forward.StartNode(context.Background(), forward.NodeConfig{
+	node, err := forward.StartNode(context.Background(), forward.NodeConfig{
 		StateRoot: api.AgentStream.Dir(),
 		Component: component,
 		Upgrader:  upgrader,
+		Next:      controlRouteApplier{route: route},
 		Client: agentapi.Config{
-			Target: target, NodeID: api.NodeID, UseTLS: true, ServerName: serverName, Relays: relays,
+			Target: target, NodeID: api.NodeID, UseTLS: true, ServerName: serverName, RelaySwitch: route.dial,
 			AgentVersion: panel.Version, InstanceID: agentapi.InstanceID(hostname, "forward-"+strconv.Itoa(api.NodeID)),
 			KeepaliveTime: time.Duration(api.GRPCKeepalive) * time.Second, RootCAs: agentControlRootCAs,
 			Labels: map[string]string{"node_kind": agentcontrol.NodeKindForward},
@@ -124,4 +125,17 @@ func StartForward(cfg *conf.ForwardConfig, component *forward.Component) (*forwa
 			},
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+	route.attach(node.Client())
+	return node, nil
+}
+
+// controlRouteApplier lets a forward node's snapshots reach its region
+// relay route (the member "control_route"), after the forwarding state.
+type controlRouteApplier struct{ route *controlRoute }
+
+func (a controlRouteApplier) ApplyConfig(_ context.Context, snapshot *agentv1pb.ConfigSnapshot) error {
+	return a.route.apply(snapshot)
 }
