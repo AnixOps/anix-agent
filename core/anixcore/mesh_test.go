@@ -30,7 +30,7 @@ func testMeshNetwork() panel.MeshNetwork {
 
 func TestMeshNetworksGoToTheKernelLayered(t *testing.T) {
 	api, server := newFakeAPI(t)
-	api.features = []string{meshFeature}
+	api.features = []string{meshFeature, meshNativeKeysFeature}
 	core := externalCore(t, server)
 	t.Cleanup(func() { _ = core.Close() })
 	if !core.MeshSupported() {
@@ -94,9 +94,9 @@ func TestMeshSectionsGoOnlyToAKernelThatTakesThem(t *testing.T) {
 		features        []string
 		dns, hostGroups bool
 	}{
-		{[]string{meshFeature}, false, false},
-		{[]string{meshFeature, meshDNSFeature}, true, false},
-		{[]string{meshFeature, meshDNSFeature, meshHostGroupsFeature}, true, true},
+		{[]string{meshFeature, meshNativeKeysFeature}, false, false},
+		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature}, true, false},
+		{[]string{meshFeature, meshNativeKeysFeature, meshDNSFeature, meshHostGroupsFeature}, true, true},
 		// The sections need the mesh itself.
 		{[]string{meshDNSFeature, meshHostGroupsFeature}, false, false},
 	} {
@@ -136,14 +136,14 @@ func TestMeshSectionsGoOnlyToAKernelThatTakesThem(t *testing.T) {
 
 func TestMeshReplayFollowsTheKernelFeatures(t *testing.T) {
 	api, server := newFakeAPI(t)
-	api.features = []string{meshFeature}
+	api.features = []string{meshFeature, meshNativeKeysFeature}
 	core := externalCore(t, server)
 	t.Cleanup(func() { _ = core.Close() })
 	if err := core.ApplyMesh([]panel.MeshNetwork{testMeshNetworkWithSections()}); err != nil {
 		t.Fatal(err)
 	}
 	// An updated, restarted kernel gets the sections it now takes.
-	api.features = []string{meshFeature, meshDNSFeature, meshHostGroupsFeature}
+	api.features = []string{meshFeature, meshNativeKeysFeature, meshDNSFeature, meshHostGroupsFeature}
 	if err := core.client.status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
