@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestDownloadAsksTheReleaseCacheFirst(t *testing.T) {
 	}))
 	defer cache.Close()
 	a := &Agent{Dir: t.TempDir(), HTTPClient: cache.Client()}
-	a.SetCaches([]string{"http://insecure.example", cache.URL + "/"})
+	a.SetRoute("proxy-1", RelayRoute{Caches: []string{"http://insecure.example", cache.URL + "/"}})
 	fetched := 0
 	ctx := WithFetch(context.Background(), func(context.Context, string, string, string, int64) ([]byte, error) {
 		fetched++
@@ -132,11 +133,83 @@ func TestDownloadAsksTheReleaseCacheFirst(t *testing.T) {
 	}
 }
 
-func TestSetCachesKeepsHTTPSOnly(t *testing.T) {
+func TestSetRouteKeepsHTTPSOnly(t *testing.T) {
 	a := &Agent{}
-	a.SetCaches([]string{"", "http://relay.example", "https://user:pw@relay.example", "https://relay.example/?x=1", " https://relay-1.example:8443/ "})
+	a.SetRoute("proxy-1", RelayRoute{Caches: []string{"", "http://relay.example", "https://user:pw@relay.example", "https://relay.example/?x=1", " https://relay-1.example:8443/ "}})
 	if got := a.releaseCaches(); len(got) != 1 || got[0] != "https://relay-1.example:8443" {
 		t.Fatalf("caches = %v", got)
+	}
+}
+
+// Every node identity of the process shares the Agent: one identity's
+// route must not replace or clear another's.
+func TestSetRouteKeepsEveryIdentitysCaches(t *testing.T) {
+	a := &Agent{}
+	a.SetRoute("proxy-1", RelayRoute{Caches: []string{"https://relay-1.example:8443", "https://relay-2.example:8443"}})
+	a.SetRoute("forward-2", RelayRoute{Caches: []string{"https://relay-2.example:8443", "https://relay-3.example:8443"}})
+	a.SetRoute("proxy-3", RelayRoute{})
+	want := []string{"https://relay-2.example:8443", "https://relay-3.example:8443", "https://relay-1.example:8443"}
+	if got := a.releaseCaches(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("caches = %v, want %v", got, want)
+	}
+	a.SetRoute("forward-2", RelayRoute{})
+	if got := a.releaseCaches(); len(got) != 2 || got[0] != "https://relay-1.example:8443" {
+		t.Fatalf("after removing forward-2, caches = %v", got)
+	}
+}
+
+// A node that reaches Control only through relays does not download a
+// release from Control's host directly when the caches and the control
+// connection failed.
+func TestDownloadRefusesControlsHostBehindRelays(t *testing.T) {
+	var direct atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		direct.Add(1)
+		_, _ = w.Write([]byte("files"))
+	}))
+	defer server.Close()
+	a := &Agent{Dir: t.TempDir(), HTTPClient: server.Client()}
+	a.SetRoute("proxy-1", RelayRoute{ControlHosts: []string{"127.0.0.1."}})
+	_, err := a.download(context.Background(), agentcontrol.ReleaseKindAgent, "v5.1.0", server.URL+"/a.zip", "a.zip", sha256Of("files"), 5)
+	if err == nil || direct.Load() != 0 {
+		t.Fatalf("download = %v after %d direct requests, want a refusal without one", err, direct.Load())
+	}
+	a.SetRoute("proxy-1", RelayRoute{})
+	if _, err := a.download(context.Background(), agentcontrol.ReleaseKindAgent, "v5.1.0", server.URL+"/a.zip", "a.zip", sha256Of("files"), 5); err != nil || direct.Load() != 1 {
+		t.Fatalf("without relays, download = %v after %d requests", err, direct.Load())
+	}
+}
+
+// A cache that stalls is given up after releaseCacheTimeout even without
+// a deadline, and the next source runs.
+func TestDownloadBoundsEachCache(t *testing.T) {
+	saved := releaseCacheTimeout
+	releaseCacheTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { releaseCacheTimeout = saved })
+	stall := make(chan struct{})
+	cache := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-stall:
+		case <-r.Context().Done():
+		}
+	}))
+	defer cache.Close()
+	defer close(stall)
+	a := &Agent{Dir: t.TempDir(), HTTPClient: cache.Client()}
+	a.SetRoute("proxy-1", RelayRoute{Caches: []string{cache.URL}})
+	ctx := WithFetch(context.Background(), func(context.Context, string, string, string, int64) ([]byte, error) {
+		return []byte("grpc!"), nil
+	})
+	started := time.Now()
+	path, err := a.download(ctx, agentcontrol.ReleaseKindAgent, "v5.1.0", "https://github.com/x/a.zip", "a.zip", sha256Of("grpc!"), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "grpc!" {
+		t.Fatalf("got %q, want the control connection's bytes", data)
+	}
+	if waited := time.Since(started); waited > 5*time.Second {
+		t.Fatalf("the stalled cache held the download for %s", waited)
 	}
 }
 

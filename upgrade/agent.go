@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -62,18 +63,31 @@ type Agent struct {
 	mu sync.Mutex
 	// flight is the upgrade running here, until its hand-off settled.
 	flight *flight
-	// caches are the region relays' release caches (SetCaches).
-	caches []string
+	// routes are the relay routes of the node identities (SetRoute).
+	routes map[string]RelayRoute
 }
 
-// SetCaches sets the region relays' release file caches (https base URLs,
-// anix-control docs/design/region-relay): a release is asked there first,
-// by its SHA-256. What a cache serves is verified like any download (size,
-// SHA-256 and signature), so a cache cannot change a release. URLs that are
-// not https are left out.
-func (a *Agent) SetCaches(caches []string) {
-	var kept []string
-	for _, raw := range caches {
+// RelayRoute is how one node identity of the process reaches Control
+// through region relays (anix-control docs/design/region-relay).
+type RelayRoute struct {
+	// Caches are the relays' release file caches (https base URLs): a
+	// release is asked there first, by its SHA-256. What a cache serves is
+	// verified like any download (size, SHA-256 and signature), so a cache
+	// cannot change a release. URLs that are not https are left out.
+	Caches []string
+	// ControlHosts are Control's host names (GRPCHost, ApiHost): a node
+	// that reaches Control only through relays never downloads a release
+	// from them directly.
+	ControlHosts []string
+}
+
+// SetRoute sets the relay route of node identity owner ("proxy-12",
+// "forward-3"); an empty route removes it. The Agent is shared by every
+// node identity of the process, so the caches of all routes are asked, and
+// the Control hosts of all are never downloaded from directly.
+func (a *Agent) SetRoute(owner string, route RelayRoute) {
+	var kept RelayRoute
+	for _, raw := range route.Caches {
 		raw = strings.TrimRight(strings.TrimSpace(raw), "/")
 		if raw == "" {
 			continue
@@ -83,17 +97,61 @@ func (a *Agent) SetCaches(caches []string) {
 			log.WithField("cache", raw).Warn("Ignoring a release cache that is not an https URL")
 			continue
 		}
-		kept = append(kept, raw)
+		kept.Caches = append(kept.Caches, raw)
+	}
+	for _, host := range route.ControlHosts {
+		if host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), ".")); host != "" {
+			kept.ControlHosts = append(kept.ControlHosts, host)
+		}
 	}
 	a.mu.Lock()
-	a.caches = kept
-	a.mu.Unlock()
+	defer a.mu.Unlock()
+	if len(kept.Caches) == 0 && len(kept.ControlHosts) == 0 {
+		delete(a.routes, owner)
+		return
+	}
+	if a.routes == nil {
+		a.routes = map[string]RelayRoute{}
+	}
+	a.routes[owner] = kept
 }
 
+// releaseCaches are the caches of every route, without repeats, in owner
+// order.
 func (a *Agent) releaseCaches() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]string(nil), a.caches...)
+	owners := make([]string, 0, len(a.routes))
+	for owner := range a.routes {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+	var caches []string
+	seen := map[string]bool{}
+	for _, owner := range owners {
+		for _, cache := range a.routes[owner].Caches {
+			if !seen[cache] {
+				seen[cache] = true
+				caches = append(caches, cache)
+			}
+		}
+	}
+	return caches
+}
+
+// relayedControlHost reports whether host is the Control host of a route.
+func (a *Agent) relayedControlHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, route := range a.routes {
+		for _, control := range route.ControlHosts {
+			if control == host {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // flight is one running upgrade.
@@ -518,10 +576,12 @@ func WithFetch(ctx context.Context, fetch Fetch) context.Context {
 
 // download fetches a release file into a temporary file of the staging
 // directory, at most size bytes: more is a size mismatch
-// (upgrade_digest_mismatch). The region relays' caches go first (SetCaches,
-// by sum, a third of the time left), then the control connection
-// (WithFetch) with half the time left, then url, so a stalled source leaves
-// the next one time to run. The caller verifies the file whatever served it.
+// (upgrade_digest_mismatch). The region relays' caches go first (SetRoute,
+// by sum, each with a third of the time left and at most
+// releaseCacheTimeout), then the control connection (WithFetch) with half
+// the time left, then url, so a stalled source leaves the next one time to
+// run; url is skipped when it is on the host of a Control reached only
+// through relays. The caller verifies the file whatever served it.
 func (a *Agent) download(ctx context.Context, kind, version, url, asset, sum string, size int64) (string, error) {
 	if temp, ok := a.downloadFromCaches(ctx, url, asset, sum, size); ok {
 		return temp, nil
@@ -537,6 +597,9 @@ func (a *Agent) download(ctx context.Context, kind, version, url, asset, sum str
 			return a.saveTemp(asset, size, bytes.NewReader(data))
 		}
 		log.WithError(err).WithField("asset", asset).Warn("The release could not be downloaded on the control connection; trying its https URL")
+	}
+	if parsed, err := neturl.Parse(url); err == nil && a.relayedControlHost(parsed.Hostname()) {
+		return "", codeError(agentcontrol.UpgradeErrorDownload, "%s is on Control's host, which this node reaches only through region relays", asset)
 	}
 	client := a.HTTPClient
 	if client == nil {
@@ -560,6 +623,11 @@ func (a *Agent) download(ctx context.Context, kind, version, url, asset, sum str
 	return a.saveTemp(asset, size, response.Body)
 }
 
+// releaseCacheTimeout bounds one release cache download, so that a stalled
+// cache leaves the next source time to run even when Control gave the
+// upgrade no deadline. A variable so tests can shorten it.
+var releaseCacheTimeout = 5 * time.Minute
+
 // downloadFromCaches asks each release cache for the file by sum, passing
 // url as the source the cache may download it from. It answers false when
 // no cache served a file of the right SHA-256.
@@ -574,10 +642,11 @@ func (a *Agent) downloadFromCaches(ctx context.Context, source, asset, sum strin
 		client = &http.Client{Transport: &http.Transport{ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second}}
 	}
 	for _, cache := range caches {
-		cacheCtx, cancel := ctx, context.CancelFunc(func() {})
+		timeout := releaseCacheTimeout
 		if deadline, ok := ctx.Deadline(); ok {
-			cacheCtx, cancel = context.WithTimeout(ctx, time.Until(deadline)/3)
+			timeout = min(timeout, time.Until(deadline)/3)
 		}
+		cacheCtx, cancel := context.WithTimeout(ctx, timeout)
 		temp, err := a.downloadFromCache(cacheCtx, client, cache, source, asset, sum, size)
 		cancel()
 		if err == nil {

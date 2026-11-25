@@ -57,7 +57,8 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		// credential, then the enrolled identity), and it needs TLS.
 		return nil, fmt.Errorf("agent control needs TLS (GRPCUseTLS or an https ApiHost): the agent identity is the node's only credential")
 	}
-	relays, err := agentControlRelays(apiConfig)
+	owner := "proxy-" + strconv.Itoa(nodeID)
+	relays, err := agentControlRelays(owner, apiConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +78,7 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 	// privileged updater is installed.
 	controller.upgrader = agentUpgrader()
 	if controller.upgrader != nil {
-		controller.upgrader.SetCaches(apiConfig.ReleaseCaches)
+		controller.upgrader.SetRoute(owner, relayRoute(apiConfig, relays, target, serverName))
 		dataPlaneConfig.Upgrade = controller.upgrader.Available(context.Background())
 	}
 
@@ -225,32 +226,79 @@ func agentControlDataPlane(apiConfig *conf.ApiConfig, nodeID int, target string,
 	return config, nil
 }
 
-// agentControlRelays answers the region relays of apiConfig (GRPCRelays,
-// anix-control docs/design/region-relay), nil without any. Every node
-// identity of the process with the same list shares one dialer, so the
-// relays are measured once and a failed relay is passed over by all.
-func agentControlRelays(apiConfig *conf.ApiConfig) (*agentapi.Relays, error) {
+// agentControlRelays answers the region relays of node identity owner's
+// apiConfig (GRPCRelays, anix-control docs/design/region-relay), nil
+// without any. Every node identity of the process with the same list
+// shares one dialer, so the relays are measured once and a failed relay is
+// passed over by all; a list no identity uses any more is dropped.
+func agentControlRelays(owner string, apiConfig *conf.ApiConfig) (*agentapi.Relays, error) {
 	key := strings.Join(apiConfig.GRPCRelays, ",")
 	if strings.TrimSpace(key) == "" {
-		return nil, nil
+		key = ""
 	}
 	relaysMu.Lock()
 	defer relaysMu.Unlock()
-	if relays, ok := relaysByList[key]; ok {
-		return relays, nil
+	if previous, ok := relaysOwners[owner]; ok && previous != key {
+		delete(relaysOwners, owner)
+		if !relaysListInUse(previous) {
+			delete(relaysByList, previous)
+		}
 	}
-	relays, err := agentapi.NewRelays(apiConfig.GRPCRelays)
-	if err != nil {
-		return nil, fmt.Errorf("GRPCRelays: %w", err)
+	if key == "" {
+		return nil, nil
 	}
-	relaysByList[key] = relays
+	relays, ok := relaysByList[key]
+	if !ok {
+		var err error
+		if relays, err = agentapi.NewRelays(apiConfig.GRPCRelays); err != nil {
+			return nil, fmt.Errorf("GRPCRelays: %w", err)
+		}
+		if relays == nil {
+			return nil, nil
+		}
+		relaysByList[key] = relays
+	}
+	relaysOwners[owner] = key
 	return relays, nil
+}
+
+// relaysListInUse reports whether a node identity uses the relay list key;
+// the caller holds relaysMu.
+func relaysListInUse(key string) bool {
+	for _, used := range relaysOwners {
+		if used == key {
+			return true
+		}
+	}
+	return false
 }
 
 var (
 	relaysMu     sync.Mutex
 	relaysByList = map[string]*agentapi.Relays{}
+	// relaysOwners is the relay list key of each node identity.
+	relaysOwners = map[string]string{}
 )
+
+// relayRoute is the upgrade route of a node identity: its release caches,
+// and, when it reaches Control through relays, Control's host names, which
+// a release is then never downloaded from directly.
+func relayRoute(apiConfig *conf.ApiConfig, relays *agentapi.Relays, target, serverName string) upgrade.RelayRoute {
+	route := upgrade.RelayRoute{Caches: apiConfig.ReleaseCaches}
+	if relays == nil {
+		return route
+	}
+	hosts := []string{agentControlTargetHost(target), serverName}
+	if parsed, err := url.Parse(strings.TrimSpace(apiConfig.APIHost)); err == nil {
+		hosts = append(hosts, parsed.Hostname())
+	}
+	for _, host := range hosts {
+		if host = strings.TrimSpace(host); host != "" {
+			route.ControlHosts = append(route.ControlHosts, host)
+		}
+	}
+	return route
+}
 
 // agentUpgrader answers the process's agent.upgrade handler (tests
 // replace it; nil turns upgrades off).

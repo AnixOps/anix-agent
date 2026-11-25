@@ -55,6 +55,8 @@ type fakeControl struct {
 	enrolls     []fakeEnroll
 	renews      []fakeRenew
 	streams     []fakeStreamAuth
+	// serverNames are the TLS server names the handshakes asked for.
+	serverNames []string
 }
 
 type fakeEnroll struct {
@@ -104,7 +106,10 @@ func newFakeControl(t *testing.T, mode string, enrollment bool) *fakeControl {
 
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
-		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			fake.mu.Lock()
+			fake.serverNames = append(fake.serverNames, hello.ServerName)
+			fake.mu.Unlock()
 			config := &tls.Config{Certificates: []tls.Certificate{serverCertificate}, MinVersion: tls.VersionTLS12}
 			// As Control: a client certificate is requested, never required
 			// in the handshake, unless the mode is off or the PKI disabled.
