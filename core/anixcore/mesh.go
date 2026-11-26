@@ -31,6 +31,7 @@ const (
 	meshResolverAddressFeature = "mesh_resolver_address"
 	meshHostGroupsFeature      = "mesh_host_groups"
 	meshExternalBridgeFeature  = "mesh_external_bridge"
+	meshPathsFeature           = "mesh_paths"
 	meshRegionRequestsFeature  = "mesh_region_requests"
 	meshNativeKeysFeature      = "mesh_native_keys"
 )
@@ -87,7 +88,7 @@ func (c *Core) putMesh() error {
 	body := meshBody(c.mesh, meshSections{
 		dns: c.client.meshDNS.Load(), dnsResolver: c.client.meshResolverAddress.Load(),
 		hostGroups: c.client.meshHostGroups.Load(), externalBridge: c.client.meshExternalBridge.Load(),
-		nativeKeys: c.client.meshNativeKeys.Load(),
+		nativeKeys: c.client.meshNativeKeys.Load(), paths: c.client.meshPaths.Load(),
 	})
 	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
 		return fmt.Errorf("anixcore mesh: %w", err)
@@ -135,6 +136,9 @@ func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 	for i := range answer.Networks {
 		answer.Networks[i].ID = strings.TrimPrefix(answer.Networks[i].Tag, meshTagPrefix)
 		answer.Networks[i].Tag = ""
+		if len(answer.Networks[i].Paths) == 0 {
+			answer.Networks[i].Paths = nil
+		}
 		// externalBridge has three states, all passed on: a digest, an
 		// explicit null (the kernel runs no bridge on this network, so
 		// Control may release its addresses), or no key (unknown: never
@@ -178,7 +182,7 @@ func (c *Core) DoneMeshRegionRequest(ctx context.Context, id string) error {
 
 // meshSections are the optional parts of a network the kernel takes.
 type meshSections struct {
-	dns, dnsResolver, hostGroups, externalBridge, nativeKeys bool
+	dns, dnsResolver, hostGroups, externalBridge, nativeKeys, paths bool
 }
 
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
@@ -227,7 +231,7 @@ func meshBody(networks []panel.MeshNetwork, take meshSections) map[string]any {
 			config["subnets"] = n.Subnets
 		}
 		if len(n.Routing) > 0 {
-			config["routing"] = n.Routing
+			config["routing"] = meshRouting(n.Routing, take.paths)
 		}
 		if take.dns && present(n.DNS) {
 			config["dns"] = meshDNS(n.DNS, take.dnsResolver)
@@ -241,6 +245,29 @@ func meshBody(networks []panel.MeshNetwork, take meshSections) map[string]any {
 		out = append(out, config)
 	}
 	return map[string]any{"networks": out}
+}
+
+// meshRouting is the routing section for the kernel: without paths (the
+// kernel does not list mesh_paths: it takes routing.paths but does not
+// apply them) routing.paths is emptied, so no path is taken for applied.
+// A section that is not an object, or has no paths, goes as it is.
+func meshRouting(routing json.RawMessage, paths bool) json.RawMessage {
+	if paths {
+		return routing
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(routing, &fields) != nil || fields == nil {
+		return routing
+	}
+	if _, ok := fields["paths"]; !ok {
+		return routing
+	}
+	fields["paths"] = json.RawMessage(`[]`)
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return routing
+	}
+	return out
 }
 
 // meshDNS is the dns section for the kernel: without resolver it drops

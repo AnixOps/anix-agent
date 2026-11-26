@@ -177,6 +177,11 @@ type MeshNetworkStatus struct {
 	// apply failed or the kernel could not be read; Control never takes
 	// that as no bridge.
 	ExternalBridge json.RawMessage `json:"externalBridge,omitempty"`
+	// Paths is the state of the network's custom paths (paths[]: id,
+	// target, via, state, unreachable, reason), passed on as the kernel
+	// gives it; left out when the kernel gives none or the Agent does not
+	// know it.
+	Paths json.RawMessage `json:"paths,omitempty"`
 }
 
 // MeshFailure is why the kernel does not run a network.

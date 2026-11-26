@@ -459,3 +459,60 @@ func TestMeshExternalBridge(t *testing.T) {
 		t.Fatalf("report = %s", report)
 	}
 }
+
+// routing.paths reach a kernel that lists mesh_paths; another takes the
+// field but does not apply it, so it gets [] (on replay too). The paths'
+// state goes on as the kernel gives it.
+func TestMeshPaths(t *testing.T) {
+	network := testMeshNetwork()
+	network.Routing = json.RawMessage(`{"policy":"latency","paths":[{"to_peer":"10.150.0.9","via":["10.150.0.3"]}]}`)
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	if err := core.ApplyMesh([]panel.MeshNetwork{network}); err != nil {
+		t.Fatal(err)
+	}
+	routing := func() string {
+		got, _ := json.Marshal(api.mesh[len(api.mesh)-1]["networks"].([]any)[0].(map[string]any)["routing"])
+		return string(got)
+	}
+	if got := routing(); got != `{"paths":[],"policy":"latency"}` {
+		t.Fatalf("routing = %s", got)
+	}
+	api.features = append(api.features, meshPathsFeature)
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if got := routing(); got != `{"paths":[{"to_peer":"10.150.0.9","via":["10.150.0.3"]}],"policy":"latency"}` {
+		t.Fatalf("replayed routing = %s", got)
+	}
+
+	// No paths key: none in the report; the kernel's state as it gives it.
+	state, err := core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Networks[0].Paths != nil {
+		t.Fatalf("paths = %s", state.Networks[0].Paths)
+	}
+	paths := `[{"id":"peer:10.150.0.9","reason":"","state":"fallback","target":{"peer":"m1"},"unreachable":["m2"],"via":["m2"]}]`
+	api.meshPaths = json.RawMessage(paths)
+	if state, err = core.MeshStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if report, _ := json.Marshal(state.Networks[0]); !strings.Contains(string(report), `"paths":`+paths) {
+		t.Fatalf("report = %s", report)
+	}
+}
+
+func TestMeshRoutingKeepsWhatHasNoPaths(t *testing.T) {
+	for _, raw := range []string{`{"policy":"latency"}`, `[1]`, `"x"`} {
+		if got := meshRouting(json.RawMessage(raw), false); string(got) != raw {
+			t.Fatalf("%s -> %s", raw, got)
+		}
+	}
+}

@@ -4,6 +4,11 @@
 
 ### Added
 
+- Intranet mesh, custom paths (R7–R9, R25): `routing.paths` reach the
+  kernel only when it lists `mesh_paths` (on replay too); an older kernel
+  takes the field without applying it, so it gets `[]`. Each network's
+  `paths[]` state in `GET /v1/mesh` goes on in `mesh.status` as the kernel
+  gives it.
 - Intranet mesh, external network bridge: while the kernel reports the
   alert `external_bridge_lock_held` on any network, another process on the
   host holds the bridge lock. That process may be a hung older instance
