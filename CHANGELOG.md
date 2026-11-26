@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- Network plan apply: do not cache a failed plan as applied when kernel
+  forwards or listener apply fails alongside a non-nil core status, so
+  Control retries re-attempt the failed components instead of silently
+  reporting success.
+- Relay route updates: add new links and replace `SetLinkRoutes` before
+  calling `RemoveLinks`, avoiding an empty-table window during updates.
+
 ### Added
 
 - Intranet mesh, region: the Agent passes the `region` object of the `mesh`

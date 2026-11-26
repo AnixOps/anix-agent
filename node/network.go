@@ -271,15 +271,15 @@ func (c *networkComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	if c.servers != nil {
 		applyErr = errors.Join(applyErr, c.servers.Apply(accepts))
 	}
+	c.report(status)
+	if applyErr != nil {
+		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), applyErr)
+	}
 	c.mu.Lock()
 	c.plan = plan
 	c.mu.Unlock()
 	c.logger().WithFields(log.Fields{"generation": plan.GetGeneration(), "paths": len(plan.GetPaths())}).
 		Info("Applied the device's network plan")
-	c.report(status)
-	if applyErr != nil {
-		return fmt.Errorf("network plan generation %d: %w", plan.GetGeneration(), applyErr)
-	}
 	return nil
 }
 
