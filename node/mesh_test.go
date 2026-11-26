@@ -959,6 +959,44 @@ func TestMeshStatusCarriesTheRegionProbe(t *testing.T) {
 	}
 }
 
+func TestMeshReportsTheLatenciesOfANodeWaitingForItsRegion(t *testing.T) {
+	probe := json.RawMessage(`{"measured_at":"2026-11-26T03:00:00Z","regions":[{"region":"eu","rtt_ms":18.3}]}`)
+	kernel := &fakeMesh{supported: true, regionProbe: true, requests: []panel.MeshRegionRequest{{ID: "r1", Region: "eu"}}}
+	c := testMeshComponent(t, kernel, nil)
+	// Control added the node without a region: no network, a region
+	// object without a current region.
+	object := `{"current":null,"basis":null,"directory":{"version":1,"preferred":null,"regions":[]},"responder":null}`
+	if err := c.apply(meshSnapshot(`,"mesh":{"networks":[],"region":` + object + `}`)); err != nil {
+		t.Fatal(err)
+	}
+	if string(kernel.region) != object || len(kernel.applied) != 1 || len(kernel.applied[0]) != 0 {
+		t.Fatalf("region = %s, applied = %+v", kernel.region, kernel.applied)
+	}
+	// No round yet: nothing to report.
+	if _, _, ok := c.status(context.Background()); ok {
+		t.Fatal("reported before the first round")
+	}
+	kernel.probe = probe
+	status, requests, ok := c.status(context.Background())
+	payload, _ := json.Marshal(status)
+	if !ok || len(status.Networks) != 0 || len(requests) != 0 ||
+		!strings.Contains(string(payload), `"region_probe":`+string(probe)) || !strings.Contains(string(payload), `"networks":[]`) {
+		t.Fatalf("status = %s, requests %+v, ok %v", payload, requests, ok)
+	}
+	// Without the feature, or without a region object: nothing.
+	kernel.regionProbe = false
+	if _, _, ok := c.status(context.Background()); ok {
+		t.Fatal("reported without mesh_region_probe")
+	}
+	kernel.regionProbe = true
+	if err := c.apply(meshSnapshot(`,"mesh":{"networks":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := c.status(context.Background()); ok {
+		t.Fatal("reported without a region object")
+	}
+}
+
 func TestMeshSendsAWithdrawalAsItIs(t *testing.T) {
 	kernel := &fakeMesh{supported: true, requests: []panel.MeshRegionRequest{
 		{ID: "w1", Network: "cn", Withdraw: true},

@@ -83,6 +83,8 @@
 `region_probe`；内核未列出该 feature 或读取失败时不带这个键。`region_requests[]` 中带 `"withdraw": true` 的记录，Agent 以载荷 `{"withdraw": true}` 作为
 `mesh.region_request` 上报（不带 `region`、`reason`），之后与普通申请一样删除。
 
+面板以自动选区加入、尚无区域的节点，`mesh` 只有空的 `networks` 和 `current` 为 `null` 的 `region`。Agent 仍把 `region` 交给内核测量；内核列出 `mesh_region_probe` 且 `region_probe` 已有一轮结果时，Agent 上报只含 `region_probe`（`networks` 为空）的 `mesh.status`，面板据此选区并下发网络。这类节点不发送迁区申请。
+
 `instance_id` 是本机的组网实例 ID，即组网状态快照的 `self.id`（首次启动生成，重启与升级不变），1–64 位字母、数字或 `-`，首字符须为字母或数字；
 不合规时 Agent 按未给出处理。网络暂缓启动（`takeover_pending`）时内核也应给出。
 

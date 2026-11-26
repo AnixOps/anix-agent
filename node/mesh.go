@@ -256,14 +256,18 @@ func (c *meshComponent) admissible(networks []panel.MeshNetwork) ([]panel.MeshNe
 // status is the report payload now and the region requests the kernel
 // holds. ok is false while the node is in no region (no member, or one
 // without networks): Control refuses that node's reports (not_assigned),
-// so none go, and the kernel keeps its region requests.
+// so none go, and the kernel keeps its region requests. A node waiting
+// for its region reports only its latencies (waitingStatus).
 func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, requests []panel.MeshRegionRequest, ok bool) {
 	c.mu.Lock()
 	member, applyErr, took, held := c.member, c.err, c.took, c.held
 	c.mu.Unlock()
 	status = panel.MeshStatus{Networks: []panel.MeshNetworkStatus{}, Takeover: took}
-	if member == nil || len(member.Networks) == 0 {
+	if member == nil {
 		return status, nil, false
+	}
+	if len(member.Networks) == 0 {
+		return c.waitingStatus(ctx, member, status)
 	}
 	// A kernel with the mesh answers its instance id and region requests
 	// even while the networks wait for the takeover.
@@ -403,6 +407,26 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		status.Networks = append(status.Networks, entry)
 	}
 	return status, state.RegionRequests, true
+}
+
+// waitingStatus is the report of a node Control added without a region
+// (a member with no networks and a region object): Control places it by
+// the latencies its kernel measured, so the status goes with only
+// region_probe once the kernel reports a round. ok is false otherwise
+// (no region object, a kernel without mesh_region_probe, a failed read, or
+// no round yet), as for a node in no region. A waiting node holds no
+// network, so it has no region requests to send.
+func (c *meshComponent) waitingStatus(ctx context.Context, member *panel.Mesh, status panel.MeshStatus) (panel.MeshStatus, []panel.MeshRegionRequest, bool) {
+	if len(member.Region) == 0 || string(member.Region) == "null" || !c.core.MeshSupported() || !c.core.MeshRegionProbeSupported() {
+		return status, nil, false
+	}
+	state, err := c.core.MeshStatus(ctx)
+	if err != nil || len(state.RegionProbe) == 0 || string(state.RegionProbe) == "null" {
+		return status, nil, false
+	}
+	status.InstanceID = state.InstanceID
+	status.RegionProbe = state.RegionProbe
+	return status, nil, true
 }
 
 // report sends the status, then the kernel's region requests, on a
