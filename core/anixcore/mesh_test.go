@@ -459,3 +459,61 @@ func TestMeshExternalBridge(t *testing.T) {
 		t.Fatalf("report = %s", report)
 	}
 }
+
+// routing.paths goes as it is only to a kernel that lists mesh_paths; any
+// other kernel gets an empty list, and a routing without paths, or one that
+// is not an object, is left alone.
+func TestMeshRoutingPaths(t *testing.T) {
+	routingOf := func(routing string, paths bool) string {
+		network := testMeshNetwork()
+		network.Routing = json.RawMessage(routing)
+		body := meshBody([]panel.MeshNetwork{network}, meshSections{nativeKeys: true, paths: paths})["networks"].([]map[string]any)[0]
+		out, err := json.Marshal(body["routing"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	with := `{"policy":"latency","paths":[{"to_peer":"10.150.0.9","via":["10.150.0.2"]}]}`
+	if got := routingOf(with, true); got != with {
+		t.Fatalf("with mesh_paths: %s", got)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(routingOf(with, false)), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	list, ok := decoded["paths"].([]any)
+	if decoded["policy"] != "latency" || !ok || len(list) != 0 {
+		t.Fatalf("without mesh_paths: %v", decoded)
+	}
+	for _, same := range []string{`{"policy":"latency"}`, `{"policy":"latency","paths":[]}`, `"latency"`, `[1]`} {
+		if got := routingOf(same, false); got != same {
+			t.Fatalf("%s changed to %s", same, got)
+		}
+	}
+}
+
+// mesh_paths is taken from the features, and only together with mesh.
+func TestMeshPathsFeature(t *testing.T) {
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	if core.MeshPathsSupported() {
+		t.Fatal("mesh_paths without the feature")
+	}
+	api.features = append(api.features, meshPathsFeature)
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !core.MeshPathsSupported() {
+		t.Fatal("mesh_paths not taken")
+	}
+	api.features = []string{meshPathsFeature}
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if core.MeshPathsSupported() {
+		t.Fatal("mesh_paths without mesh")
+	}
+}

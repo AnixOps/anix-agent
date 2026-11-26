@@ -26,12 +26,16 @@ type fakeMesh struct {
 	noNativeKeys bool
 	// externalBridge: the kernel takes external_bridge.
 	externalBridge bool
-	applied        [][]panel.MeshNetwork
-	instanceID     string
-	requests       []panel.MeshRegionRequest
-	keys           map[string]string
-	failures       map[string]*panel.MeshFailure
-	statusErr      error
+	// paths: the kernel applies routing.paths.
+	paths bool
+	// pathState is the networks' paths (by id), raw.
+	pathState  map[string]json.RawMessage
+	applied    [][]panel.MeshNetwork
+	instanceID string
+	requests   []panel.MeshRegionRequest
+	keys       map[string]string
+	failures   map[string]*panel.MeshFailure
+	statusErr  error
 	// bridges are the networks' externalBridge (by id), raw.
 	bridges map[string]json.RawMessage
 	// alerts are the networks' kernel alerts (by id); nodeAlerts the
@@ -46,6 +50,8 @@ func (f *fakeMesh) MeshSupported() bool { return f.supported }
 func (f *fakeMesh) MeshNativeKeysSupported() bool { return f.supported && !f.noNativeKeys }
 
 func (f *fakeMesh) MeshExternalBridgeSupported() bool { return f.supported && f.externalBridge }
+
+func (f *fakeMesh) MeshPathsSupported() bool { return f.supported && f.paths }
 
 func (f *fakeMesh) ApplyMesh(networks []panel.MeshNetwork) error {
 	if len(networks) > 0 && !f.supported {
@@ -65,6 +71,7 @@ func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
 			entry := panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}}
 			entry.ExternalBridge = f.bridges[network.ID]
 			entry.Alerts = f.alerts[network.ID]
+			entry.Paths = f.pathState[network.ID]
 			if failure := f.failures[network.ID]; failure != nil {
 				entry.Running, entry.Failure = false, failure
 			}
@@ -810,5 +817,62 @@ func TestMeshSeesTheBridgeLockWithoutNetworks(t *testing.T) {
 	kernel.nodeAlerts = nil
 	if got := bridges(); strings.Contains(got, "-") {
 		t.Fatalf("lock free: externalBridge = %s", got)
+	}
+}
+
+// A network with custom paths on a kernel that does not take mesh_paths
+// runs on default routing and reports paths_unsupported; a network without
+// paths, or a kernel that takes them, raises none.
+func TestMeshWarnsWhenTheKernelDoesNotTakePaths(t *testing.T) {
+	kernel := &fakeMesh{supported: true}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[],` +
+		`"routing":{"policy":"latency","paths":[{"to_peer":"10.150.0.9","via":["10.150.0.2"]}]}},` +
+		`{"id":"eu","name":"mesh-eu","secret":"s","secure_mode":true,"address":"10.151.0.5/16","native_keys":[],` +
+		`"routing":{"policy":"latency","paths":[]}}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _ := c.status(context.Background())
+	if !status.Networks[0].Running || !hasAlert(status.Networks[0].Alerts, panel.MeshAlertPathsUnsupported) ||
+		len(status.Networks[1].Alerts) != 0 {
+		t.Fatalf("status = %+v", status)
+	}
+	kernel.paths = true
+	if status, _, _ := c.status(context.Background()); len(status.Networks[0].Alerts) != 0 {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+// A network the Agent holds back raises no paths_unsupported.
+func TestMeshHeldNetworkRaisesNoPathsAlert(t *testing.T) {
+	kernel := &fakeMesh{supported: true}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"odd","name":"odd","kind":"open","secret":"s","address":"10.98.0.5/24",` +
+		`"routing":{"paths":[{"to_peer":"10.98.0.9","via":["10.98.0.2"]}]}}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _ := c.status(context.Background())
+	if len(status.Networks[0].Alerts) != 1 || status.Networks[0].Alerts[0].Code != panel.MeshAlertInvalidKind {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+// The kernel's path state is reported as it gives it.
+func TestMeshPassesPathStateThrough(t *testing.T) {
+	state := json.RawMessage(`[{"id":"peer:10.150.0.9","target":{"peer":"x"},"via":["y"],"state":"active","unreachable":false,"reason":""}]`)
+	kernel := &fakeMesh{supported: true, paths: true, pathState: map[string]json.RawMessage{"cn": state}}
+	c := testMeshComponent(t, kernel, nil)
+	member := `,"mesh":{"networks":[` +
+		`{"id":"cn","name":"mesh-cn","secret":"s","secure_mode":true,"address":"10.150.0.5/16","native_keys":[]}]}`
+	if err := c.apply(meshSnapshot(member)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _ := c.status(context.Background())
+	if string(status.Networks[0].Paths) != string(state) {
+		t.Fatalf("paths = %s", status.Networks[0].Paths)
 	}
 }

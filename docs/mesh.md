@@ -46,7 +46,7 @@
 - **发布顺序：** 带上述检查的 Agent 必须在内核列出 `mesh_native_keys` 之后发布，否则节点上全部 `managed`（地区）网络都会被扣下。
 - `dns`（内网域名，R28）与 `host_groups`（宿主组，R21、R25；网关以实例 ID 指定）由面板始终下发。内核拒绝未知字段，
   所以 Agent 只把本机内核支持的节交给内核：`features` 有 `mesh_dns`（内核 0.3 起）才带 `dns`（另有 `mesh_resolver_address` 才保留其中的 `resolver_address`，否则只去掉这一项），有 `mesh_host_groups`
-  （内核 0.4 起）才带 `host_groups`，有 `mesh_external_bridge`（内核 0.4 起）才带 `external_bridge`（桥接节点才有此节）；值为 `null` 视同未下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
+  （内核 0.4 起）才带 `host_groups`，有 `mesh_external_bridge`（内核 0.4 起）才带 `external_bridge`（桥接节点才有此节）；值为 `null` 视同未下发；没有 `mesh_paths`（内核 0.5 起）时把 `routing.paths` 置为 `[]`，有则原样下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
 - 一个 Agent 进程里由第一个带内核的节点驱动组网（内核只运行一套网络）。
 
 ## 内核接口（需内核提供）
@@ -73,6 +73,7 @@
 | `mesh_resolver_address` | `dns` 节接受 `resolver_address`（固定解析地址） | 0.4 |
 | `mesh_host_groups` | 网络配置接受 `host_groups` | 0.4 |
 | `mesh_external_bridge` | 网络配置接受 `external_bridge`（外部网络桥接，R36），`GET /v1/mesh` 的网络带 `externalBridge`（摘要） | 0.4 |
+| `mesh_paths` | 网络配置的 `routing.paths`（自定义路径）由内核应用，`GET /v1/mesh` 的网络带 `paths[]`（路径状态，Agent 原样透传） | 0.5 |
 | `mesh_region_requests` | `GET /v1/mesh` 带 `region_requests`，并有 `DELETE /v1/mesh/region_requests/{id}` | 0.4 |
 | `mesh_native_keys` | 网络配置的 `network` 层接受 `native_keys`，`GET /v1/mesh` 带 `static_keys` | 0.3 |
 
@@ -107,7 +108,7 @@ Agent 把它转成同码的告警上报，不上报 `failure` 本身。
 ```
 
 Agent 自己给出的告警码：`unsupported`（内核没有组网）、`takeover_pending`（现有组网程序仍在运行，网络暂缓启动）、
-`native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）、`invalid_kind`（网络 `kind` 未知，暂不下发）、`external_bridge_unsupported`（内核未列出 `mesh_external_bridge`，网络照常运行但不带 `external_bridge`）、`external_bridge_downgrade_residue`（仅 Linux。列出 `mesh_external_bridge` 的内核曾报告本节点在该网络上已应用桥接（`externalBridge` 为对象），而现在的内核没有这项能力，不会清除新内核留下的桥接规则。带这个告警的网络不再报 `external_bridge_unsupported`，也不报 `"externalBridge": null`，而是不带该键（表示未知），面板因此继续保留为桥接所做的保留。请先清除规则，或在降级前让新内核正常退出，然后删除 `/var/lib/anixops-agent/mesh/bridged.json`（Agent 自己的状态目录）。具备这项能力的内核对该网络报告 `null` 后，告警自动消失）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。内核在任一网络上报告 `external_bridge_lock_held`（同一主机上另有进程持有桥接锁，可能是卡住的旧实例，其规则仍在生效）时，所有网络都不报 `"externalBridge": null`，也不加 `external_bridge_unsupported`，而是不带该键，表示未知。
+`native_keys_unsupported`（内核不认识 `native_keys`，`managed` 网络暂不下发）、`invalid_kind`（网络 `kind` 未知，暂不下发）、`external_bridge_unsupported`（内核未列出 `mesh_external_bridge`，网络照常运行但不带 `external_bridge`）、`external_bridge_downgrade_residue`（仅 Linux。列出 `mesh_external_bridge` 的内核曾报告本节点在该网络上已应用桥接（`externalBridge` 为对象），而现在的内核没有这项能力，不会清除新内核留下的桥接规则。带这个告警的网络不再报 `external_bridge_unsupported`，也不报 `"externalBridge": null`，而是不带该键（表示未知），面板因此继续保留为桥接所做的保留。请先清除规则，或在降级前让新内核正常退出，然后删除 `/var/lib/anixops-agent/mesh/bridged.json`（Agent 自己的状态目录）。具备这项能力的内核对该网络报告 `null` 后，告警自动消失）。`paths_unsupported`（内核未列出 `mesh_paths`，网络照常运行但不应用自定义路径，`routing.paths` 下发为 `[]`）。内核暂缓网络的原因（如 `native_keys_pending`）也作为告警上报。内核在任一网络上报告 `external_bridge_lock_held`（同一主机上另有进程持有桥接锁，可能是卡住的旧实例，其规则仍在生效）时，所有网络都不报 `"externalBridge": null`，也不加 `external_bridge_unsupported`，而是不带该键，表示未知。
 
 - 运行外部网络桥接的网络带 `externalBridge`（`{allowDigest, routesDigest, allowCount, appliedAt}`）：内核 `GET /v1/mesh` 中该网络
   已生效桥接配置的摘要，Agent 原样转述，不改写、不校验；面板对自己下发的名单按同一算法计算，相等即视为已应用。三种状态：摘要；
