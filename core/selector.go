@@ -307,6 +307,11 @@ func (s *Selector) MeshExternalBridgeSupported() bool {
 	return ok && a.MeshExternalBridgeSupported()
 }
 
+func (s *Selector) MeshPathsSupported() bool {
+	a, ok := first[MeshApplier](s)
+	return ok && a.MeshPathsSupported()
+}
+
 func (s *Selector) ApplyMesh(networks []panel.MeshNetwork) error {
 	if a, ok := first[MeshApplier](s); ok {
 		return a.ApplyMesh(networks)

@@ -302,6 +302,9 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 	// releases what it held for a bridge deleted since, which the alert
 	// alone (sent only while a bridge is configured) never lets it do.
 	noBridge := readErr == nil && !lockHeld && c.core.MeshSupported() && !c.core.MeshExternalBridgeSupported()
+	// paths: the kernel was given the networks and does not apply
+	// routing.paths (mesh_paths).
+	paths := applyErr == nil && c.core.MeshSupported() && !c.core.MeshPathsSupported()
 	var running map[string]panel.MeshNetworkStatus
 	if applyErr == nil {
 		applyErr = readErr
@@ -356,6 +359,14 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 			entry.Alerts = append(entry.Alerts, panel.MeshAlert{
 				Code:   panel.MeshAlertExternalBridgeUnsupported,
 				Detail: "the kernel does not take external_bridge, so it runs this network without the bridge; update it",
+			})
+		}
+		// The kernel runs the network on default routing, without the
+		// custom paths it does not take.
+		if paths && hasPaths(network.Routing) && !held[network.ID] && !holdNow(network, nativeKeys) && !hasAlert(entry.Alerts, panel.MeshAlertPathsUnsupported) {
+			entry.Alerts = append(entry.Alerts, panel.MeshAlert{
+				Code:   panel.MeshAlertPathsUnsupported,
+				Detail: "the kernel does not apply custom paths (mesh_paths), so it runs this network on default routing; update it",
 			})
 		}
 		if residue[network.ID] && !hasAlert(entry.Alerts, panel.MeshAlertExternalBridgeDowngradeResidue) {
@@ -621,6 +632,15 @@ func writeBridged(path string, bridged map[string]bool) error {
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// hasPaths tells whether routing is an object whose paths is a non-empty
+// JSON array.
+func hasPaths(routing json.RawMessage) bool {
+	var fields struct {
+		Paths []json.RawMessage `json:"paths"`
+	}
+	return json.Unmarshal(routing, &fields) == nil && len(fields.Paths) > 0
 }
 
 // meshSent tells whether the panel sent a section, not empty nor null.

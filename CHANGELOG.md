@@ -4,6 +4,11 @@
 
 ### Added
 
+- Intranet mesh, custom paths: the Agent passes a network's `routing.paths`
+  only to a kernel that lists `mesh_paths`; any other kernel gets
+  `paths: []`, and each network that has paths reports the alert
+  `paths_unsupported`. The kernel's `networks[].paths[]` status is passed
+  on to Control unchanged.
 - Intranet mesh, external network bridge: while the kernel reports the
   alert `external_bridge_lock_held` on any network, another process on the
   host holds the bridge lock. That process may be a hung older instance

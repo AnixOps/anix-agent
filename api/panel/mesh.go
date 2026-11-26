@@ -177,6 +177,10 @@ type MeshNetworkStatus struct {
 	// apply failed or the kernel could not be read; Control never takes
 	// that as no bridge.
 	ExternalBridge json.RawMessage `json:"externalBridge,omitempty"`
+	// Paths is the kernel's custom path state (networks[].paths[]: id,
+	// target, via, state, unreachable, reason), passed on unchanged; the
+	// Agent does not read it.
+	Paths json.RawMessage `json:"paths,omitempty"`
 }
 
 // MeshFailure is why the kernel does not run a network.
@@ -224,7 +228,8 @@ type MeshPeerStatus struct {
 // start_refused (R12), external_bridge_lock_held, and the code of a network it holds back
 // (failure, such as native_keys_pending); the Agent raises unsupported,
 // takeover_pending, native_keys_unsupported, invalid_kind,
-// external_bridge_unsupported and external_bridge_downgrade_residue.
+// external_bridge_unsupported, external_bridge_downgrade_residue and
+// paths_unsupported.
 const (
 	MeshAlertTakeoverPending  = "takeover_pending"
 	MeshAlertAddressConflict  = "address_conflict"
@@ -248,6 +253,9 @@ const (
 	// not take the host's bridge lock (another process on the host runs
 	// a bridge) and so does not list mesh_external_bridge.
 	MeshAlertExternalBridgeLockHeld = "external_bridge_lock_held"
+	// MeshAlertPathsUnsupported: the kernel does not list mesh_paths, so
+	// the network runs on default routing without its custom paths.
+	MeshAlertPathsUnsupported = "paths_unsupported"
 )
 
 // MeshAlert is one alert of a network.

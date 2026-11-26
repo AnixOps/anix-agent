@@ -91,6 +91,9 @@ type MeshApplier interface {
 	// MeshExternalBridgeSupported tells whether it takes a network's
 	// external_bridge.
 	MeshExternalBridgeSupported() bool
+	// MeshPathsSupported tells whether it applies a network's
+	// routing.paths (feature mesh_paths).
+	MeshPathsSupported() bool
 	// ApplyMesh replaces the networks the kernel runs; none stops them.
 	ApplyMesh(networks []panel.MeshNetwork) error
 	// MeshStatus answers the kernel's instance id, each network as the

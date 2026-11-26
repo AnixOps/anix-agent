@@ -20,7 +20,8 @@ import (
 // meshDNSFeature and meshHostGroupsFeature: the kernel rejects unknown
 // fields, and dns.resolver_address goes only to one that also lists
 // meshResolverAddressFeature; external_bridge only to one that lists
-// meshExternalBridgeFeature. A kernel that lists meshRegionRequestsFeature holds the node
+// meshExternalBridgeFeature. routing.paths goes as it is only to a kernel that
+// lists meshPathsFeature; any other kernel gets "paths": []. A kernel that lists meshRegionRequestsFeature holds the node
 // owner's region requests in the GET answer until
 // DELETE /v1/mesh/region_requests/{id}.
 
@@ -31,6 +32,7 @@ const (
 	meshResolverAddressFeature = "mesh_resolver_address"
 	meshHostGroupsFeature      = "mesh_host_groups"
 	meshExternalBridgeFeature  = "mesh_external_bridge"
+	meshPathsFeature           = "mesh_paths"
 	meshRegionRequestsFeature  = "mesh_region_requests"
 	meshNativeKeysFeature      = "mesh_native_keys"
 )
@@ -52,6 +54,13 @@ func (c *Core) MeshExternalBridgeSupported() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.client != nil && c.client.meshExternalBridge.Load()
+}
+
+// MeshPathsSupported implements vCore.MeshApplier.
+func (c *Core) MeshPathsSupported() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client != nil && c.client.meshPaths.Load()
 }
 
 // MeshSupported implements vCore.MeshApplier.
@@ -87,7 +96,7 @@ func (c *Core) putMesh() error {
 	body := meshBody(c.mesh, meshSections{
 		dns: c.client.meshDNS.Load(), dnsResolver: c.client.meshResolverAddress.Load(),
 		hostGroups: c.client.meshHostGroups.Load(), externalBridge: c.client.meshExternalBridge.Load(),
-		nativeKeys: c.client.meshNativeKeys.Load(),
+		nativeKeys: c.client.meshNativeKeys.Load(), paths: c.client.meshPaths.Load(),
 	})
 	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
 		return fmt.Errorf("anixcore mesh: %w", err)
@@ -178,13 +187,14 @@ func (c *Core) DoneMeshRegionRequest(ctx context.Context, id string) error {
 
 // meshSections are the optional parts of a network the kernel takes.
 type meshSections struct {
-	dns, dnsResolver, hostGroups, externalBridge, nativeKeys bool
+	dns, dnsResolver, hostGroups, externalBridge, nativeKeys, paths bool
 }
 
 // meshBody is the PUT /v1/mesh body of networks: each flat network of the
 // panel in the kernel's layered configuration, with dns, host_groups and
 // native_keys only when the kernel takes them (dns.resolver_address only
-// with mesh_resolver_address). A network the kernel must
+// with mesh_resolver_address). routing.paths goes only with mesh_paths, else
+// as an empty list (meshRouting). A network the kernel must
 // not run (MeshHold: a managed one on a kernel without native_keys, which
 // would run it open to any node, or one of an unknown kind) is left out
 // here too, so a restarted, older kernel never gets it on replay; the
@@ -228,6 +238,9 @@ func meshBody(networks []panel.MeshNetwork, take meshSections) map[string]any {
 		}
 		if len(n.Routing) > 0 {
 			config["routing"] = n.Routing
+			if !take.paths {
+				config["routing"] = meshRouting(n.Routing)
+			}
 		}
 		if take.dns && present(n.DNS) {
 			config["dns"] = meshDNS(n.DNS, take.dnsResolver)
@@ -262,6 +275,31 @@ func meshDNS(dns json.RawMessage, resolver bool) json.RawMessage {
 	out, err := json.Marshal(fields)
 	if err != nil {
 		return dns
+	}
+	return out
+}
+
+// meshRouting is the routing section for a kernel without mesh_paths: it
+// replaces a non-empty paths list with [], which that kernel takes as no
+// custom paths. A section that is not an object, or has no paths, goes as
+// it is.
+func meshRouting(routing json.RawMessage) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(routing, &fields) != nil || fields == nil {
+		return routing
+	}
+	paths, ok := fields["paths"]
+	if !ok {
+		return routing
+	}
+	var list []json.RawMessage
+	if json.Unmarshal(paths, &list) == nil && list != nil && len(list) == 0 {
+		return routing
+	}
+	fields["paths"] = json.RawMessage(`[]`)
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return routing
 	}
 	return out
 }
