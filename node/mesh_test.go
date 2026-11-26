@@ -905,11 +905,12 @@ func TestMeshPassesPathStateThrough(t *testing.T) {
 }
 
 func TestMeshPassesTheRegionOnAndDropsAnInvalidOne(t *testing.T) {
+	// The member without its closing brace, so a region can follow.
 	networks := `{"networks":[{"id":"cn","name":"n","secret":"s","secure_mode":true,"address":"10.150.0.5/16"}]`
 	kernel := &fakeMesh{supported: true, regionProbe: true}
 	c := testMeshComponent(t, kernel, nil)
 	object := `{"current":"cn","basis":"admin","directory":null}`
-	if err := c.apply(meshSnapshot(`,"mesh":` + networks[:len(networks)-1] + `,"region":` + object + `}`)); err != nil {
+	if err := c.apply(meshSnapshot(`,"mesh":` + networks + `,"region":` + object + `}`)); err != nil {
 		t.Fatal(err)
 	}
 	if string(kernel.region) != object {
@@ -918,7 +919,7 @@ func TestMeshPassesTheRegionOnAndDropsAnInvalidOne(t *testing.T) {
 	// Anything but an object or null is dropped, and the rest still runs.
 	for _, bad := range []string{`"cn"`, `[1]`, `7`, `true`} {
 		kernel.region = nil
-		if err := c.apply(meshSnapshot(`,"mesh":` + networks[:len(networks)-1] + `,"region":` + bad + `}`)); err != nil {
+		if err := c.apply(meshSnapshot(`,"mesh":` + networks + `,"region":` + bad + `}`)); err != nil {
 			t.Fatalf("%s: %v", bad, err)
 		}
 		if kernel.region != nil {
