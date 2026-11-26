@@ -46,7 +46,7 @@
 - **发布顺序：** 带上述检查的 Agent 必须在内核列出 `mesh_native_keys` 之后发布，否则节点上全部 `managed`（地区）网络都会被扣下。
 - `dns`（内网域名，R28）与 `host_groups`（宿主组，R21、R25；网关以实例 ID 指定）由面板始终下发。内核拒绝未知字段，
   所以 Agent 只把本机内核支持的节交给内核：`features` 有 `mesh_dns`（内核 0.3 起）才带 `dns`（另有 `mesh_resolver_address` 才保留其中的 `resolver_address`，否则只去掉这一项），有 `mesh_host_groups`
-  （内核 0.4 起）才带 `host_groups`，有 `mesh_external_bridge`（内核 0.4 起）才带 `external_bridge`（桥接节点才有此节）；值为 `null` 视同未下发；没有 `mesh_paths`（内核 0.5 起）时把 `routing.paths` 置为 `[]`，有则原样下发。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
+  （内核 0.4 起）才带 `host_groups`，有 `mesh_external_bridge`（内核 0.4 起）才带 `external_bridge`（桥接节点才有此节）；值为 `null` 视同未下发；没有 `mesh_paths`（内核 0.5 起）时把非空的 `routing.paths` 列表置为 `[]`，有则原样下发；`paths` 不是列表时一律原样下发，新旧内核同样拒绝。内核升级重启后，Agent 按新的 `features` 重新发送，补上新支持的节。
 - 一个 Agent 进程里由第一个带内核的节点驱动组网（内核只运行一套网络）。
 
 ## 内核接口（需内核提供）

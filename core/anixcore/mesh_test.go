@@ -486,7 +486,8 @@ func TestMeshRoutingPaths(t *testing.T) {
 	if decoded["policy"] != "latency" || !ok || len(list) != 0 {
 		t.Fatalf("without mesh_paths: %v", decoded)
 	}
-	for _, same := range []string{`{"policy":"latency"}`, `{"policy":"latency","paths":[]}`, `"latency"`, `[1]`} {
+	for _, same := range []string{`{"policy":"latency"}`, `{"policy":"latency","paths":[]}`, `"latency"`, `[1]`,
+		`{"policy":"latency","paths":null}`, `{"policy":"latency","paths":{"to_peer":"10.150.0.9"}}`, `{"paths":"x"}`} {
 		if got := routingOf(same, false); got != same {
 			t.Fatalf("%s changed to %s", same, got)
 		}

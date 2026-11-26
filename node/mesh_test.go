@@ -871,8 +871,26 @@ func TestMeshPassesPathStateThrough(t *testing.T) {
 	if err := c.apply(meshSnapshot(member)); err != nil {
 		t.Fatal(err)
 	}
-	status, _, _ := c.status(context.Background())
-	if string(status.Networks[0].Paths) != string(state) {
-		t.Fatalf("paths = %s", status.Networks[0].Paths)
+	encoded := func() string {
+		status, _, _ := c.status(context.Background())
+		entry, err := json.Marshal(status.Networks[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(entry)
+	}
+	if got := encoded(); !strings.Contains(got, `"paths":`+string(state)+`}`) && !strings.Contains(got, `"paths":`+string(state)+`,`) {
+		t.Fatalf("paths: %s", got)
+	}
+	// A null the kernel gives goes on as null.
+	kernel.pathState["cn"] = json.RawMessage(`null`)
+	if got := encoded(); !strings.Contains(got, `"paths":null`) {
+		t.Fatalf("null paths: %s", got)
+	}
+	// A kernel that cannot be read gives no path state at all.
+	kernel.pathState["cn"] = state
+	kernel.statusErr = errors.New("down")
+	if got := encoded(); strings.Contains(got, `"paths"`) {
+		t.Fatalf("kernel down: %s", got)
 	}
 }

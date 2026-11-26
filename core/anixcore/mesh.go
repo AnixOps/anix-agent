@@ -281,19 +281,17 @@ func meshDNS(dns json.RawMessage, resolver bool) json.RawMessage {
 
 // meshRouting is the routing section for a kernel without mesh_paths: it
 // replaces a non-empty paths list with [], which that kernel takes as no
-// custom paths. A section that is not an object, or has no paths, goes as
-// it is.
+// custom paths. Anything else goes as it is: a section that is not an
+// object, one without paths, and paths that is not a list (null, an
+// object, ...), which every kernel then refuses alike, as a kernel with
+// mesh_paths does.
 func meshRouting(routing json.RawMessage) json.RawMessage {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(routing, &fields) != nil || fields == nil {
 		return routing
 	}
-	paths, ok := fields["paths"]
-	if !ok {
-		return routing
-	}
 	var list []json.RawMessage
-	if json.Unmarshal(paths, &list) == nil && list != nil && len(list) == 0 {
+	if json.Unmarshal(fields["paths"], &list) != nil || len(list) == 0 {
 		return routing
 	}
 	fields["paths"] = json.RawMessage(`[]`)
