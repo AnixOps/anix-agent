@@ -518,3 +518,103 @@ func TestMeshPathsFeature(t *testing.T) {
 		t.Fatal("mesh_paths without mesh")
 	}
 }
+
+// The top-level region goes in the PUT body, and on replay, only to a kernel
+// that lists mesh_region_probe.
+func TestMeshRegionGoesOnlyToAKernelThatTakesIt(t *testing.T) {
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	region := json.RawMessage(`{"current":"cn","basis":"admin","directory":null}`)
+	core.SetMeshRegion(region)
+	if err := core.ApplyMesh([]panel.MeshNetwork{testMeshNetwork()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := api.mesh[len(api.mesh)-1]["region"]; ok {
+		t.Fatalf("region sent to a kernel without the feature: %v", api.mesh[len(api.mesh)-1])
+	}
+
+	api.features = append(api.features, meshRegionProbeFeature)
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !core.MeshRegionProbeSupported() {
+		t.Fatal("mesh_region_probe not taken")
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(api.mesh[len(api.mesh)-1]["region"])
+	if string(got) != `{"basis":"admin","current":"cn","directory":null}` {
+		t.Fatalf("replayed region = %s", got)
+	}
+
+	// Null is the same as none; a kernel that loses the feature gets none.
+	core.SetMeshRegion(json.RawMessage(`null`))
+	if err := core.ApplyMesh([]panel.MeshNetwork{testMeshNetwork()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := api.mesh[len(api.mesh)-1]["region"]; ok {
+		t.Fatal("null region sent")
+	}
+	core.SetMeshRegion(region)
+	api.features = []string{meshFeature, meshNativeKeysFeature}
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.replay(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := api.mesh[len(api.mesh)-1]["region"]; ok {
+		t.Fatal("region replayed to a kernel without the feature")
+	}
+}
+
+// region_probe is passed on raw (null or an object) from a kernel that lists
+// mesh_region_probe, and left out otherwise.
+func TestMeshRegionProbeStatus(t *testing.T) {
+	api, server := newFakeAPI(t)
+	api.features = []string{meshFeature}
+	core := externalCore(t, server)
+	t.Cleanup(func() { _ = core.Close() })
+	object := `{"measured_at":null,"next_at":"2026-11-26T09:04:12Z","regions":[{"region":"eu","rtt_ms":18.4}],"unreachable":[],"rejected":0,"suggestion":null}`
+	api.meshProbe = json.RawMessage(object)
+	state, err := core.MeshStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.RegionProbe != nil {
+		t.Fatalf("region_probe without the feature: %s", state.RegionProbe)
+	}
+
+	api.features = append(api.features, meshRegionProbeFeature)
+	if err := core.client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{object, `null`} {
+		api.meshProbe = json.RawMessage(want)
+		state, err = core.MeshStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(state.RegionProbe) != want {
+			t.Fatalf("region_probe = %s, want %s", state.RegionProbe, want)
+		}
+		report, _ := json.Marshal(panel.MeshStatus{RegionProbe: state.RegionProbe})
+		if !strings.Contains(string(report), `"region_probe":`+want) {
+			t.Fatalf("report = %s", report)
+		}
+	}
+	// A value that is neither is left out; so is a missing one.
+	for _, bad := range []any{json.RawMessage(`"x"`), json.RawMessage(`[1]`), nil} {
+		api.meshProbe = bad
+		state, err = core.MeshStatus(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.RegionProbe != nil {
+			t.Fatalf("region_probe = %s", state.RegionProbe)
+		}
+	}
+}

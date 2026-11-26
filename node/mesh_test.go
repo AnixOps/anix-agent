@@ -43,6 +43,11 @@ type fakeMesh struct {
 	alerts     map[string][]panel.MeshAlert
 	nodeAlerts []panel.MeshAlert
 	done       []string
+	// regionProbe: the kernel lists mesh_region_probe; probe is its
+	// region_probe, region the region it was given last.
+	regionProbe bool
+	probe       json.RawMessage
+	region      json.RawMessage
 }
 
 func (f *fakeMesh) MeshSupported() bool { return f.supported }
@@ -52,6 +57,10 @@ func (f *fakeMesh) MeshNativeKeysSupported() bool { return f.supported && !f.noN
 func (f *fakeMesh) MeshExternalBridgeSupported() bool { return f.supported && f.externalBridge }
 
 func (f *fakeMesh) MeshPathsSupported() bool { return f.supported && f.paths }
+
+func (f *fakeMesh) MeshRegionProbeSupported() bool { return f.supported && f.regionProbe }
+
+func (f *fakeMesh) SetMeshRegion(region json.RawMessage) { f.region = region }
 
 func (f *fakeMesh) ApplyMesh(networks []panel.MeshNetwork) error {
 	if len(networks) > 0 && !f.supported {
@@ -65,7 +74,7 @@ func (f *fakeMesh) MeshStatus(context.Context) (panel.MeshState, error) {
 	if f.statusErr != nil {
 		return panel.MeshState{}, f.statusErr
 	}
-	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests, Alerts: f.nodeAlerts}
+	state := panel.MeshState{InstanceID: f.instanceID, RegionRequests: f.requests, Alerts: f.nodeAlerts, RegionProbe: f.probe}
 	if len(f.applied) > 0 {
 		for _, network := range f.applied[len(f.applied)-1] {
 			entry := panel.MeshNetworkStatus{ID: network.ID, Running: true, Peers: []panel.MeshPeerStatus{}}
@@ -892,5 +901,126 @@ func TestMeshPassesPathStateThrough(t *testing.T) {
 	kernel.statusErr = errors.New("down")
 	if got := encoded(); strings.Contains(got, `"paths"`) {
 		t.Fatalf("kernel down: %s", got)
+	}
+}
+
+func TestMeshPassesTheRegionOnAndDropsAnInvalidOne(t *testing.T) {
+	// The member without its closing brace, so a region can follow.
+	networks := `{"networks":[{"id":"cn","name":"n","secret":"s","secure_mode":true,"address":"10.150.0.5/16"}]`
+	kernel := &fakeMesh{supported: true, regionProbe: true}
+	c := testMeshComponent(t, kernel, nil)
+	object := `{"current":"cn","basis":"admin","directory":null}`
+	if err := c.apply(meshSnapshot(`,"mesh":` + networks + `,"region":` + object + `}`)); err != nil {
+		t.Fatal(err)
+	}
+	if string(kernel.region) != object {
+		t.Fatalf("region = %s", kernel.region)
+	}
+	// Anything but an object or null is dropped, and the rest still runs.
+	for _, bad := range []string{`"cn"`, `[1]`, `7`, `true`} {
+		kernel.region = nil
+		if err := c.apply(meshSnapshot(`,"mesh":` + networks + `,"region":` + bad + `}`)); err != nil {
+			t.Fatalf("%s: %v", bad, err)
+		}
+		if kernel.region != nil {
+			t.Fatalf("%s: region = %s", bad, kernel.region)
+		}
+		if status, _, ok := c.status(context.Background()); !ok || len(status.Networks) != 1 {
+			t.Fatalf("%s: status = %+v", bad, status)
+		}
+	}
+}
+
+func TestMeshStatusCarriesTheRegionProbe(t *testing.T) {
+	probe := json.RawMessage(`{"measured_at":null,"regions":[]}`)
+	kernel := &fakeMesh{supported: true, regionProbe: true, probe: probe}
+	c := testMeshComponent(t, kernel, nil)
+	if err := c.apply(meshSnapshot(meshMember)); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _ := c.status(context.Background())
+	if payload, _ := json.Marshal(status); !strings.Contains(string(payload), `"region_probe":{"measured_at":null,"regions":[]}`) {
+		t.Fatalf("payload = %s", payload)
+	}
+	kernel.probe = json.RawMessage(`null`)
+	status, _, _ = c.status(context.Background())
+	if payload, _ := json.Marshal(status); !strings.Contains(string(payload), `"region_probe":null`) {
+		t.Fatalf("payload = %s", payload)
+	}
+	// Without the feature, or when the kernel cannot be read: left out.
+	kernel.regionProbe = false
+	status, _, _ = c.status(context.Background())
+	if payload, _ := json.Marshal(status); strings.Contains(string(payload), "region_probe") {
+		t.Fatalf("payload = %s", payload)
+	}
+	kernel.regionProbe, kernel.statusErr = true, errors.New("down")
+	status, _, _ = c.status(context.Background())
+	if payload, _ := json.Marshal(status); strings.Contains(string(payload), "region_probe") {
+		t.Fatalf("payload = %s", payload)
+	}
+}
+
+func TestMeshReportsTheLatenciesOfANodeWaitingForItsRegion(t *testing.T) {
+	probe := json.RawMessage(`{"measured_at":"2026-11-26T03:00:00Z","regions":[{"region":"eu","rtt_ms":18.3}]}`)
+	kernel := &fakeMesh{supported: true, regionProbe: true, requests: []panel.MeshRegionRequest{{ID: "r1", Region: "eu"}}}
+	c := testMeshComponent(t, kernel, nil)
+	// Control added the node without a region: no network, a region
+	// object without a current region.
+	object := `{"current":null,"basis":null,"directory":{"version":1,"preferred":null,"regions":[]},"responder":null}`
+	if err := c.apply(meshSnapshot(`,"mesh":{"networks":[],"region":` + object + `}`)); err != nil {
+		t.Fatal(err)
+	}
+	if string(kernel.region) != object || len(kernel.applied) != 1 || len(kernel.applied[0]) != 0 {
+		t.Fatalf("region = %s, applied = %+v", kernel.region, kernel.applied)
+	}
+	// No round yet: nothing to report.
+	if _, _, ok := c.status(context.Background()); ok {
+		t.Fatal("reported before the first round")
+	}
+	kernel.probe = probe
+	status, requests, ok := c.status(context.Background())
+	payload, _ := json.Marshal(status)
+	if !ok || len(status.Networks) != 0 || len(requests) != 0 ||
+		!strings.Contains(string(payload), `"region_probe":`+string(probe)) || !strings.Contains(string(payload), `"networks":[]`) {
+		t.Fatalf("status = %s, requests %+v, ok %v", payload, requests, ok)
+	}
+	// Without the feature, or without a region object: nothing.
+	kernel.regionProbe = false
+	if _, _, ok := c.status(context.Background()); ok {
+		t.Fatal("reported without mesh_region_probe")
+	}
+	kernel.regionProbe = true
+	if err := c.apply(meshSnapshot(`,"mesh":{"networks":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := c.status(context.Background()); ok {
+		t.Fatal("reported without a region object")
+	}
+}
+
+func TestMeshSendsAWithdrawalAsItIs(t *testing.T) {
+	kernel := &fakeMesh{supported: true, requests: []panel.MeshRegionRequest{
+		{ID: "w1", Network: "cn", Withdraw: true},
+		{ID: "r1", Region: "eu"},
+	}}
+	c := testMeshComponent(t, kernel, nil)
+	var sent []*agentv1pb.PackageReport
+	c.sendReport = func(report *agentv1pb.PackageReport) error {
+		sent = append(sent, report)
+		return nil
+	}
+	c.negotiated = true
+	if err := c.apply(meshSnapshot(meshMember)); err != nil {
+		t.Fatal(err)
+	}
+	c.report()
+	if len(sent) != 3 || sent[1].GetKind() != agentapi.MeshRegionRequestKind || string(sent[1].GetPayloadJson()) != `{"withdraw":true}` {
+		t.Fatalf("sent %d reports: %v", len(sent), sent)
+	}
+	if string(sent[2].GetPayloadJson()) != `{"region":"eu"}` {
+		t.Fatalf("request = %s", sent[2].GetPayloadJson())
+	}
+	if strings.Join(kernel.done, ",") != "w1,r1" {
+		t.Fatalf("done = %v", kernel.done)
 	}
 }

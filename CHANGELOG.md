@@ -4,6 +4,15 @@
 
 ### Added
 
+- Intranet mesh, region: the Agent passes the `region` object of the `mesh`
+  member unchanged as the top-level `region` of `PUT /v1/mesh` (and on replay
+  after a kernel restart), only to a kernel that lists `mesh_region_probe`;
+  a `region` that is neither an object nor null is dropped with a warning.
+  The kernel's `region_probe` (null or an object) is passed on unchanged as
+  the top-level `region_probe` of `mesh.status`, and left out when the kernel
+  does not list the feature or cannot be read. A region request the kernel
+  holds with `"withdraw": true` goes to Control as the `mesh.region_request`
+  payload `{"withdraw": true}`, then is dropped from the kernel as usual.
 - Intranet mesh, custom paths: the Agent passes a network's `routing.paths`
   only to a kernel that lists `mesh_paths`; any other kernel gets
   `paths: []`, and each network that has paths reports the alert

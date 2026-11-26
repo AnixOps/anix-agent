@@ -94,6 +94,14 @@ type MeshApplier interface {
 	// MeshPathsSupported tells whether it applies a network's
 	// routing.paths (feature mesh_paths).
 	MeshPathsSupported() bool
+	// MeshRegionProbeSupported tells whether it takes the top-level region
+	// of its mesh configuration and answers region_probe (feature
+	// mesh_region_probe).
+	MeshRegionProbeSupported() bool
+	// SetMeshRegion sets the region sent with the next ApplyMesh and with
+	// each replay; nil or null sends none. It is sent only to a kernel
+	// that takes it.
+	SetMeshRegion(region json.RawMessage)
 	// ApplyMesh replaces the networks the kernel runs; none stops them.
 	ApplyMesh(networks []panel.MeshNetwork) error
 	// MeshStatus answers the kernel's instance id, each network as the

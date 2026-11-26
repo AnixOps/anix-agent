@@ -33,8 +33,10 @@ type fakeAPI struct {
 	meshKeys     []map[string]any
 	// meshBridge is the network's externalBridge in GET /v1/mesh, if set.
 	meshBridge any
-	features   []string
-	types      []string
+	// meshProbe is region_probe in GET /v1/mesh, if set.
+	meshProbe any
+	features  []string
+	types     []string
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -104,7 +106,11 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		if f.meshBridge != nil {
 			network["externalBridge"] = f.meshBridge
 		}
-		reply(200, map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests, "static_keys": f.meshKeys, "networks": []any{network}})
+		answer := map[string]any{"instance_id": f.meshInstance, "region_requests": f.meshRequests, "static_keys": f.meshKeys, "networks": []any{network}}
+		if f.meshProbe != nil {
+			answer["region_probe"] = f.meshProbe
+		}
+		reply(200, answer)
 	case r.Method == "POST" && r.URL.Path == "/v1/inbounds":
 		var inbound map[string]any
 		_ = json.Unmarshal(body, &inbound)

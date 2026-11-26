@@ -56,8 +56,8 @@
 
 | 方法与路径 | 请求 | 应答 |
 |---|---|---|
-| `PUT /v1/mesh` | `{"networks": [MeshConfig]}`，`[]` 停止全部 | 与 `GET` 相同 |
-| `GET /v1/mesh` | | `{"instance_id": "…", "static_keys": [{"network", "static_key"}], "networks": [MeshNetworkStatus], "region_requests": [MeshRegionRequest]}` |
+| `PUT /v1/mesh` | `{"networks": [MeshConfig], "region": {…}}`，`[]` 停止全部；`region` 只在内核列出 `mesh_region_probe` 时发送 | 与 `GET` 相同 |
+| `GET /v1/mesh` | | `{"instance_id": "…", "static_keys": [{"network", "static_key"}], "networks": [MeshNetworkStatus], "region_requests": [MeshRegionRequest], "region_probe": null 或 {…}}` |
 | `DELETE /v1/mesh/region_requests/{id}` | | 删除一条已转交的申请；不存在时 404，Agent 视同成功 |
 
 `MeshConfig` 是内核 `"type": "mesh"` 的分层配置（`config_version` 1）：`network{name, secret, secure_mode, cipher, kind, native_keys}`、
@@ -75,7 +75,15 @@
 | `mesh_external_bridge` | 网络配置接受 `external_bridge`（外部网络桥接，R36），`GET /v1/mesh` 的网络带 `externalBridge`（摘要） | 0.4 |
 | `mesh_paths` | 网络配置的 `routing.paths`（自定义路径）由内核应用，`GET /v1/mesh` 的网络带 `paths[]`（路径状态，Agent 原样透传） | 0.5 |
 | `mesh_region_requests` | `GET /v1/mesh` 带 `region_requests`，并有 `DELETE /v1/mesh/region_requests/{id}` | 0.4 |
+| `mesh_region_probe` | `PUT /v1/mesh` 接受顶层 `region`，`GET /v1/mesh` 带 `region_probe` | 0.4 |
 | `mesh_native_keys` | 网络配置的 `network` 层接受 `native_keys`，`GET /v1/mesh` 带 `static_keys` | 0.3 |
+
+`region` 取自面板配置 `mesh` 成员中与 `networks` 同级的 `region`，Agent 原样放进 `PUT /v1/mesh` 的顶层（内核重启后的重发同样），不解释其字段，
+只检查它是 JSON 对象或 `null`，其他值丢弃并记一条告警日志；内核未列出 `mesh_region_probe` 时不发送。`region_probe` 原样（`null` 或对象）放进 `mesh.status` 载荷的顶层
+`region_probe`；内核未列出该 feature 或读取失败时不带这个键。`region_requests[]` 中带 `"withdraw": true` 的记录，Agent 以载荷 `{"withdraw": true}` 作为
+`mesh.region_request` 上报（不带 `region`、`reason`），之后与普通申请一样删除。
+
+面板以自动选区加入、尚无区域的节点，`mesh` 只有空的 `networks` 和 `current` 为 `null` 的 `region`。Agent 仍把 `region` 交给内核测量；内核列出 `mesh_region_probe` 且 `region_probe` 已有一轮结果时，Agent 上报只含 `region_probe`（`networks` 为空）的 `mesh.status`，面板据此选区并下发网络。这类节点不发送迁区申请。
 
 `instance_id` 是本机的组网实例 ID，即组网状态快照的 `self.id`（首次启动生成，重启与升级不变），1–64 位字母、数字或 `-`，首字符须为字母或数字；
 不合规时 Agent 按未给出处理。网络暂缓启动（`takeover_pending`）时内核也应给出。

@@ -23,7 +23,9 @@ import (
 // meshExternalBridgeFeature. routing.paths goes as it is only to a kernel that
 // lists meshPathsFeature; any other kernel gets "paths": []. A kernel that lists meshRegionRequestsFeature holds the node
 // owner's region requests in the GET answer until
-// DELETE /v1/mesh/region_requests/{id}.
+// DELETE /v1/mesh/region_requests/{id}. The top-level region of the body
+// goes only to a kernel that lists meshRegionProbeFeature, which then also
+// answers region_probe.
 
 // The anixcore features of the mesh.
 const (
@@ -34,6 +36,7 @@ const (
 	meshExternalBridgeFeature  = "mesh_external_bridge"
 	meshPathsFeature           = "mesh_paths"
 	meshRegionRequestsFeature  = "mesh_region_requests"
+	meshRegionProbeFeature     = "mesh_region_probe"
 	meshNativeKeysFeature      = "mesh_native_keys"
 )
 
@@ -41,6 +44,21 @@ const (
 const meshTagPrefix = "mesh-"
 
 var _ vCore.MeshApplier = (*Core)(nil)
+
+// MeshRegionProbeSupported implements vCore.MeshApplier.
+func (c *Core) MeshRegionProbeSupported() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client != nil && c.client.meshRegionProbe.Load()
+}
+
+// SetMeshRegion implements vCore.MeshApplier. The region is kept, so a
+// restarted anixcore gets it again.
+func (c *Core) SetMeshRegion(region json.RawMessage) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.meshRegion = region
+}
 
 // MeshNativeKeysSupported implements vCore.MeshApplier.
 func (c *Core) MeshNativeKeysSupported() bool {
@@ -98,6 +116,11 @@ func (c *Core) putMesh() error {
 		hostGroups: c.client.meshHostGroups.Load(), externalBridge: c.client.meshExternalBridge.Load(),
 		nativeKeys: c.client.meshNativeKeys.Load(), paths: c.client.meshPaths.Load(),
 	})
+	// region goes only to a kernel that lists meshRegionProbeFeature: any
+	// other kernel refuses the whole body for it.
+	if c.client.meshRegionProbe.Load() && present(c.meshRegion) {
+		body["region"] = c.meshRegion
+	}
 	if err := c.client.do(ctx, http.MethodPut, "/v1/mesh", body, nil); err != nil {
 		return fmt.Errorf("anixcore mesh: %w", err)
 	}
@@ -140,6 +163,11 @@ func (c *Core) MeshStatus(ctx context.Context) (panel.MeshState, error) {
 	answer.StaticKeys = keys
 	if len(keys) == 0 {
 		answer.StaticKeys = nil
+	}
+	// region_probe is null or an object, passed on as it is; without the
+	// feature (or with anything else) it is left out.
+	if !client.meshRegionProbe.Load() || !jsonObjectOrNull(answer.RegionProbe) {
+		answer.RegionProbe = nil
 	}
 	for i := range answer.Networks {
 		answer.Networks[i].ID = strings.TrimPrefix(answer.Networks[i].Tag, meshTagPrefix)
@@ -300,6 +328,15 @@ func meshRouting(routing json.RawMessage) json.RawMessage {
 		return routing
 	}
 	return out
+}
+
+// jsonObjectOrNull tells whether raw is a JSON object or null.
+func jsonObjectOrNull(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	return json.Unmarshal(raw, &fields) == nil
 }
 
 // present tells whether a section was sent, not empty nor null.

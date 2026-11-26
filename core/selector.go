@@ -312,6 +312,17 @@ func (s *Selector) MeshPathsSupported() bool {
 	return ok && a.MeshPathsSupported()
 }
 
+func (s *Selector) MeshRegionProbeSupported() bool {
+	a, ok := first[MeshApplier](s)
+	return ok && a.MeshRegionProbeSupported()
+}
+
+func (s *Selector) SetMeshRegion(region json.RawMessage) {
+	if a, ok := first[MeshApplier](s); ok {
+		a.SetMeshRegion(region)
+	}
+}
+
 func (s *Selector) ApplyMesh(networks []panel.MeshNetwork) error {
 	if a, ok := first[MeshApplier](s); ok {
 		return a.ApplyMesh(networks)
