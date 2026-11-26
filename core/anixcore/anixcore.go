@@ -130,6 +130,9 @@ type Core struct {
 	// /v1/mesh body is made from them for the kernel's features at the
 	// time, so a restarted, updated kernel gets what it now takes.
 	mesh []panel.MeshNetwork
+	// meshRegion is the region of the last SetMeshRegion, sent with mesh
+	// to a kernel that takes it.
+	meshRegion json.RawMessage
 
 	process *exec.Cmd
 	stop    chan struct{}

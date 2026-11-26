@@ -166,6 +166,9 @@ func (c *meshComponent) apply(snapshot *agentv1pb.ConfigSnapshot) error {
 	if err != nil {
 		return agentapi.InvalidConfig(err)
 	}
+	if member != nil && member.DropInvalidRegion() {
+		c.logger().Warn("Dropped the mesh region: it is not an object or null")
+	}
 	c.mu.Lock()
 	same := reflect.DeepEqual(member, c.member)
 	c.mu.Unlock()
@@ -211,6 +214,11 @@ func (c *meshComponent) run(member *panel.Mesh) error {
 		err = errTakeoverPending
 	default:
 		networks, held = c.admissible(networks)
+		var region json.RawMessage
+		if member != nil {
+			region = member.Region
+		}
+		c.core.SetMeshRegion(region)
 		err = c.core.ApplyMesh(networks)
 	}
 	if !took.Found {
@@ -267,6 +275,9 @@ func (c *meshComponent) status(ctx context.Context) (status panel.MeshStatus, re
 		readErr = vCore.ErrMeshUnsupported
 	}
 	status.InstanceID = state.InstanceID
+	if readErr == nil && c.core.MeshRegionProbeSupported() {
+		status.RegionProbe = state.RegionProbe
+	}
 	nativeKeys := c.core.MeshNativeKeysSupported()
 	// residue: networks that ran a bridge on a kernel that took
 	// external_bridge, now read on one that does not (a downgrade). The
@@ -450,7 +461,7 @@ func (c *meshComponent) sendRegionRequest(send func(*agentv1pb.PackageReport) er
 				logger.WithError(err).Warn("Could not send the mesh region request")
 				return true
 			}
-			logger.WithField("region", report.Region).Info("Sent the mesh region request to Control")
+			logger.WithField("region", report.Region).WithField("withdraw", report.Withdraw).Info("Sent the mesh region request to Control")
 		}
 	}
 	if err != nil {

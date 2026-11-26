@@ -15,6 +15,11 @@ import (
 // member runs no mesh.
 type Mesh struct {
 	Networks []MeshNetwork `json:"networks"`
+	// Region is the node's region state, passed on unchanged as the
+	// top-level region of the kernel's mesh configuration, and only to a
+	// kernel that takes it. The Agent checks only that it is an object or
+	// null (DropInvalidRegion); the kernel validates the rest.
+	Region json.RawMessage `json:"region,omitempty"`
 	// Takeover is deployment data the panel keeps; nil for none.
 	Takeover *MeshTakeover `json:"takeover,omitempty"`
 }
@@ -87,6 +92,20 @@ func ParseMesh(document []byte) (*Mesh, error) {
 	return holder.Mesh, nil
 }
 
+// DropInvalidRegion drops a Region that is neither a JSON object nor null
+// and tells whether it did.
+func (m *Mesh) DropInvalidRegion() bool {
+	if len(m.Region) == 0 {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(m.Region, &fields) == nil {
+		return false
+	}
+	m.Region = nil
+	return true
+}
+
 // Validate checks what the Agent itself uses: the ids (they name the
 // core's networks) and the takeover names (they reach systemctl and
 // /proc). The core checks the rest.
@@ -144,6 +163,9 @@ type MeshStatus struct {
 	InstanceID string              `json:"instance_id,omitempty"`
 	Networks   []MeshNetworkStatus `json:"networks"`
 	Takeover   *MeshTakeoverResult `json:"takeover,omitempty"`
+	// RegionProbe is the kernel's region_probe (null or an object), passed
+	// on unchanged; left out when the kernel does not give it.
+	RegionProbe json.RawMessage `json:"region_probe,omitempty"`
 }
 
 // MeshNetworkStatus is one network as the core runs it. The core answers
@@ -288,6 +310,8 @@ type MeshState struct {
 	// repeats external_bridge_lock_held here, so it shows while the kernel
 	// runs no network.
 	Alerts []MeshAlert `json:"alerts,omitempty"`
+	// RegionProbe is region_probe (null or an object), raw.
+	RegionProbe json.RawMessage `json:"region_probe,omitempty"`
 }
 
 // MeshInstanceID tells whether id is a valid instance id: 1-64 letters,
@@ -313,6 +337,9 @@ type MeshRegionRequest struct {
 	Network string `json:"network,omitempty"`
 	Region  string `json:"region"`
 	Reason  string `json:"reason,omitempty"`
+	// Withdraw marks the withdrawal of the node's pending request; Region
+	// and Reason are then empty.
+	Withdraw bool `json:"withdraw,omitempty"`
 }
 
 // MeshRegionRequestReasonMax bounds the reason, in characters.
@@ -321,13 +348,17 @@ const MeshRegionRequestReasonMax = 500
 // MeshRegionRequestReport is the payload of the PackageReport plugin_id
 // "mesh", kind "mesh.region_request", version "v1".
 type MeshRegionRequestReport struct {
-	Region string `json:"region"`
-	Reason string `json:"reason,omitempty"`
+	Region   string `json:"region,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Withdraw bool   `json:"withdraw,omitempty"`
 }
 
-// Report is the request as Control takes it: the region must be a region
+// Report is the request as Control takes it (a withdrawal as {"withdraw": true}): the region must be a region
 // code; a longer reason is cut to MeshRegionRequestReasonMax characters.
 func (r MeshRegionRequest) Report() (MeshRegionRequestReport, error) {
+	if r.Withdraw {
+		return MeshRegionRequestReport{Withdraw: true}, nil
+	}
 	if !meshID(r.Region) {
 		return MeshRegionRequestReport{}, fmt.Errorf("region %q is not a region code", r.Region)
 	}
