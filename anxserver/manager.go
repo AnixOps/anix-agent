@@ -665,25 +665,6 @@ func (s *server) relay(client anxmgmtpb.ManagementClient, current map[string]adm
 		defer cancel()
 		return do(ctx)
 	}
-	if len(remove) > 0 {
-		// No route may name a link that goes: clear them first.
-		if err := call(func(ctx context.Context) error {
-			_, err := client.SetLinkRoutes(ctx, &anxmgmtpb.SetLinkRoutesRequest{})
-			return err
-		}); err != nil {
-			return fmt.Errorf("clear link routes: %w", err)
-		}
-		state.set = false
-		if err := call(func(ctx context.Context) error {
-			_, err := client.RemoveLinks(ctx, &anxmgmtpb.RemoveLinksRequest{LinkIds: remove})
-			return err
-		}); err != nil {
-			return fmt.Errorf("remove relay links: %w", err)
-		}
-		for _, id := range remove {
-			delete(state.links, id)
-		}
-	}
 	if len(add) > 0 {
 		if err := call(func(ctx context.Context) error {
 			_, err := client.AddLinks(ctx, &anxmgmtpb.AddLinksRequest{Links: add})
@@ -702,6 +683,17 @@ func (s *server) relay(client anxmgmtpb.ManagementClient, current map[string]adm
 		return fmt.Errorf("set link routes: %w", err)
 	}
 	state.routes, state.set = routes, true
+	if len(remove) > 0 {
+		if err := call(func(ctx context.Context) error {
+			_, err := client.RemoveLinks(ctx, &anxmgmtpb.RemoveLinksRequest{LinkIds: remove})
+			return err
+		}); err != nil {
+			return fmt.Errorf("remove relay links: %w", err)
+		}
+		for _, id := range remove {
+			delete(state.links, id)
+		}
+	}
 	return nil
 }
 
